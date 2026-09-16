@@ -1,7 +1,7 @@
 import json
 import uuid
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from ..models.product import Product, ProductVariant
 from ..schemas.product import TakealotCollectRequest
@@ -13,117 +13,106 @@ logger = logging.getLogger(__name__)
 
 class TakealotService:
     @staticmethod
-    def save_collected_product(db: Session, req: TakealotCollectRequest) -> Product:
+    def save_collected_product(db: Session, req: TakealotCollectRequest) -> List[Product]:
         """
-        接收插件采集的 Takealot 商品并持久化入库，同时计算初始定价与初始变体
+        接收 Takealot 采集数据并扁平化入库：
+        每个变体均作为一条独立的 Product 记录生成入库，拥有独立的标题、专属图组、价格与规格，清洗/上品全流程相互独立。
         """
-        # 1. 计算初始价格
-        selling_price, mrp = calculate_prices(req.takealot_price, db)
-        
-        # 2. 生成唯一的商品分组标识 (用于变体 Group Listings)
-        group_code = f"GRP-{uuid.uuid4().hex[:8].upper()}"
-        
-        # 3. 序列化复杂对象
-        raw_images_json = json.dumps(req.raw_images) if req.raw_images else "[]"
-        specs_json = json.dumps(req.takealot_specs) if req.takealot_specs else "{}"
+        created_products = []
+        root_plid = req.takealot_id or "PLID_UNKNOWN"
 
-        # 4. 检查是否已采集过相同 takealot_id 的商品 (支持重新采集覆盖)
-        product = db.query(Product).filter(Product.takealot_id == req.takealot_id).first()
-        if product:
-            product.takealot_url = req.takealot_url
-            product.takealot_title = req.takealot_title
-            product.takealot_price = req.takealot_price
-            product.takealot_brand = req.takealot_brand
-            product.takealot_category = req.takealot_category
-            product.takealot_description = req.takealot_description
-            product.takealot_specs = specs_json
-            product.raw_images = raw_images_json
-            product.makro_selling_price = selling_price
-            product.makro_mrp = mrp
-            product.status = "PENDING_CLEAN"
-            product.compliance_status = "PENDING_CHECK"
-            product.compliance_details = None
+        # 如果已有相同 group_code 或 takealot_id 的旧数据，安全级联清理以支持重新采集刷新
+        from ..models.task import TaskLog
+        existing_pids = [p[0] for p in db.query(Product.id).filter((Product.group_code == root_plid) | (Product.takealot_id == root_plid)).all()]
+        if existing_pids:
+            db.query(ProductVariant).filter(ProductVariant.product_id.in_(existing_pids)).delete(synchronize_session=False)
+            db.query(TaskLog).filter(TaskLog.product_id.in_(existing_pids)).delete(synchronize_session=False)
+            db.query(Product).filter(Product.id.in_(existing_pids)).delete(synchronize_session=False)
+            db.commit()
+
+        if req.variants and len(req.variants) > 0:
+            for idx, v in enumerate(req.variants):
+                v_price = v.takealot_price if v.takealot_price > 0 else req.takealot_price
+                v_selling, v_mrp = calculate_prices(v_price, db)
+                sku_id = v.sku_id or f"SKU-{uuid.uuid4().hex[:8].upper()}"
+                var_takealot_id = f"{root_plid}-{v.takealot_variant_id}" if v.takealot_variant_id else f"{root_plid}-{idx+1}"
+                
+                var_title = v.variant_title or req.takealot_title
+                if not v.variant_title and v.colour and v.colour != "多色":
+                    var_title = f"{req.takealot_title} - {v.colour}"
+                
+                var_images = v.images if v.images else req.raw_images
+                
+                combined_specs = dict(req.takealot_specs or {})
+                if v.specs:
+                    combined_specs.update(v.specs)
+
+                product = Product(
+                    takealot_id=var_takealot_id,
+                    group_code=root_plid,
+                    takealot_url=req.takealot_url,
+                    takealot_title=var_title,
+                    takealot_price=v_price,
+                    takealot_brand=req.takealot_brand,
+                    takealot_category=req.takealot_category,
+                    takealot_description=req.takealot_description,
+                    takealot_specs=json.dumps(combined_specs, ensure_ascii=False),
+                    raw_images=json.dumps(var_images),
+                    sku_id=sku_id,
+                    barcode=v.barcode,
+                    variant_attributes=json.dumps(v.variant_attributes, ensure_ascii=False) if v.variant_attributes else "{}",
+                    size=v.size or "均码",
+                    colour=v.colour or "多色",
+                    brand_colour=v.brand_colour or "多色",
+                    pack_of=v.pack_of or "1",
+                    status="PENDING_CLEAN",
+                    compliance_status="PENDING_CHECK",
+                    compliance_details=None,
+                    makro_vertical="bath_towel",
+                    makro_brand=settings.DEFAULT_BRAND,
+                    makro_selling_price=v_selling,
+                    makro_mrp=v_mrp
+                )
+                db.add(product)
+                created_products.append(product)
         else:
+            # 单品无变体
+            sku_id = f"SKU-{uuid.uuid4().hex[:8].upper()}"
+            selling_price, mrp = calculate_prices(req.takealot_price, db)
             product = Product(
-                takealot_id=req.takealot_id,
+                takealot_id=root_plid,
+                group_code=root_plid,
                 takealot_url=req.takealot_url,
                 takealot_title=req.takealot_title,
                 takealot_price=req.takealot_price,
                 takealot_brand=req.takealot_brand,
                 takealot_category=req.takealot_category,
                 takealot_description=req.takealot_description,
-                takealot_specs=specs_json,
-                raw_images=raw_images_json,
+                takealot_specs=json.dumps(req.takealot_specs or {}, ensure_ascii=False),
+                raw_images=json.dumps(req.raw_images or []),
+                sku_id=sku_id,
+                barcode=None,
+                variant_attributes="{}",
+                size="均码",
+                colour="多色",
+                brand_colour="多色",
+                pack_of="1",
                 status="PENDING_CLEAN",
                 compliance_status="PENDING_CHECK",
                 compliance_details=None,
                 makro_vertical="bath_towel",
                 makro_brand=settings.DEFAULT_BRAND,
                 makro_selling_price=selling_price,
-                makro_mrp=mrp,
-                group_code=group_code
+                makro_mrp=mrp
             )
             db.add(product)
-        db.commit()
-        db.refresh(product)
-
-        # 5. 防御性清理当前 product_id 下的所有历史/孤儿变体记录，杜绝多余变体
-        db.query(ProductVariant).filter(ProductVariant.product_id == product.id).delete(synchronize_session=False)
-
-        # 6. 处理变体
-        if req.variants and len(req.variants) > 0:
-            for v in req.variants:
-                v_price = v.takealot_price if v.takealot_price > 0 else req.takealot_price
-                v_selling, v_mrp = calculate_prices(v_price, db)
-                sku_id = v.sku_id or f"SKU-{uuid.uuid4().hex[:8].upper()}"
-                
-                variant = ProductVariant(
-                    product_id=product.id,
-                    sku_id=sku_id,
-                    takealot_variant_id=v.takealot_variant_id,
-                    variant_title=v.variant_title,
-                    variant_attributes=json.dumps(v.variant_attributes, ensure_ascii=False) if v.variant_attributes else "{}",
-                    specs=json.dumps(v.specs, ensure_ascii=False) if v.specs else "{}",
-                    barcode=v.barcode,
-                    size=v.size or "均码",
-                    colour=v.colour or "多色",
-                    brand_colour=v.brand_colour or "多色",
-                    pack_of=v.pack_of or "1",
-                    takealot_price=v_price,
-                    makro_selling_price=v_selling,
-                    makro_mrp=v_mrp,
-                    images=json.dumps(v.images if v.images else req.raw_images),
-                    status="PENDING"
-                )
-                db.add(variant)
-        else:
-            # 单品默认生成一个主变体
-            sku_id = f"SKU-{uuid.uuid4().hex[:8].upper()}"
-            variant = ProductVariant(
-                product_id=product.id,
-                sku_id=sku_id,
-                variant_title=req.takealot_title,
-                variant_attributes="{}",
-                specs=json.dumps(req.takealot_specs, ensure_ascii=False) if req.takealot_specs else "{}",
-                barcode=None,
-                size="均码",
-                colour="多色",
-                brand_colour="多色",
-                pack_of="1",
-                takealot_price=req.takealot_price,
-                makro_selling_price=selling_price,
-                makro_mrp=mrp,
-                images=raw_images_json,
-                status="PENDING"
-            )
-            db.add(variant)
+            created_products.append(product)
 
         db.commit()
-        db.refresh(product)
+        for p in created_products:
+            db.refresh(p)
 
-        # 采集完成后不自动执行 AI 清洗与合规检测，保持 PENDING_CLEAN 与 PENDING_CHECK
-        # 完全交由用户在后台列表手动批量勾选后触发
-        return product
+        return created_products
 
     @classmethod
     def fetch_product_by_plid(cls, plid_or_url: str) -> TakealotCollectRequest:

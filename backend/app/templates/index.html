@@ -97,10 +97,18 @@
             <button 
               @click="batchCheckCompliance" 
               :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
-              class="px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
+              class="px-3 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
             >
               <span v-if="isBatchCheckingCompliance">⏳ 检测中...</span>
               <span v-else>🛡️ 批量合规检测 ({{ selectedIds.length }})</span>
+            </button>
+            <button 
+              @click="batchPublish" 
+              :disabled="selectedIds.length === 0 || isBatchPublishing"
+              class="px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
+            >
+              <span v-if="isBatchPublishing">⏳ 批量上品中...</span>
+              <span v-else>🚀 批量上品 ({{ selectedIds.length }})</span>
             </button>
             <button 
               @click="batchDelete" 
@@ -132,12 +140,12 @@
                 <th class="py-3 px-4 w-10">
                   <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected" class="rounded text-blue-600">
                 </th>
-                <th class="py-3 px-4 w-20">主图</th>
-                <th class="py-3 px-4">Takealot 原商品信息</th>
-                <th class="py-3 px-4">AI 清洗后的 Makro 待发布信息</th>
+                <th class="py-3 px-4 w-20">变体主图</th>
+                <th class="py-3 px-4">Takealot 来源与变体信息</th>
+                <th class="py-3 px-4">AI 清洗后的 Makro 独立待发信息</th>
                 <th class="py-3 px-4 w-32">价格计算 (ZAR)</th>
                 <th class="py-3 px-4 w-28">状态</th>
-                <th class="py-3 px-4 w-36 text-right">操作</th>
+                <th class="py-3 px-4 w-36 text-right">独立操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
@@ -146,7 +154,7 @@
               </tr>
               <tr v-else-if="products.items.length === 0" class="text-center py-10">
                 <td colspan="7" class="py-12 text-slate-400">
-                  暂无采集商品。请安装并使用 Chrome 插件在 Takealot 前台点击采集！
+                  暂无采集商品。请使用上方【📥 + PLID极速采集】或 Chrome 插件采集！
                 </td>
               </tr>
               <tr v-for="item in products.items" :key="item.id" class="hover:bg-slate-50/80 transition">
@@ -156,26 +164,50 @@
                 <td class="py-3 px-4">
                   <img 
                     :src="item.raw_images[0] || 'https://via.placeholder.com/80'" 
-                    class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs"
+                    class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs bg-white"
                   />
                 </td>
                 <td class="py-3 px-4 max-w-xs">
+                  <!-- 母体关联与 SKU 标识 -->
+                  <div class="flex items-center space-x-1.5 mb-1 flex-wrap gap-y-1">
+                    <span v-if="item.group_code" class="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded font-mono text-[10px] font-bold">
+                      母体: {{ item.group_code }}
+                    </span>
+                    <span v-if="item.sku_id" class="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded font-mono text-[10px]">
+                      SKU: {{ item.sku_id }}
+                    </span>
+                  </div>
                   <a :href="item.takealot_url" target="_blank" class="font-semibold text-slate-900 hover:text-blue-600 line-clamp-2">
                     {{ item.takealot_title }}
                   </a>
-                  <div class="text-[11px] text-slate-400 mt-1 flex items-center space-x-2">
+                  <div class="text-[11px] text-slate-400 mt-1 flex items-center space-x-2 flex-wrap">
                     <span>原品牌: {{ item.takealot_brand || '无' }}</span>
                     <span>|</span>
                     <span>原价: R{{ item.takealot_price }}</span>
+                    <span v-if="item.barcode">| 条码: {{ item.barcode }}</span>
                   </div>
                 </td>
                 <td class="py-3 px-4 max-w-sm">
                   <div class="font-medium text-slate-800 line-clamp-2">
                     {{ item.makro_title || item.takealot_title }}
                   </div>
-                  <div class="text-[11px] text-slate-500 mt-1 flex items-center space-x-2">
+                  <div class="text-[11px] text-slate-500 mt-1 flex flex-wrap items-center gap-1.5">
                     <span class="px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">类目: {{ item.makro_vertical }}</span>
                     <span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-semibold">品牌: {{ item.makro_brand }}</span>
+                    
+                    <!-- 变体专有异构参数标签 -->
+                    <span v-if="item.variant_attributes && (item.variant_attributes.capacity || item.variant_attributes.storage_capacity)" class="px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded font-bold text-[10px]">
+                      💾 {{ item.variant_attributes.capacity || item.variant_attributes.storage_capacity }}
+                    </span>
+                    <span v-if="item.colour && item.colour !== '多色'" class="px-1.5 py-0.5 bg-pink-50 text-pink-700 border border-pink-200 rounded font-medium text-[10px]">
+                      🎨 {{ item.colour }}
+                    </span>
+                    <span v-if="item.size && item.size !== '均码'" class="px-1.5 py-0.5 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded font-medium text-[10px]">
+                      📏 {{ item.size }}
+                    </span>
+                    <span v-if="item.pack_of && item.pack_of !== '1'" class="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded font-medium text-[10px]">
+                      📦 {{ item.pack_of }}件装
+                    </span>
                   </div>
                   <!-- 合规与侵权检测徽章 -->
                   <div class="mt-1.5 flex items-center space-x-1.5 flex-wrap gap-y-1">
@@ -204,6 +236,9 @@
                     <button @click.stop="checkCompliance(item)" :disabled="checkingComplianceId === item.id" class="text-[10px] text-blue-600 hover:underline">
                       {{ checkingComplianceId === item.id ? '检测中...' : '检测' }}
                     </button>
+                  </div>
+                  <div v-if="item.makro_sku_id" class="text-[10px] text-emerald-600 font-mono mt-1">
+                    Makro SKU: {{ item.makro_sku_id }}
                   </div>
                   <div v-if="item.makro_submit_error" class="text-[11px] text-red-500 mt-1 line-clamp-1">
                     错误: {{ item.makro_submit_error }}
@@ -273,7 +308,7 @@
               :disabled="publishingId === activeItem.id"
               class="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg shadow-sm flex items-center space-x-1"
             >
-              <span>{{ publishingId === activeItem.id ? '全量上品中...' : `🚀 立即上品到 Makro (共 ${activeItem.variants ? activeItem.variants.length : 1} 个变体)` }}</span>
+              <span>{{ publishingId === activeItem.id ? '上品中...' : (activeItem.variants && activeItem.variants.length > 0 ? `🚀 立即上品到 Makro (共 ${activeItem.variants.length} 个子变体)` : '🚀 立即独立上品到 Makro') }}</span>
             </button>
             <button 
               @click="deleteItem(activeItem)" 
@@ -302,7 +337,7 @@
                   v-for="(img, idx) in activeItem.raw_images" 
                   :key="idx" 
                   :src="img" 
-                  class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0"
+                  class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0 bg-white"
                 />
               </div>
             </div>
@@ -398,6 +433,42 @@
                   type="number" 
                   class="w-full text-sm font-bold p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-slate-600"
                 />
+              </div>
+            </div>
+
+            <!-- 变体专属标识与异构参数 -->
+            <div class="bg-purple-50/50 p-3 rounded-xl border border-purple-100 space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="block text-xs font-bold text-purple-900">变体标识与异构参数</label>
+                <span class="text-[10px] text-purple-700 font-semibold bg-purple-100 px-1.5 py-0.5 rounded">独立变体实体</span>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">SKU ID</span>
+                  <input v-model="activeItem.sku_id" type="text" class="w-full p-1.5 text-xs font-mono border border-slate-300 rounded focus:ring-1 focus:ring-purple-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">颜色 (Colour)</span>
+                  <input v-model="activeItem.colour" type="text" class="w-full p-1.5 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-purple-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">尺码 (Size)</span>
+                  <input v-model="activeItem.size" type="text" class="w-full p-1.5 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-purple-500 bg-white" />
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">包装件数 (Pack of)</span>
+                  <input v-model="activeItem.pack_of" type="text" class="w-full p-1.5 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-purple-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">条形码 (Barcode)</span>
+                  <input v-model="activeItem.barcode" type="text" class="w-full p-1.5 text-xs font-mono border border-slate-300 rounded focus:ring-1 focus:ring-purple-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">母体代码 (Group Code)</span>
+                  <input v-model="activeItem.group_code" type="text" class="w-full p-1.5 text-xs font-mono border border-slate-300 rounded focus:ring-1 focus:ring-purple-500 bg-white" />
+                </div>
               </div>
             </div>
 
@@ -1009,6 +1080,7 @@
           loadingProducts: false,
           isCleaning: false,
           isBatchCheckingCompliance: false,
+          isBatchPublishing: false,
           publishingId: null,
           publishingVariantId: null,
           showQuickCollectModal: false,
@@ -1088,7 +1160,14 @@
                 makro_selling_price: this.activeItem.makro_selling_price,
                 makro_mrp: this.activeItem.makro_mrp,
                 makro_description: this.activeItem.makro_description,
-                makro_catalog_attributes: this.activeItem.makro_catalog_attributes
+                makro_catalog_attributes: this.activeItem.makro_catalog_attributes,
+                sku_id: this.activeItem.sku_id,
+                barcode: this.activeItem.barcode,
+                colour: this.activeItem.colour,
+                size: this.activeItem.size,
+                brand_colour: this.activeItem.brand_colour,
+                pack_of: this.activeItem.pack_of,
+                variant_attributes: this.activeItem.variant_attributes
               })
             });
             const updated = await res.json();
@@ -1129,6 +1208,26 @@
             }
           } catch (e) {
             alert('操作失败: ' + e);
+          }
+        },
+        async batchPublish() {
+          if (this.selectedIds.length === 0 || this.isBatchPublishing) return;
+          if (!confirm(`确定要批量将选中的 ${this.selectedIds.length} 件独立商品/变体上传至 Makro 卖家中心吗？`)) return;
+          this.isBatchPublishing = true;
+          try {
+            const res = await fetch('/api/makro/batch-publish', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ product_ids: this.selectedIds })
+            });
+            const resData = await res.json();
+            alert(`🚀 批量上品完成: 成功提交 ${resData.success} 件, 失败 ${resData.failed} 件`);
+            await this.loadProducts();
+            this.loadTasks();
+          } catch (e) {
+            alert('批量上品失败: ' + e);
+          } finally {
+            this.isBatchPublishing = false;
           }
         },
         async batchCheckCompliance() {

@@ -149,13 +149,12 @@ def _build_makro_payload(
     pkg_weight = str(pkg_dims.get("weight", _get_setting_val(db, "default_pkg_weight", "0.5")))
 
     # 目标变体 SKU 与价格 (确保 SKU 唯一以规避 SKU_ALREADY_USED 限制)
-    target_variant = variant or (product.variants[0] if product.variants else None)
-    base_sku = target_variant.sku_id if target_variant and target_variant.sku_id else f"BS-{product.id}"
+    base_sku = (variant.sku_id if variant and variant.sku_id else None) or product.sku_id or f"BS-{product.id}"
     ts_suffix = str(int(time.time()))[-4:]
     sku_id = f"{base_sku}-{ts_suffix}" if not base_sku.endswith(ts_suffix) else base_sku
 
-    var_selling = target_variant.makro_selling_price if target_variant and target_variant.makro_selling_price else product.makro_selling_price
-    var_mrp = target_variant.makro_mrp if target_variant and target_variant.makro_mrp else product.makro_mrp
+    var_selling = (variant.makro_selling_price if variant and variant.makro_selling_price else None) or product.makro_selling_price
+    var_mrp = (variant.makro_mrp if variant and variant.makro_mrp else None) or product.makro_mrp
     selling_price = str(int(var_selling or 199))
     mrp_price = str(int(var_mrp or 299))
 
@@ -271,30 +270,32 @@ def _build_makro_payload(
         catalog_attrs["model_number"] = [{"value": raw_mn[:250], "qualifier": None}]
 
     # ★★★ 变体专有属性精确覆盖 (容量 1TB/2TB/512GB, 尺码, 颜色, 包装数量等) ★★★
-    if target_variant:
-        var_attrs = json.loads(target_variant.variant_attributes) if target_variant.variant_attributes else {}
-        var_colour = target_variant.colour or var_attrs.get("colour")
-        var_brand_colour = target_variant.brand_colour or target_variant.colour or var_attrs.get("colour")
-        var_size = target_variant.size or var_attrs.get("size")
-        var_pack = str(target_variant.pack_of or var_attrs.get("pack_of") or "1")
+    var_attrs = json.loads(product.variant_attributes) if product.variant_attributes else {}
+    if variant and variant.variant_attributes:
+        var_attrs = {**var_attrs, **(json.loads(variant.variant_attributes) if variant.variant_attributes else {})}
 
-        if var_colour and (not allowed_attrs or "colour" in allowed_attrs):
-            catalog_attrs["colour"] = [{"value": str(var_colour), "qualifier": None}]
-        if var_brand_colour and (not allowed_attrs or "brand_colour" in allowed_attrs):
-            catalog_attrs["brand_colour"] = [{"value": str(var_brand_colour), "qualifier": None}]
-        if var_size and (not allowed_attrs or "size" in allowed_attrs):
-            catalog_attrs["size"] = [{"value": str(var_size), "qualifier": None}]
-        if var_pack and (not allowed_attrs or "pack_of" in allowed_attrs):
-            catalog_attrs["pack_of"] = [{"value": str(var_pack), "qualifier": None}]
+    var_colour = (variant.colour if variant and variant.colour else None) or product.colour or var_attrs.get("colour")
+    var_brand_colour = (variant.brand_colour if variant and variant.brand_colour else None) or product.brand_colour or var_colour
+    var_size = (variant.size if variant and variant.size else None) or product.size or var_attrs.get("size")
+    var_pack = str((variant.pack_of if variant and variant.pack_of else None) or product.pack_of or var_attrs.get("pack_of") or "1")
 
-        # 容量/内存参数 (如 1TB, 2TB, 512GB)
-        cap_val = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
-        if cap_val:
-            for cap_k in ["storage_capacity", "capacity", "internal_storage"]:
-                if not allowed_attrs or cap_k in allowed_attrs:
-                    def_item = allowed_attrs.get(cap_k)
-                    val_s, q_s = _format_attribute_value_and_qualifier(cap_k, cap_val, None, def_item, brand=brand)
-                    catalog_attrs[cap_k] = [{"value": val_s, "qualifier": q_s}]
+    if var_colour and (not allowed_attrs or "colour" in allowed_attrs):
+        catalog_attrs["colour"] = [{"value": str(var_colour), "qualifier": None}]
+    if var_brand_colour and (not allowed_attrs or "brand_colour" in allowed_attrs):
+        catalog_attrs["brand_colour"] = [{"value": str(var_brand_colour), "qualifier": None}]
+    if var_size and (not allowed_attrs or "size" in allowed_attrs):
+        catalog_attrs["size"] = [{"value": str(var_size), "qualifier": None}]
+    if var_pack and (not allowed_attrs or "pack_of" in allowed_attrs):
+        catalog_attrs["pack_of"] = [{"value": str(var_pack), "qualifier": None}]
+
+    # 容量/内存参数 (如 1TB, 2TB, 512GB)
+    cap_val = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
+    if cap_val:
+        for cap_k in ["storage_capacity", "capacity", "internal_storage"]:
+            if not allowed_attrs or cap_k in allowed_attrs:
+                def_item = allowed_attrs.get(cap_k)
+                val_s, q_s = _format_attribute_value_and_qualifier(cap_k, cap_val, None, def_item, brand=brand)
+                catalog_attrs[cap_k] = [{"value": val_s, "qualifier": q_s}]
 
     # C. 针对 Makro 草稿报错中指明的任何缺失字段，自动根据官方枚举或定义兜底补充
     missing_attrs = []
@@ -399,6 +400,63 @@ def _build_makro_payload(
     }
     return payload
 
+def _publish_single_product(
+    client: MakroClient,
+    db: Session,
+    product: Product,
+    vertical: str,
+    vid: Optional[str],
+    brand: str
+) -> dict:
+    """内部函数：为单个扁平独立商品创建草稿、上传图组并提交 Makro 发布"""
+    draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
+    request_id = draft_resp.get("requestId")
+    txn_id = draft_resp.get("txnId")
+    req_id = draft_resp.get("reqId")
+
+    if not request_id:
+        raise ValueError(f"商品 {product.id} 创建草稿失败: {draft_resp}")
+
+    product.makro_request_id = request_id
+
+    # 上传专属图片
+    raw_images = json.loads(product.raw_images) if product.raw_images else []
+    images_map = {}
+    for idx, img_url in enumerate(raw_images[:5]):
+        cdn_url = client.upload_image_from_url(img_url, vertical, request_id)
+        if cdn_url:
+            images_map[str(len(images_map))] = cdn_url
+
+    if not images_map:
+        raise ValueError(f"商品 {product.id} 没有可用的有效图片上传")
+
+    product.makro_images = json.dumps(images_map)
+
+    # 组装 Payload 并提交
+    payload = _build_makro_payload(
+        db, product, request_id, txn_id, req_id, images_map,
+        client=client, draft_resp=draft_resp
+    )
+    is_success, err_details, msg = client.submit_product(payload)
+
+    if is_success:
+        product.status = "SUBMITTED"
+        product.makro_sku_id = payload.get("skuId")
+        product.makro_submit_error = None
+    else:
+        product.status = "FAILED"
+        product.makro_submit_error = msg
+
+    db.commit()
+    return {
+        "product_id": product.id,
+        "sku_id": product.sku_id or product.makro_sku_id,
+        "success": is_success,
+        "request_id": request_id,
+        "message": msg,
+        "error_details": err_details
+    }
+
 def _publish_single_variant(
     client: MakroClient,
     db: Session,
@@ -408,7 +466,7 @@ def _publish_single_variant(
     vid: Optional[str],
     brand: str
 ) -> dict:
-    """内部函数：为指定变体创建草稿、上传专属图组并提交 Makro 发布"""
+    """内部函数：兼容遗留子变体结构发布"""
     draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
     request_id = draft_resp.get("requestId")
     txn_id = draft_resp.get("txnId")
@@ -419,7 +477,6 @@ def _publish_single_variant(
 
     variant.makro_request_id = request_id
 
-    # 上传变体专属图片 (若无图则 fallback 至主商品图)
     var_images = json.loads(variant.images) if variant.images else []
     if not var_images:
         var_images = json.loads(product.raw_images) if product.raw_images else []
@@ -435,7 +492,6 @@ def _publish_single_variant(
 
     variant.makro_image_urls = json.dumps(images_map)
 
-    # 组装变体 Payload 并提交
     payload = _build_makro_payload(
         db, product, request_id, txn_id, req_id, images_map,
         client=client, draft_resp=draft_resp, variant=variant
@@ -460,13 +516,13 @@ def _publish_single_variant(
         "error_details": err_details
     }
 
-@router.post("/publish/{product_id}", summary="自动执行全流程上品到 Makro (全量变体循环上架)")
+@router.post("/publish/{product_id}", summary="自动执行全流程上品到 Makro (独立单品/变体发布)")
 def publish_product_to_makro(product_id: int, force: bool = False, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
 
-    # 违禁品安全防护: 蓝牙、WiFi、红外线、液体
+    # 违禁品安全防护
     if product.compliance_status == "PROHIBITED" and not force:
         comp_details = json.loads(product.compliance_details) if product.compliance_details else {}
         items = comp_details.get("prohibited_items", [])
@@ -480,14 +536,12 @@ def publish_product_to_makro(product_id: int, force: bool = False, db: Session =
         product_id=product.id,
         task_type="SUBMIT_LISTING",
         status="RUNNING",
-        message="开始执行 Makro 多变体全量上品协议调用..."
+        message="开始执行 Makro 上品协议调用..."
     )
     db.add(task)
     db.commit()
 
     client = MakroClient.from_db(db)
-
-    # 检查是否已配置或同步 Makro 登录态 Cookie
     if not client.cookie:
         msg = "未检测到 Makro 登录态 Cookie！请先在 Chrome 打开 Makro 卖家后台并点击【🔄 同步登录态至后台】，或在系统设置中填入 Cookie。"
         product.status = "FAILED"
@@ -504,96 +558,88 @@ def publish_product_to_makro(product_id: int, force: bool = False, db: Session =
         }
 
     try:
-        # 1. 动态解析合法 Vertical 与 VID
         raw_vertical = product.makro_vertical or "bath_towel"
         valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
-        vertical = valid_vertical
         if valid_vertical != product.makro_vertical:
             product.makro_vertical = valid_vertical
             db.commit()
 
         brand = product.makro_brand or "Beishi"
 
-        # 2. 获取或兜底生成变体列表
-        variants = product.variants
-        if not variants or len(variants) == 0:
-            sku_id = f"SKU-{uuid.uuid4().hex[:8].upper()}"
-            def_var = ProductVariant(
-                product_id=product.id,
-                sku_id=sku_id,
-                variant_title=product.makro_title or product.takealot_title,
-                size="均码",
-                colour="多色",
-                brand_colour="多色",
-                pack_of="1",
-                takealot_price=product.takealot_price or 0.0,
-                makro_selling_price=product.makro_selling_price or 199.0,
-                makro_mrp=product.makro_mrp or 299.0,
-                images=product.raw_images,
-                status="PENDING"
-            )
-            db.add(def_var)
+        # 如果商品带有遗留子变体则循环发布，否则直接发布当前独立商品
+        if product.variants and len(product.variants) > 0:
+            results = []
+            for v in product.variants:
+                try:
+                    res = _publish_single_variant(client, db, product, v, valid_vertical, vid, brand)
+                    results.append(res)
+                except Exception as ex:
+                    logger.error(f"变体 {v.sku_id} 上架异常: {ex}", exc_info=True)
+                    v.status = "FAILED"
+                    v.makro_submit_error = str(ex)
+                    db.commit()
+                    results.append({"variant_id": v.id, "sku_id": v.sku_id, "success": False, "message": str(ex)})
+
+            success_count = sum(1 for r in results if r["success"])
+            total_count = len(product.variants)
+            product.makro_request_id = results[0].get("request_id") if results else None
+            task.request_id = product.makro_request_id
+
+            if success_count == total_count:
+                product.status = "SUBMITTED"
+                product.makro_submit_error = None
+                task.status = "SUCCESS"
+                task.message = f"全量成功上架所有 {total_count} 个变体到 Makro (已提交审核)！"
+                is_overall_success = True
+            elif success_count > 0:
+                product.status = "PARTIAL_SUBMITTED"
+                product.makro_submit_error = f"{success_count}/{total_count} 个变体提交成功，部分失败"
+                task.status = "WARNING"
+                task.message = f"部分变体提交成功 ({success_count}/{total_count})"
+                is_overall_success = True
+            else:
+                product.status = "FAILED"
+                first_err = results[0]["message"] if results else "未知错误"
+                product.makro_submit_error = f"所有变体提交均失败: {first_err}"
+                task.status = "FAILED"
+                task.message = product.makro_submit_error
+                is_overall_success = False
+
+            task.detail_logs = json.dumps(results, ensure_ascii=False)
+            task.finished_at = datetime.utcnow()
             db.commit()
             db.refresh(product)
-            variants = product.variants
 
-        # 3. 循环上架所有变体
-        results = []
-        for v in variants:
-            try:
-                res = _publish_single_variant(client, db, product, v, vertical, vid, brand)
-                results.append(res)
-            except Exception as ex:
-                logger.error(f"变体 {v.sku_id} 上架异常: {ex}", exc_info=True)
-                v.status = "FAILED"
-                v.makro_submit_error = str(ex)
-                db.commit()
-                results.append({
-                    "variant_id": v.id,
-                    "sku_id": v.sku_id,
-                    "success": False,
-                    "request_id": getattr(v, "makro_request_id", None),
-                    "message": f"执行异常: {ex}",
-                    "error_details": {}
-                })
-
-        success_count = sum(1 for r in results if r["success"])
-        total_count = len(variants)
-        product.makro_request_id = results[0].get("request_id") if results else None
-        task.request_id = product.makro_request_id
-
-        if success_count == total_count:
-            product.status = "SUBMITTED"
-            product.makro_submit_error = None
-            task.status = "SUCCESS"
-            task.message = f"全量成功上架所有 {total_count} 个变体到 Makro (已提交审核)！"
-            is_overall_success = True
-        elif success_count > 0:
-            product.status = "PARTIAL_SUBMITTED"
-            product.makro_submit_error = f"{success_count}/{total_count} 个变体提交成功，部分失败"
-            task.status = "WARNING"
-            task.message = f"部分变体提交成功 ({success_count}/{total_count})"
-            is_overall_success = True
+            return {
+                "success": is_overall_success,
+                "message": task.message,
+                "request_id": product.makro_request_id,
+                "results": results,
+                "product": _format_product(product)
+            }
         else:
-            product.status = "FAILED"
-            first_err = results[0]["message"] if results else "未知错误"
-            product.makro_submit_error = f"所有变体提交均失败: {first_err}"
-            task.status = "FAILED"
-            task.message = product.makro_submit_error
-            is_overall_success = False
+            # 扁平独立商品直接单品发布
+            res = _publish_single_product(client, db, product, valid_vertical, vid, brand)
+            task.request_id = product.makro_request_id
+            if res["success"]:
+                task.status = "SUCCESS"
+                task.message = f"成功上架商品 {product.makro_sku_id or product.id} 到 Makro (已提交审核)！"
+            else:
+                task.status = "FAILED"
+                task.message = f"上架失败: {res['message']}"
 
-        task.detail_logs = json.dumps(results, ensure_ascii=False)
-        task.finished_at = datetime.utcnow()
-        db.commit()
-        db.refresh(product)
+            task.detail_logs = json.dumps(res, ensure_ascii=False)
+            task.finished_at = datetime.utcnow()
+            db.commit()
+            db.refresh(product)
 
-        return {
-            "success": is_overall_success,
-            "message": task.message,
-            "request_id": product.makro_request_id,
-            "results": results,
-            "product": _format_product(product)
-        }
+            return {
+                "success": res["success"],
+                "message": task.message,
+                "request_id": product.makro_request_id,
+                "results": [res],
+                "product": _format_product(product)
+            }
     except Exception as e:
         logger.error(f"上品总流程异常: {e}", exc_info=True)
         err_msg = str(e)
@@ -609,6 +655,54 @@ def publish_product_to_makro(product_id: int, force: bool = False, db: Session =
             "request_id": getattr(task, "request_id", None),
             "product": _format_product(product)
         }
+
+@router.post("/batch-publish", summary="批量上品到 Makro")
+def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Session = Depends(get_db)):
+    success_count = 0
+    fail_count = 0
+    results = []
+
+    client = MakroClient.from_db(db)
+    if not client.cookie:
+        raise HTTPException(status_code=400, detail="未检测到 Makro 登录态 Cookie！请先在 Chrome 插件同步登录态。")
+
+    for pid in req.product_ids:
+        product = db.query(Product).filter(Product.id == pid).first()
+        if not product:
+            fail_count += 1
+            results.append({"product_id": pid, "success": False, "message": "商品未找到"})
+            continue
+
+        if product.compliance_status == "PROHIBITED" and not force:
+            fail_count += 1
+            results.append({"product_id": pid, "success": False, "message": "违禁品拦截"})
+            continue
+
+        try:
+            raw_vertical = product.makro_vertical or "bath_towel"
+            valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+            brand = product.makro_brand or "Beishi"
+
+            res = _publish_single_product(client, db, product, valid_vertical, vid, brand)
+            if res["success"]:
+                success_count += 1
+            else:
+                fail_count += 1
+            results.append(res)
+        except Exception as ex:
+            logger.error(f"商品 {pid} 批量上架异常: {ex}", exc_info=True)
+            product.status = "FAILED"
+            product.makro_submit_error = str(ex)
+            db.commit()
+            fail_count += 1
+            results.append({"product_id": pid, "success": False, "message": str(ex)})
+
+    return {
+        "total": len(req.product_ids),
+        "success": success_count,
+        "failed": fail_count,
+        "results": results
+    }
 
 @router.post("/publish-variant/{variant_id}", summary="单变体独立上品或重新上架到 Makro")
 def publish_single_variant_to_makro(variant_id: int, force: bool = False, db: Session = Depends(get_db)):

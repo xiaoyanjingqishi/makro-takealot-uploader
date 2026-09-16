@@ -1,3 +1,4 @@
+import re
 import json
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,12 +31,14 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
     try:
         ai_service = AICleanerService.from_db(db)
         specs = json.loads(product.takealot_specs) if product.takealot_specs else {}
+        var_attrs = json.loads(product.variant_attributes) if product.variant_attributes else {}
+        combined_specs = {**specs, **var_attrs}
         
         cleaned = ai_service.clean_product_data({
             "takealot_title": product.takealot_title,
             "takealot_brand": product.takealot_brand,
             "takealot_category": product.takealot_category,
-            "takealot_specs": specs,
+            "takealot_specs": combined_specs,
             "takealot_description": product.takealot_description
         }, target_brand=product.makro_brand or "Beishi")
 
@@ -51,6 +54,19 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
             if k in ["width", "length"]:
                 qualifier = "cm"
             catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
+
+        # 变体专有属性直接覆盖/注入
+        if product.colour or var_attrs.get("colour"):
+            c_val = str(product.colour or var_attrs.get("colour"))
+            catalog_attrs["colour"] = [{"value": c_val, "qualifier": None}]
+            catalog_attrs["brand_colour"] = [{"value": str(product.brand_colour or c_val), "qualifier": None}]
+        if product.size or var_attrs.get("size"):
+            catalog_attrs["size"] = [{"value": str(product.size or var_attrs.get("size")), "qualifier": None}]
+        if product.pack_of or var_attrs.get("pack_of"):
+            catalog_attrs["pack_of"] = [{"value": str(product.pack_of or var_attrs.get("pack_of")), "qualifier": None}]
+        cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
+        if cap:
+            catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
 
         # 确保 model_number 放入去除品牌名后的商品描述，防止触发 Brand name should not be part of model_number 限制
         target_b = product.makro_brand or "Beishi"
@@ -92,16 +108,20 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
 
         try:
             specs = json.loads(product.takealot_specs) if product.takealot_specs else {}
+            var_attrs = json.loads(product.variant_attributes) if product.variant_attributes else {}
+            combined_specs = {**specs, **var_attrs}
+
             cleaned = ai_service.clean_product_data({
                 "takealot_title": product.takealot_title,
                 "takealot_brand": product.takealot_brand,
                 "takealot_category": product.takealot_category,
-                "takealot_specs": specs,
+                "takealot_specs": combined_specs,
                 "takealot_description": product.takealot_description
             }, target_brand=product.makro_brand or "Beishi")
 
             product.makro_title = cleaned.get("makro_title", product.takealot_title)
-            product.makro_description = cleaned.get("description", product.takealot_description)
+            raw_desc = cleaned.get("description", product.takealot_description)
+            product.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
             product.makro_vertical = cleaned.get("vertical", "bath_towel")
 
             attrs = cleaned.get("attributes", {})
@@ -111,6 +131,18 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                 if k in ["width", "length"]:
                     qualifier = "cm"
                 catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
+
+            if product.colour or var_attrs.get("colour"):
+                c_val = str(product.colour or var_attrs.get("colour"))
+                catalog_attrs["colour"] = [{"value": c_val, "qualifier": None}]
+                catalog_attrs["brand_colour"] = [{"value": str(product.brand_colour or c_val), "qualifier": None}]
+            if product.size or var_attrs.get("size"):
+                catalog_attrs["size"] = [{"value": str(product.size or var_attrs.get("size")), "qualifier": None}]
+            if product.pack_of or var_attrs.get("pack_of"):
+                catalog_attrs["pack_of"] = [{"value": str(product.pack_of or var_attrs.get("pack_of")), "qualifier": None}]
+            cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
+            if cap:
+                catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
 
             target_b = product.makro_brand or "Beishi"
             clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', product.makro_title or "", flags=re.I)

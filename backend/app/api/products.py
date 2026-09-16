@@ -22,6 +22,7 @@ def _format_product(p: Product) -> dict:
     list_attrs = json.loads(p.makro_listing_attributes) if p.makro_listing_attributes else {}
     pkg_dims = json.loads(p.makro_package_dimensions) if p.makro_package_dimensions else {}
     makro_imgs = json.loads(p.makro_images) if p.makro_images else {}
+    var_attrs = json.loads(p.variant_attributes) if p.variant_attributes else {}
 
     variants_data = []
     for v in p.variants:
@@ -74,6 +75,14 @@ def _format_product(p: Product) -> dict:
         "makro_package_dimensions": pkg_dims,
         "makro_images": makro_imgs,
         "group_code": p.group_code,
+        "sku_id": p.sku_id,
+        "barcode": p.barcode,
+        "variant_attributes": var_attrs,
+        "size": p.size,
+        "colour": p.colour,
+        "brand_colour": p.brand_colour,
+        "pack_of": p.pack_of,
+        "makro_sku_id": p.makro_sku_id,
         "makro_request_id": p.makro_request_id,
         "makro_submit_error": p.makro_submit_error,
         "compliance_status": p.compliance_status or "PENDING_CHECK",
@@ -83,19 +92,33 @@ def _format_product(p: Product) -> dict:
         "variants": variants_data
     }
 
-@router.post("/collect", response_model=ProductResponse, summary="接收插件采集的 Takealot 商品")
+@router.post("/collect", summary="接收插件采集的 Takealot 商品")
 def collect_product(req: TakealotCollectRequest, db: Session = Depends(get_db)):
-    product = TakealotService.save_collected_product(db, req)
-    return _format_product(product)
+    products = TakealotService.save_collected_product(db, req)
+    if isinstance(products, list):
+        primary = _format_product(products[0]) if products else {}
+        return {
+            "total_variants": len(products),
+            "items": [_format_product(p) for p in products],
+            **primary
+        }
+    return _format_product(products)
 
-@router.post("/collect-by-plid", response_model=ProductResponse, summary="通过 Takealot PLID 或 URL 直接请求官方 API 极速采集")
+@router.post("/collect-by-plid", summary="通过 Takealot PLID 或 URL 直接请求官方 API 极速采集")
 def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
     plid_or_url = payload.get("plid") or payload.get("url")
     if not plid_or_url:
         raise HTTPException(status_code=400, detail="请提供 plid 或 url 参数")
     try:
-        product = TakealotService.fetch_and_save_by_plid(plid_or_url, db)
-        return _format_product(product)
+        products = TakealotService.fetch_and_save_by_plid(plid_or_url, db)
+        if isinstance(products, list):
+            primary = _format_product(products[0]) if products else {}
+            return {
+                "total_variants": len(products),
+                "items": [_format_product(p) for p in products],
+                **primary
+            }
+        return _format_product(products)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"采集异常: {str(e)}")
 
@@ -111,7 +134,16 @@ def list_products(
     if status:
         query = query.filter(Product.status == status)
     if search:
-        query = query.filter(Product.takealot_title.ilike(f"%{search}%") | Product.makro_title.ilike(f"%{search}%"))
+        s = f"%{search.strip()}%"
+        query = query.filter(
+            Product.takealot_title.ilike(s) |
+            Product.makro_title.ilike(s) |
+            Product.group_code.ilike(s) |
+            Product.takealot_id.ilike(s) |
+            Product.sku_id.ilike(s) |
+            Product.barcode.ilike(s) |
+            Product.makro_sku_id.ilike(s)
+        )
 
     total = query.count()
     items = query.order_by(Product.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -143,6 +175,14 @@ def update_product(product_id: int, req: ProductUpdateRequest, db: Session = Dep
     if req.makro_mrp is not None: product.makro_mrp = req.makro_mrp
     if req.makro_description is not None: product.makro_description = req.makro_description
     if req.group_code is not None: product.group_code = req.group_code
+    if req.sku_id is not None: product.sku_id = req.sku_id
+    if req.barcode is not None: product.barcode = req.barcode
+    if req.size is not None: product.size = req.size
+    if req.colour is not None: product.colour = req.colour
+    if req.brand_colour is not None: product.brand_colour = req.brand_colour
+    if req.pack_of is not None: product.pack_of = req.pack_of
+    if req.variant_attributes is not None:
+        product.variant_attributes = json.dumps(req.variant_attributes)
     
     if req.makro_catalog_attributes is not None:
         product.makro_catalog_attributes = json.dumps(req.makro_catalog_attributes)

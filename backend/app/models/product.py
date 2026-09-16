@@ -34,9 +34,19 @@ class Product(Base):
     makro_package_dimensions = Column(Text, nullable=True)  # 包装长宽高重量
     makro_images = Column(Text, nullable=True)              # 上传至 Makro CDN 后的图片 URL 映射
     
+    # 变体专属特定参数 (支持单商品独立变体模型)
+    sku_id = Column(String(100), index=True, nullable=True)
+    barcode = Column(String(100), nullable=True)
+    variant_attributes = Column(Text, nullable=True)  # JSON: {"capacity": "1TB", "colour": "Gold"}
+    size = Column(String(50), nullable=True)
+    colour = Column(String(50), nullable=True)
+    brand_colour = Column(String(50), nullable=True)
+    pack_of = Column(String(50), default="1")
+    
     # 变体分组与平台凭据
     group_code = Column(String(100), index=True, nullable=True)
     makro_request_id = Column(String(100), nullable=True)
+    makro_sku_id = Column(String(100), nullable=True)
     makro_submit_error = Column(Text, nullable=True)
 
     # AI 侵权与合规检测: PENDING_CHECK, SAFE, RISK, PROHIBITED
@@ -46,7 +56,7 @@ class Product(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # 关联变体
+    # 关联变体 (保持向下兼容)
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
 
 

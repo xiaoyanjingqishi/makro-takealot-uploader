@@ -78,6 +78,14 @@ class ProductResponse(BaseModel):
     makro_images: Optional[Dict[str, str]] = None
     
     group_code: Optional[str] = None
+    sku_id: Optional[str] = None
+    barcode: Optional[str] = None
+    variant_attributes: Optional[Dict[str, Any]] = None
+    colour: Optional[str] = None
+    size: Optional[str] = None
+    brand_colour: Optional[str] = None
+    pack_of: Optional[str] = "1"
+    makro_sku_id: Optional[str] = None
     makro_request_id: Optional[str] = None
     makro_submit_error: Optional[str] = None
     compliance_status: Optional[str] = "PENDING_CHECK"
@@ -100,6 +108,13 @@ class ProductUpdateRequest(BaseModel):
     makro_catalog_attributes: Optional[Dict[str, Any]] = None
     makro_package_dimensions: Optional[Dict[str, Any]] = None
     group_code: Optional[str] = None
+    sku_id: Optional[str] = None
+    barcode: Optional[str] = None
+    variant_attributes: Optional[Dict[str, Any]] = None
+    colour: Optional[str] = None
+    size: Optional[str] = None
+    brand_colour: Optional[str] = None
+    pack_of: Optional[str] = None
 
 class BatchCleanRequest(BaseModel):
     product_ids: List[int]
