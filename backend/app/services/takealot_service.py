@@ -222,80 +222,99 @@ class TakealotService:
 
         combinations_to_fetch = []
 
-        if len(v_selectors) == 1:
+        # 通用 N 级变体树展开引擎 (支持 1级单变量、2级双变量、3级及以上多维度任意层级组合)
+        num_levels = len(v_selectors)
+        current_nodes = []
+
+        if num_levels == 1:
             sel = v_selectors[0]
             sel_title = sel.get('title') or 'Option'
-            sel_type = sel.get('selector_type', '').lower()
             for opt in sel.get('options', []):
                 val = opt.get('value')
                 v_name = val.get('name') if isinstance(val, dict) else (str(val) if val is not None else opt.get('id', ''))
                 href = opt.get('href')
                 if href and not href.startswith('http'):
                     href = f"https://api.takealot.com{href}"
-                combinations_to_fetch.append({
+                current_nodes.append({
                     'href': href,
                     'attrs': {sel_title: v_name},
                     'fallback_gallery': raw_images[:5],
                     'opt': opt
                 })
-        elif len(v_selectors) >= 2:
-            # 多维选择器处理: 先并发拉取主维度(如颜色)获取其专属相册与下一级完整组合 URL
-            primary_sel = v_selectors[0]
-            primary_title = primary_sel.get('title') or 'Option1'
-            primary_type = primary_sel.get('selector_type', '').lower()
-
-            def _fetch_primary(opt):
+        elif num_levels >= 2:
+            # 第一层级（主维度，如颜色/主型号）初始化
+            sel0 = v_selectors[0]
+            s0_title = sel0.get('title') or 'Option1'
+            for opt in sel0.get('options', []):
+                val = opt.get('value')
+                name = val.get('name') if isinstance(val, dict) else (str(val) if val is not None else opt.get('id', ''))
                 href = opt.get('href')
-                if not href:
-                    return (opt, None)
-                if not href.startswith('http'):
+                if href and not href.startswith('http'):
                     href = f"https://api.takealot.com{href}"
+                current_nodes.append({
+                    'href': href,
+                    'attrs': {s0_title: name},
+                    'fallback_gallery': raw_images[:5],
+                    'level': 0,
+                    'opt': opt
+                })
+
+            def _fetch_node_data(href):
+                if not href:
+                    return None
                 try:
                     r = session.get(href, headers=headers, timeout=20)
                     if r.status_code == 200:
-                        return (opt, r.json())
+                        return r.json()
                 except Exception as e:
-                    logger.warning(f"获取主变体选项 {href} 异常: {e}")
-                return (opt, None)
+                    logger.warning(f"获取变体层级数据异常 {href}: {e}")
+                return None
 
-            with ThreadPoolExecutor(max_workers=8) as ex:
-                primary_results = list(ex.map(_fetch_primary, primary_sel.get('options', [])))
+            # 逐层向下递归展开（支持 2 级、3 级、4 级等多维任意层级嵌套）
+            for lvl in range(1, num_levels):
+                next_nodes = []
 
-            for opt0, sub_data in primary_results:
-                val0 = opt0.get('value')
-                name0 = val0.get('name') if isinstance(val0, dict) else (str(val0) if val0 is not None else opt0.get('id', ''))
+                def _expand_branch(node):
+                    sub_data = _fetch_node_data(node['href'])
+                    node_gallery = list(node['fallback_gallery'])
+                    if sub_data:
+                        for img in (sub_data.get('gallery') or {}).get('images') or []:
+                            hd = img.replace('{size}', 'pdpxl') if '{size}' in img else img
+                            if hd not in node_gallery:
+                                node_gallery.append(hd)
 
-                opt0_gallery = []
-                if sub_data:
-                    for img in (sub_data.get('gallery') or {}).get('images') or []:
-                        hd = img.replace('{size}', 'pdpxl') if '{size}' in img else img
-                        if hd not in opt0_gallery:
-                            opt0_gallery.append(hd)
-                if not opt0_gallery:
-                    opt0_gallery = raw_images[:5]
+                    sub_selectors = (sub_data.get('variants') or {}).get('selectors') if sub_data else None
+                    if sub_selectors and len(sub_selectors) > lvl:
+                        next_sel = sub_selectors[lvl]
+                    else:
+                        next_sel = v_selectors[lvl]
 
-                sub_selectors = (sub_data.get('variants') or {}).get('selectors') if sub_data else v_selectors
-                secondary_sels = [s for s in (sub_selectors or []) if s.get('selector_type') != primary_type]
-                if not secondary_sels:
-                    secondary_sels = v_selectors[1:]
-
-                for s_sel in secondary_sels:
-                    s_title = s_sel.get('title') or 'Option2'
-                    for opt1 in s_sel.get('options', []):
-                        val1 = opt1.get('value')
-                        name1 = val1.get('name') if isinstance(val1, dict) else (str(val1) if val1 is not None else opt1.get('id', ''))
-                        combo_href = opt1.get('href')
+                    n_title = next_sel.get('title') or f"Option{lvl+1}"
+                    children = []
+                    for opt in next_sel.get('options', []):
+                        val = opt.get('value')
+                        name = val.get('name') if isinstance(val, dict) else (str(val) if val is not None else opt.get('id', ''))
+                        combo_href = opt.get('href')
                         if combo_href and not combo_href.startswith('http'):
                             combo_href = f"https://api.takealot.com{combo_href}"
-                        combinations_to_fetch.append({
+                        child_attrs = dict(node['attrs'])
+                        child_attrs[n_title] = name
+                        children.append({
                             'href': combo_href,
-                            'attrs': {
-                                primary_title: name0,
-                                s_title: name1
-                            },
-                            'fallback_gallery': opt0_gallery,
-                            'opt': opt1
+                            'attrs': child_attrs,
+                            'fallback_gallery': node_gallery,
+                            'level': lvl,
+                            'opt': opt
                         })
+                    return children
+
+                with ThreadPoolExecutor(max_workers=10) as ex:
+                    results = list(ex.map(_expand_branch, current_nodes))
+                for res in results:
+                    next_nodes.extend(res)
+                current_nodes = next_nodes
+
+        combinations_to_fetch = current_nodes
 
         if combinations_to_fetch:
             def _fetch_combo_detail(combo):
