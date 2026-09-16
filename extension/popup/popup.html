@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Makro 搬品助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="logo-area">
+        <span class="logo-badge">M</span>
+        <h3>Makro 搬品助手</h3>
+      </div>
+      <span id="backend-status" class="status-badge offline">检测中...</span>
+    </header>
+
+    <div class="body-content">
+      <div class="card current-page-card">
+        <div class="card-header">当前页面状态</div>
+        <div id="page-info" class="page-info">正在识别页面...</div>
+        <button id="action-btn" class="btn primary-btn" disabled>获取中...</button>
+      </div>
+
+      <div class="card stats-card">
+        <div class="stat-item">
+          <span class="stat-label">待上品商品</span>
+          <span id="stat-count" class="stat-num">-</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">默认加价</span>
+          <span id="stat-markup" class="stat-num">+35% +R20</span>
+        </div>
+      </div>
+
+      <div class="actions-area">
+        <a id="open-dashboard-btn" href="http://localhost:8001" target="_blank" class="btn outline-btn">
+          🚀 打开搬品控制台
+        </a>
+      </div>
+    </div>
+    
+    <footer class="footer">
+      <span>Takealot &rarr; Makro 自动化</span>
+      <span class="ver">v1.0.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

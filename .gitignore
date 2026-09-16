@@ -1,0 +1,64 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+
+# SQLite Database & Session Data
+*.db
+*.sqlite
+*.sqlite3
+makro_app.db
+backend/makro_app.db
+
+# HAR Traffic Dumps
+*.har
+
+# Environment & Credentials
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Frontend & Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE & OS Files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Temp scratch & screenshots
+scratch/
+scratch_test_app.js
+.tempmediaStorage/

@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Takealot to Makro 智能搬品助手",
+  "version": "1.0.0",
+  "description": "在 Takealot 前台一键采集选品，经 AI 清洗规整后自动刊登到 Makro 卖家平台",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "storage",
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://*.takealot.com/*",
+    "https://seller.makro.co.za/*",
+    "http://127.0.0.1:*/*",
+    "http://localhost:*/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Makro 搬品助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "scripts/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.takealot.com/*"
+      ],
+      "js": [
+        "scripts/content_takealot.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://seller.makro.co.za/*"
+      ],
+      "js": [
+        "scripts/content_makro.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

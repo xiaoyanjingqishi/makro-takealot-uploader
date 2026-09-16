@@ -1,0 +1,607 @@
+import json
+import time
+import uuid
+import logging
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from datetime import datetime
+from ..database import get_db
+from ..models.product import Product, ProductVariant
+from ..models.setting import SystemSetting
+from ..models.task import TaskLog
+from ..schemas.setting import SyncCredentialsRequest
+from ..schemas.product import BatchPublishRequest
+from ..services.makro_client import MakroClient
+from ..services.vertical_service import VerticalService
+from ..config import settings
+from .products import _format_product
+
+router = APIRouter(prefix="/makro", tags=["Makro上品引擎"])
+logger = logging.getLogger(__name__)
+
+def _get_setting_val(db: Session, key: str, default: str) -> str:
+    s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    return s.value if s and s.value else default
+
+def _build_makro_payload(
+    db: Session,
+    product: Product,
+    request_id: str,
+    txn_id: str,
+    req_id: str,
+    images_map: Dict[str, str],
+    client: Optional[MakroClient] = None,
+    draft_resp: Optional[Dict[str, Any]] = None,
+    variant: Optional[ProductVariant] = None
+) -> Dict[str, Any]:
+    """
+    基于抓包逆向结果精准构建 Makro (Flipkart SaaS) submit 请求体
+    动态根据类目定义过滤与补齐必填属性（支持特定变体专属参数与多变体聚合）
+    """
+    seller_id = _get_setting_val(db, "seller_id", settings.DEFAULT_SELLER_ID)
+    brand = product.makro_brand or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
+    raw_vertical = product.makro_vertical or "bath_towel"
+    valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+    vertical = valid_vertical
+    
+    shipping_days = _get_setting_val(db, "shipping_days", settings.DEFAULT_SHIPPING_DAYS)
+    country_of_origin = _get_setting_val(db, "country_of_origin", settings.DEFAULT_COUNTRY_OF_ORIGIN)
+    manufacturer = _get_setting_val(db, "manufacturer_details", settings.DEFAULT_MANUFACTURER)
+    packer = _get_setting_val(db, "packer_details", settings.DEFAULT_PACKER)
+
+    # 包装参数
+    pkg_dims = json.loads(product.makro_package_dimensions) if product.makro_package_dimensions else {}
+    pkg_len = str(pkg_dims.get("length", _get_setting_val(db, "default_pkg_length", "20")))
+    pkg_breadth = str(pkg_dims.get("breadth", _get_setting_val(db, "default_pkg_breadth", "15")))
+    pkg_height = str(pkg_dims.get("height", _get_setting_val(db, "default_pkg_height", "5")))
+    pkg_weight = str(pkg_dims.get("weight", _get_setting_val(db, "default_pkg_weight", "0.5")))
+
+    # 目标变体 SKU 与价格 (确保 SKU 唯一以规避 SKU_ALREADY_USED 限制)
+    target_variant = variant or (product.variants[0] if product.variants else None)
+    base_sku = target_variant.sku_id if target_variant and target_variant.sku_id else f"BS-{product.id}"
+    ts_suffix = str(int(time.time()))[-4:]
+    sku_id = f"{base_sku}-{ts_suffix}" if not base_sku.endswith(ts_suffix) else base_sku
+
+    var_selling = target_variant.makro_selling_price if target_variant and target_variant.makro_selling_price else product.makro_selling_price
+    var_mrp = target_variant.makro_mrp if target_variant and target_variant.makro_mrp else product.makro_mrp
+    selling_price = str(int(var_selling or 199))
+    mrp_price = str(int(var_mrp or 299))
+
+    # 获取类目官方属性定义以做严格过滤
+    allowed_attrs = {}
+    if client:
+        try:
+            v_def = client.get_vertical_definition(vertical)
+            for item in v_def.get("entityDefinitionMap", {}).get(vertical, {}).get("definitionList", []):
+                name = item.get("attributeName")
+                if name:
+                    allowed_attrs[name] = item
+        except Exception as e:
+            logger.warning(f"获取类目 {vertical} 属性定义失败: {e}")
+
+    # Catalog 属性组装
+    user_attrs = json.loads(product.makro_catalog_attributes) if product.makro_catalog_attributes else {}
+    catalog_attrs = {}
+
+    # 1. 保留合法属性
+    for k, v_list in user_attrs.items():
+        if allowed_attrs and k not in allowed_attrs:
+            continue  # 抛弃该类目不支持的属性 (如 plier 下的 colour/size)
+        if isinstance(v_list, list) and len(v_list) > 0:
+            val = v_list[0].get("value")
+            q = v_list[0].get("qualifier")
+        else:
+            val = str(v_list)
+            q = None
+
+        if k in ["overall_length", "width", "length", "height", "depth"] and not q:
+            q = "cm"
+        catalog_attrs[k] = [{"value": str(val), "qualifier": q}]
+
+    # 2. 保证 brand 存在
+    catalog_attrs["brand"] = [{"value": brand, "qualifier": None}]
+
+    # 3. 保证 description 存在 (如类目支持)
+    if (not allowed_attrs or "description" in allowed_attrs) and "description" not in catalog_attrs and product.makro_description:
+        catalog_attrs["description"] = [{"value": str(product.makro_description), "qualifier": None}]
+
+    # 4. 全品类智能自适应必填字段抽取与补全
+    full_text = f"{product.makro_title or ''} {product.takealot_title or ''} {product.takealot_description or ''} {product.takealot_specs or ''}".lower()
+
+    # A. 针对不同类目的特定字段智能抽取
+    # A1. 网络设备 (network_switch / router)
+    if "network" in vertical or vertical in ["network_switch", "switch", "router"]:
+        if "number_of_ethernet_ports" in allowed_attrs and "number_of_ethernet_ports" not in catalog_attrs:
+            import re
+            ports_match = re.search(r'(\d+)\s*(?:port|ports|-port|x\s*rj45)', full_text)
+            ports_val = ports_match.group(1) if ports_match else "16"
+            catalog_attrs["number_of_ethernet_ports"] = [{"value": str(ports_val), "qualifier": None}]
+        if "speed" in allowed_attrs and "speed" not in catalog_attrs:
+            speed_val = "1000" if ("gigabit" in full_text or "1000" in full_text) else "100"
+            catalog_attrs["speed"] = [{"value": speed_val, "qualifier": "Mbps"}]
+        if "type" in allowed_attrs and "type" not in catalog_attrs:
+            sw_type = "Unmanaged"
+            if "smart" in full_text: sw_type = "Smart"
+            elif "managed" in full_text and "unmanaged" not in full_text: sw_type = "Fully Managed"
+            catalog_attrs["type"] = [{"value": sw_type, "qualifier": None}]
+
+    # A2. 智能插座 / 智能开关 / 定时器开关 (smart_switch_plug / electronic_timer_switch)
+    if "smart_switch" in vertical or "smart_plug" in vertical or "timer_switch" in vertical:
+        if "type" in allowed_attrs and "type" not in catalog_attrs:
+            catalog_attrs["type"] = [{"value": "Smart Switch" if "switch" in full_text else "Smart Plug", "qualifier": None}]
+        if "maximum_load" in allowed_attrs and "maximum_load" not in catalog_attrs:
+            catalog_attrs["maximum_load"] = [{"value": "6000", "qualifier": "W"}]
+        if "voltage" in allowed_attrs and "voltage" not in catalog_attrs:
+            catalog_attrs["voltage"] = [{"value": "100-240V AC", "qualifier": None}]
+        if "installation_method" in allowed_attrs and "installation_method" not in catalog_attrs:
+            catalog_attrs["installation_method"] = [{"value": "In-wall", "qualifier": None}]
+        if "voice_assistant_compatibility" in allowed_attrs and "voice_assistant_compatibility" not in catalog_attrs:
+            catalog_attrs["voice_assistant_compatibility"] = [{"value": "Google Assistant and Alexa", "qualifier": None}]
+        if "connectivity" in allowed_attrs and "connectivity" not in catalog_attrs:
+            catalog_attrs["connectivity"] = [{"value": "Wi-Fi", "qualifier": None}]
+        if "compatible_devices" in allowed_attrs and "compatible_devices" not in catalog_attrs:
+            catalog_attrs["compatible_devices"] = [{"value": "Geyser, Water Heater, Home Appliances", "qualifier": None}]
+
+    # 通用质保与售后
+    if "warranty_summary" in allowed_attrs and "warranty_summary" not in catalog_attrs:
+        catalog_attrs["warranty_summary"] = [{"value": "1 Year Manufacturer Warranty", "qualifier": None}]
+    if "warranty_service_type" in allowed_attrs and "warranty_service_type" not in catalog_attrs:
+        catalog_attrs["warranty_service_type"] = [{"value": "Customer Support", "qualifier": None}]
+
+    # B. 通用必填项兜底
+    smart_defaults = {
+        "model_name": (product.makro_title or f"Beishi {vertical}")[:40],
+        "model_number": (product.makro_title or f"BS-{product.id}")[:250],
+        "brand_colour": "White" if "white" in full_text else ("Black" if "black" in full_text else ("Yellow" if "yellow" in full_text else "Multicolor")),
+        "colour": "White" if "white" in full_text else ("Black" if "black" in full_text else "Multicolor"),
+        "packaging_type": "Box" if ("box" in full_text or "network" in vertical) else "Pack",
+        "pack_of": "1",
+        "sales_package": (product.makro_title or f"1 x {vertical}")[:60],
+        "plier_type": "Wire Stripper",
+        "overall_length": "20",
+        "bath_towel_type": "Cloth",
+        "towel_type": "Bath",
+        "material": "Metal" if ("network" in vertical or "metal" in full_text) else ("Microfiber" if "towel" in vertical else "ABS Plastic")
+    }
+
+    for k, v in smart_defaults.items():
+        if allowed_attrs and k not in allowed_attrs:
+            continue
+        if k not in catalog_attrs:
+            q = "cm" if k in ["overall_length", "width", "length"] else None
+            catalog_attrs[k] = [{"value": str(v), "qualifier": q}]
+
+    # ★★★ 强制将规范完整标题赋给 model_number 参数，Makro 前台标题将直接从 model_number 提取生成
+    if allowed_attrs and "model_number" in allowed_attrs:
+        catalog_attrs["model_number"] = [{"value": (product.makro_title or f"BS-{product.id}")[:250], "qualifier": None}]
+
+    # ★★★ 变体专有属性精确覆盖 (容量 1TB/2TB/512GB, 尺码, 颜色, 包装数量等) ★★★
+    if target_variant:
+        var_attrs = json.loads(target_variant.variant_attributes) if target_variant.variant_attributes else {}
+        var_colour = target_variant.colour or var_attrs.get("colour")
+        var_brand_colour = target_variant.brand_colour or target_variant.colour or var_attrs.get("colour")
+        var_size = target_variant.size or var_attrs.get("size")
+        var_pack = str(target_variant.pack_of or var_attrs.get("pack_of") or "1")
+
+        if var_colour and (not allowed_attrs or "colour" in allowed_attrs):
+            catalog_attrs["colour"] = [{"value": str(var_colour), "qualifier": None}]
+        if var_brand_colour and (not allowed_attrs or "brand_colour" in allowed_attrs):
+            catalog_attrs["brand_colour"] = [{"value": str(var_brand_colour), "qualifier": None}]
+        if var_size and (not allowed_attrs or "size" in allowed_attrs):
+            catalog_attrs["size"] = [{"value": str(var_size), "qualifier": None}]
+        if var_pack and (not allowed_attrs or "pack_of" in allowed_attrs):
+            catalog_attrs["pack_of"] = [{"value": str(var_pack), "qualifier": None}]
+
+        # 容量/内存参数 (如 1TB, 2TB)
+        cap_val = var_attrs.get("capacity")
+        if cap_val:
+            if not allowed_attrs or "capacity" in allowed_attrs:
+                catalog_attrs["capacity"] = [{"value": str(cap_val), "qualifier": None}]
+            if not allowed_attrs or "internal_storage" in allowed_attrs:
+                catalog_attrs["internal_storage"] = [{"value": str(cap_val), "qualifier": None}]
+            if not allowed_attrs or "storage_capacity" in allowed_attrs:
+                catalog_attrs["storage_capacity"] = [{"value": str(cap_val), "qualifier": None}]
+
+    # C. 针对 Makro 草稿报错中指明的任何缺失字段，自动根据官方枚举或定义兜底补充
+    missing_attrs = []
+    if draft_resp and isinstance(draft_resp, dict):
+        attr_errs = draft_resp.get("errorDetails", {}).get("catalogErrors", {}).get("systemValidationErrors", {}).get("attributeErrors", {})
+        missing_attrs = list(attr_errs.keys())
+
+    for missing_k in missing_attrs:
+        if missing_k not in catalog_attrs and missing_k in allowed_attrs:
+            def_item = allowed_attrs[missing_k]
+            allowed_vals = [x.strip() for x in (def_item.get("allowedValues") or "").split("||") if x.strip()]
+            val = allowed_vals[0] if allowed_vals else (def_item.get("exampleValue") or "Standard")
+            
+            # 校验并适配数值类型 (DECIMAL / NUMBER)
+            attr_type = (def_item.get("attributeType") or "").upper()
+            if attr_type in ["DECIMAL", "NUMBER"]:
+                try:
+                    float(val)
+                except (ValueError, TypeError):
+                    ex = def_item.get("exampleValue")
+                    try:
+                        float(ex)
+                        val = ex
+                    except (ValueError, TypeError):
+                        val = "1"
+
+            qual_vals = [x.strip() for x in (def_item.get("qualifierAllowedValues") or "").split("||") if x.strip()]
+            qual = qual_vals[0] if qual_vals else (def_item.get("defaultQualifier") or None)
+            catalog_attrs[missing_k] = [{"value": str(val), "qualifier": qual}]
+
+    # D. 校验枚举属性 (特别是 type 字段等)，确保值完全符合 allowedValues
+    for attr_k, attr_v_list in list(catalog_attrs.items()):
+        if attr_k in allowed_attrs:
+            def_item = allowed_attrs[attr_k]
+            allowed_vals = [x.strip() for x in (def_item.get("allowedValues") or "").split("||") if x.strip()]
+            if allowed_vals and attr_v_list and isinstance(attr_v_list, list):
+                cur_val = attr_v_list[0].get("value")
+                if cur_val not in allowed_vals:
+                    # 尝试模糊匹配或兜底选择第一个合法枚举
+                    matched = next((av for av in allowed_vals if cur_val.lower() in av.lower() or av.lower() in cur_val.lower()), allowed_vals[0])
+                    catalog_attrs[attr_k][0]["value"] = matched
+
+    now_ms = int(time.time() * 1000)
+
+    # 组装完整的 submit Payload
+    payload = {
+        "txnId": txn_id,
+        "reqId": req_id,
+        "message": None,
+        "requestId": request_id,
+        "sellerId": seller_id,
+        "skuId": sku_id,
+        "vertical": vertical,
+        "state": "DRAFT",
+        "context": "PRODUCT_LISTING_CREATION",
+        "catalogRequestEntity": {
+            "catalogAttributes": catalog_attrs,
+            "images": images_map,
+            "workflow": "STRICT_QC",
+            "customAttributeMap": {},
+            "fsnMatched": False
+        },
+        "listingRequestEntity": {
+            "skuId": sku_id,
+            "sellerId": seller_id,
+            "createMatchedFsnListing": True,
+            "listingAttributes": {
+                "sku_id": [{"value": sku_id, "qualifier": None}],
+                "listing_status": [{"value": "ACTIVE", "qualifier": None}],
+                "mrp": [{"value": mrp_price, "qualifier": "INR"}],
+                "flipkart_selling_price": [{"value": selling_price, "qualifier": "INR"}],
+                "service_profile": [{"value": settings.DEFAULT_SERVICE_PROFILE, "qualifier": None}],
+                "shipping_days": [{"value": shipping_days, "qualifier": "DAY"}],
+                "country_of_origin": [{"value": country_of_origin, "qualifier": None}],
+                "manufacturer_details": [{"value": manufacturer, "qualifier": None}],
+                "packer_details": [{"value": packer, "qualifier": None}]
+            },
+            "packages": [
+                {
+                    "id": {"value": str(now_ms), "qualifier": None},
+                    "breadth": {"value": pkg_breadth, "qualifier": "CM"},
+                    "length": {"value": pkg_len, "qualifier": "CM"},
+                    "height": {"value": pkg_height, "qualifier": "CM"},
+                    "weight": {"value": pkg_weight, "qualifier": "KG"},
+                    "sku_id": {"value": sku_id, "qualifier": None}
+                }
+            ]
+        },
+        "errorDetails": {
+            "globalErrors": [],
+            "catalogErrors": {
+                "manualValidationErrors": {"globalErrors": [], "attributeErrors": {}, "imageErrors": {}, "sizeChartErrors": [], "customAttributeErrors": {}},
+                "systemValidationErrors": {"globalErrors": [], "attributeErrors": {}, "imageErrors": {}, "sizeChartErrors": [], "customAttributeErrors": {}}
+            },
+            "listingErrors": {
+                "systemValidationErrors": {"globalErrors": [], "attributeErrors": {}}
+            }
+        },
+        "createdOn": now_ms,
+        "lastModified": now_ms,
+        "version": 1
+    }
+    return payload
+
+def _publish_single_variant(
+    client: MakroClient,
+    db: Session,
+    product: Product,
+    variant: ProductVariant,
+    vertical: str,
+    vid: Optional[str],
+    brand: str
+) -> dict:
+    """内部函数：为指定变体创建草稿、上传专属图组并提交 Makro 发布"""
+    draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
+    request_id = draft_resp.get("requestId")
+    txn_id = draft_resp.get("txnId")
+    req_id = draft_resp.get("reqId")
+
+    if not request_id:
+        raise ValueError(f"变体 {variant.sku_id} 创建草稿失败: {draft_resp}")
+
+    variant.makro_request_id = request_id
+
+    # 上传变体专属图片 (若无图则 fallback 至主商品图)
+    var_images = json.loads(variant.images) if variant.images else []
+    if not var_images:
+        var_images = json.loads(product.raw_images) if product.raw_images else []
+
+    images_map = {}
+    for idx, img_url in enumerate(var_images[:5]):
+        cdn_url = client.upload_image_from_url(img_url, vertical, request_id)
+        if cdn_url:
+            images_map[str(len(images_map))] = cdn_url
+
+    if not images_map:
+        raise ValueError(f"变体 {variant.sku_id} 没有可用的有效图片上传")
+
+    variant.makro_image_urls = json.dumps(images_map)
+
+    # 组装变体 Payload 并提交
+    payload = _build_makro_payload(
+        db, product, request_id, txn_id, req_id, images_map,
+        client=client, draft_resp=draft_resp, variant=variant
+    )
+    is_success, err_details, msg = client.submit_product(payload)
+
+    if is_success:
+        variant.status = "SUBMITTED"
+        variant.makro_sku_id = payload.get("skuId")
+        variant.makro_submit_error = None
+    else:
+        variant.status = "FAILED"
+        variant.makro_submit_error = msg
+
+    db.commit()
+    return {
+        "variant_id": variant.id,
+        "sku_id": variant.sku_id,
+        "success": is_success,
+        "request_id": request_id,
+        "message": msg,
+        "error_details": err_details
+    }
+
+@router.post("/publish/{product_id}", summary="自动执行全流程上品到 Makro (全量变体循环上架)")
+def publish_product_to_makro(product_id: int, force: bool = False, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="商品未找到")
+
+    # 违禁品安全防护: 蓝牙、WiFi、红外线、液体
+    if product.compliance_status == "PROHIBITED" and not force:
+        comp_details = json.loads(product.compliance_details) if product.compliance_details else {}
+        items = comp_details.get("prohibited_items", [])
+        items_str = "、".join(items) if items else "蓝牙/WiFi/红外/液体"
+        raise HTTPException(
+            status_code=400,
+            detail=f"【违禁品拦截】该商品命中平台禁售规则（包含：{items_str}），严禁直接上品以防店铺封禁！如需强制发布请开启强制开关。"
+        )
+
+    task = TaskLog(
+        product_id=product.id,
+        task_type="SUBMIT_LISTING",
+        status="RUNNING",
+        message="开始执行 Makro 多变体全量上品协议调用..."
+    )
+    db.add(task)
+    db.commit()
+
+    client = MakroClient.from_db(db)
+
+    # 检查是否已配置或同步 Makro 登录态 Cookie
+    if not client.cookie:
+        msg = "未检测到 Makro 登录态 Cookie！请先在 Chrome 打开 Makro 卖家后台并点击【🔄 同步登录态至后台】，或在系统设置中填入 Cookie。"
+        product.status = "FAILED"
+        product.makro_submit_error = msg
+        task.status = "FAILED"
+        task.message = msg
+        task.finished_at = datetime.utcnow()
+        db.commit()
+        return {
+            "success": False,
+            "message": msg,
+            "request_id": None,
+            "product": _format_product(product)
+        }
+
+    try:
+        # 1. 动态解析合法 Vertical 与 VID
+        raw_vertical = product.makro_vertical or "bath_towel"
+        valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+        vertical = valid_vertical
+        if valid_vertical != product.makro_vertical:
+            product.makro_vertical = valid_vertical
+            db.commit()
+
+        brand = product.makro_brand or "Beishi"
+
+        # 2. 获取或兜底生成变体列表
+        variants = product.variants
+        if not variants or len(variants) == 0:
+            sku_id = f"SKU-{uuid.uuid4().hex[:8].upper()}"
+            def_var = ProductVariant(
+                product_id=product.id,
+                sku_id=sku_id,
+                variant_title=product.makro_title or product.takealot_title,
+                size="均码",
+                colour="多色",
+                brand_colour="多色",
+                pack_of="1",
+                takealot_price=product.takealot_price or 0.0,
+                makro_selling_price=product.makro_selling_price or 199.0,
+                makro_mrp=product.makro_mrp or 299.0,
+                images=product.raw_images,
+                status="PENDING"
+            )
+            db.add(def_var)
+            db.commit()
+            db.refresh(product)
+            variants = product.variants
+
+        # 3. 循环上架所有变体
+        results = []
+        for v in variants:
+            try:
+                res = _publish_single_variant(client, db, product, v, vertical, vid, brand)
+                results.append(res)
+            except Exception as ex:
+                logger.error(f"变体 {v.sku_id} 上架异常: {ex}", exc_info=True)
+                v.status = "FAILED"
+                v.makro_submit_error = str(ex)
+                db.commit()
+                results.append({
+                    "variant_id": v.id,
+                    "sku_id": v.sku_id,
+                    "success": False,
+                    "request_id": getattr(v, "makro_request_id", None),
+                    "message": f"执行异常: {ex}",
+                    "error_details": {}
+                })
+
+        success_count = sum(1 for r in results if r["success"])
+        total_count = len(variants)
+        product.makro_request_id = results[0].get("request_id") if results else None
+        task.request_id = product.makro_request_id
+
+        if success_count == total_count:
+            product.status = "SUBMITTED"
+            product.makro_submit_error = None
+            task.status = "SUCCESS"
+            task.message = f"全量成功上架所有 {total_count} 个变体到 Makro (已提交审核)！"
+            is_overall_success = True
+        elif success_count > 0:
+            product.status = "PARTIAL_SUBMITTED"
+            product.makro_submit_error = f"{success_count}/{total_count} 个变体提交成功，部分失败"
+            task.status = "WARNING"
+            task.message = f"部分变体提交成功 ({success_count}/{total_count})"
+            is_overall_success = True
+        else:
+            product.status = "FAILED"
+            first_err = results[0]["message"] if results else "未知错误"
+            product.makro_submit_error = f"所有变体提交均失败: {first_err}"
+            task.status = "FAILED"
+            task.message = product.makro_submit_error
+            is_overall_success = False
+
+        task.detail_logs = json.dumps(results, ensure_ascii=False)
+        task.finished_at = datetime.utcnow()
+        db.commit()
+        db.refresh(product)
+
+        return {
+            "success": is_overall_success,
+            "message": task.message,
+            "request_id": product.makro_request_id,
+            "results": results,
+            "product": _format_product(product)
+        }
+    except Exception as e:
+        logger.error(f"上品总流程异常: {e}", exc_info=True)
+        err_msg = str(e)
+        product.status = "FAILED"
+        product.makro_submit_error = err_msg
+        task.status = "FAILED"
+        task.message = f"执行异常: {err_msg}"
+        task.finished_at = datetime.utcnow()
+        db.commit()
+        return {
+            "success": False,
+            "message": f"上品发生异常: {err_msg}",
+            "request_id": getattr(task, "request_id", None),
+            "product": _format_product(product)
+        }
+
+@router.post("/publish-variant/{variant_id}", summary="单变体独立上品或重新上架到 Makro")
+def publish_single_variant_to_makro(variant_id: int, force: bool = False, db: Session = Depends(get_db)):
+    variant = db.query(ProductVariant).filter(ProductVariant.id == variant_id).first()
+    if not variant:
+        raise HTTPException(status_code=404, detail="变体未找到")
+    product = variant.product
+    if not product:
+        raise HTTPException(status_code=404, detail="所属商品未找到")
+
+    if product.compliance_status == "PROHIBITED" and not force:
+        raise HTTPException(status_code=400, detail="【违禁品拦截】该商品命中平台禁售规则！")
+
+    client = MakroClient.from_db(db)
+    if not client.cookie:
+        raise HTTPException(status_code=400, detail="未检测到 Makro 登录态 Cookie！请先在插件同步登录态。")
+
+    raw_vertical = product.makro_vertical or "bath_towel"
+    valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+    brand = product.makro_brand or "Beishi"
+
+    try:
+        res = _publish_single_variant(client, db, product, variant, valid_vertical, vid, brand)
+        all_submitted = all(v.status == "SUBMITTED" for v in product.variants)
+        any_submitted = any(v.status == "SUBMITTED" for v in product.variants)
+
+        if all_submitted:
+            product.status = "SUBMITTED"
+            product.makro_submit_error = None
+        elif any_submitted:
+            product.status = "PARTIAL_SUBMITTED"
+        db.commit()
+
+        return {
+            "success": res["success"],
+            "message": res["message"],
+            "result": res,
+            "variant": {
+                "id": variant.id,
+                "sku_id": variant.sku_id,
+                "status": variant.status,
+                "makro_request_id": variant.makro_request_id,
+                "makro_submit_error": variant.makro_submit_error
+            }
+        }
+    except Exception as e:
+        logger.error(f"单变体上架异常: {e}", exc_info=True)
+        variant.status = "FAILED"
+        variant.makro_submit_error = str(e)
+        db.commit()
+        return {"success": False, "message": str(e), "variant_id": variant.id}
+
+@router.get("/build-payload/{product_id}", summary="预览构建的 Makro 上品请求体 (可用于调试或插件代发)")
+def get_submit_payload_preview(product_id: int, variant_id: Optional[int] = None, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="商品未找到")
+
+    mock_req_id = product.makro_request_id or "REQMOCK12345678"
+    mock_txn = f"TXN-{product.id}"
+    mock_req = f"REQ-{product.id}"
+    images = json.loads(product.makro_images) if product.makro_images else {"0": "https://www.makro.co.za/asset/cms/sample"}
+    
+    target_variant = None
+    if variant_id:
+        target_variant = db.query(ProductVariant).filter(ProductVariant.id == variant_id).first()
+
+    payload = _build_makro_payload(db, product, mock_req_id, mock_txn, mock_req, images, variant=target_variant)
+    return payload
+
+@router.post("/sync-credentials", summary="从浏览器插件同步 Makro 登录态凭据")
+def sync_credentials(req: SyncCredentialsRequest, db: Session = Depends(get_db)):
+    updates = {}
+    if req.seller_id:
+        updates["seller_id"] = req.seller_id
+    if req.fk_csrf_token:
+        updates["fk_csrf_token"] = req.fk_csrf_token
+    if req.cookie:
+        updates["cookie"] = req.cookie
+
+    for k, v in updates.items():
+        item = db.query(SystemSetting).filter(SystemSetting.key == k).first()
+        if item:
+            item.value = v
+        else:
+            db.add(SystemSetting(key=k, value=v))
+
+    db.commit()
+    return {"message": "凭据同步成功", "synced_keys": list(updates.keys())}

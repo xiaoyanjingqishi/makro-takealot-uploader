@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Makro 智能搬品与刊登系统</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    [v-cloak] { display: none; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
+  <div id="app" v-cloak class="flex flex-col min-h-screen">
+    
+    <!-- 顶部导航栏 -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-xl shadow-md shadow-blue-500/30">
+            M
+          </div>
+          <div>
+            <h1 class="text-base font-bold text-slate-900 leading-tight">Makro 智能搬品系统</h1>
+            <p class="text-xs text-slate-500">Takealot 选品 &rarr; AI 清洗 &rarr; Makro 上品</p>
+          </div>
+        </div>
+
+        <!-- 导航 Tab -->
+        <nav class="flex space-x-1 bg-slate-100 p-1 rounded-xl">
+          <button 
+            v-for="tab in tabs" 
+            :key="tab.id"
+            @click="currentTab = tab.id"
+            :class="[
+              'px-4 py-2 text-xs font-semibold rounded-lg transition-all flex items-center space-x-1.5',
+              currentTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            ]"
+          >
+            <span>{{ tab.icon }}</span>
+            <span>{{ tab.name }}</span>
+            <span v-if="tab.id === 'products' && products.total" class="ml-1 px-1.5 py-0.5 text-[10px] bg-blue-100 text-blue-600 rounded-full font-bold">
+              {{ products.total }}
+            </span>
+          </button>
+        </nav>
+
+        <!-- 状态指示 -->
+        <div class="flex items-center space-x-3">
+          <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+            Makro 协议在线
+          </span>
+          <a href="/api/docs" target="_blank" class="text-xs text-slate-400 hover:text-slate-600">Swagger API</a>
+        </div>
+      </div>
+    </header>
+
+    <!-- 主界面区域 -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+      <!-- ================= Tab 1: 选品箱 ================= -->
+      <div v-if="currentTab === 'products'" class="space-y-4">
+        <!-- 筛选与操作工具栏 -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
+          <div class="flex items-center space-x-3 flex-1 max-w-md">
+            <input 
+              v-model="searchQuery" 
+              @keyup.enter="loadProducts"
+              type="text" 
+              placeholder="搜索商品标题或原标题..." 
+              class="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            <select 
+              v-model="statusFilter" 
+              @change="loadProducts"
+              class="text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            >
+              <option value="">全部状态</option>
+              <option value="PENDING_CLEAN">待清洗</option>
+              <option value="CLEANED">已清洗/待审核</option>
+              <option value="SUBMITTED">已提交Makro审核</option>
+              <option value="FAILED">上品失败</option>
+            </select>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="batchClean" 
+              :disabled="selectedIds.length === 0"
+              class="px-3 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
+            >
+              <span>⚡ 批量AI清洗 ({{ selectedIds.length }})</span>
+            </button>
+            <button 
+              @click="batchCheckCompliance" 
+              :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
+              class="px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
+            >
+              <span v-if="isBatchCheckingCompliance">⏳ 检测中...</span>
+              <span v-else>🛡️ 批量合规检测 ({{ selectedIds.length }})</span>
+            </button>
+            <button 
+              @click="batchDelete" 
+              :disabled="selectedIds.length === 0"
+              class="px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-40 rounded-lg border border-red-200 flex items-center space-x-1"
+            >
+              <span>🗑️ 批量删除 ({{ selectedIds.length }})</span>
+            </button>
+            <button 
+              @click="showQuickCollectModal = true" 
+              class="px-3 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm flex items-center space-x-1"
+            >
+              <span>📥 + PLID极速采集</span>
+            </button>
+            <button 
+              @click="loadProducts" 
+              class="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+            >
+              刷新
+            </button>
+          </div>
+        </div>
+
+        <!-- 商品列表表格 -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
+                <th class="py-3 px-4 w-10">
+                  <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected" class="rounded text-blue-600">
+                </th>
+                <th class="py-3 px-4 w-20">主图</th>
+                <th class="py-3 px-4">Takealot 原商品信息</th>
+                <th class="py-3 px-4">AI 清洗后的 Makro 待发布信息</th>
+                <th class="py-3 px-4 w-32">价格计算 (ZAR)</th>
+                <th class="py-3 px-4 w-28">状态</th>
+                <th class="py-3 px-4 w-36 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-if="loadingProducts" class="text-center py-10">
+                <td colspan="7" class="py-8 text-slate-400">加载中...</td>
+              </tr>
+              <tr v-else-if="products.items.length === 0" class="text-center py-10">
+                <td colspan="7" class="py-12 text-slate-400">
+                  暂无采集商品。请安装并使用 Chrome 插件在 Takealot 前台点击采集！
+                </td>
+              </tr>
+              <tr v-for="item in products.items" :key="item.id" class="hover:bg-slate-50/80 transition">
+                <td class="py-3 px-4">
+                  <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600">
+                </td>
+                <td class="py-3 px-4">
+                  <img 
+                    :src="item.raw_images[0] || 'https://via.placeholder.com/80'" 
+                    class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs"
+                  />
+                </td>
+                <td class="py-3 px-4 max-w-xs">
+                  <a :href="item.takealot_url" target="_blank" class="font-semibold text-slate-900 hover:text-blue-600 line-clamp-2">
+                    {{ item.takealot_title }}
+                  </a>
+                  <div class="text-[11px] text-slate-400 mt-1 flex items-center space-x-2">
+                    <span>原品牌: {{ item.takealot_brand || '无' }}</span>
+                    <span>|</span>
+                    <span>原价: R{{ item.takealot_price }}</span>
+                  </div>
+                </td>
+                <td class="py-3 px-4 max-w-sm">
+                  <div class="font-medium text-slate-800 line-clamp-2">
+                    {{ item.makro_title || item.takealot_title }}
+                  </div>
+                  <div class="text-[11px] text-slate-500 mt-1 flex items-center space-x-2">
+                    <span class="px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">类目: {{ item.makro_vertical }}</span>
+                    <span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded font-semibold">品牌: {{ item.makro_brand }}</span>
+                  </div>
+                  <!-- 合规与侵权检测徽章 -->
+                  <div class="mt-1.5 flex items-center space-x-1.5 flex-wrap gap-y-1">
+                    <span v-if="item.compliance_status === 'PROHIBITED'" 
+                          @click.stop="showComplianceModal(item)"
+                          class="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded text-[10px] font-bold cursor-pointer hover:bg-rose-100 flex items-center"
+                          title="点击查看详细违禁项与分析报告">
+                      🚫 违禁品 ({{ getProhibitedSummary(item) }})
+                    </span>
+                    <span v-else-if="item.compliance_status === 'RISK'" 
+                          @click.stop="showComplianceModal(item)"
+                          class="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold cursor-pointer hover:bg-amber-100 flex items-center"
+                          title="点击查看侵权风险与整改建议">
+                      ⚠️ 侵权风险
+                    </span>
+                    <span v-else-if="item.compliance_status === 'SAFE'" 
+                          @click.stop="showComplianceModal(item)"
+                          class="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-semibold cursor-pointer hover:bg-emerald-100 flex items-center">
+                      🛡️ 合规安全
+                    </span>
+                    <span v-else 
+                          @click.stop="checkCompliance(item)"
+                          class="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] cursor-pointer hover:bg-slate-200 flex items-center">
+                      🔍 未检测
+                    </span>
+                    <button @click.stop="checkCompliance(item)" :disabled="checkingComplianceId === item.id" class="text-[10px] text-blue-600 hover:underline">
+                      {{ checkingComplianceId === item.id ? '检测中...' : '检测' }}
+                    </button>
+                  </div>
+                  <div v-if="item.makro_submit_error" class="text-[11px] text-red-500 mt-1 line-clamp-1">
+                    错误: {{ item.makro_submit_error }}
+                  </div>
+                </td>
+                <td class="py-3 px-4">
+                  <div class="text-sm font-bold text-slate-900">R{{ item.makro_selling_price }}</div>
+                  <div class="text-[11px] text-slate-400 line-through">MRP: R{{ item.makro_mrp }}</div>
+                </td>
+                <td class="py-3 px-4">
+                  <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[11px] font-semibold rounded-full inline-block">
+                    {{ formatStatus(item.status) }}
+                  </span>
+                </td>
+                <td class="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                  <button 
+                    @click="openInspector(item)" 
+                    class="px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded border border-blue-200"
+                  >
+                    审品比对
+                  </button>
+                  <button 
+                    @click="publishItem(item)" 
+                    :disabled="publishingId === item.id"
+                    class="px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded"
+                  >
+                    {{ publishingId === item.id ? '上品中...' : '上品' }}
+                  </button>
+                  <button 
+                    @click="deleteItem(item)" 
+                    class="px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 rounded border border-red-200"
+                  >
+                    删除
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ================= Tab 2: 审品比对与编辑 ================= -->
+      <div v-if="currentTab === 'inspector' && activeItem" class="space-y-4">
+        <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex items-center space-x-3">
+            <button @click="currentTab = 'products'" class="text-xs text-slate-500 hover:text-slate-800 flex items-center space-x-1">
+              <span>&larr; 返回选品箱</span>
+            </button>
+            <h2 class="text-sm font-bold text-slate-900">商品审品与规则微调 (ID: #{{ activeItem.id }})</h2>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="reCleanActiveItem" 
+              :disabled="isCleaning"
+              class="px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 flex items-center space-x-1"
+            >
+              <span>⚡ 重新 AI 清洗</span>
+            </button>
+            <button 
+              @click="saveActiveItem" 
+              class="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
+            >
+              保存更改
+            </button>
+            <button 
+              @click="publishItem(activeItem)" 
+              :disabled="publishingId === activeItem.id"
+              class="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg shadow-sm flex items-center space-x-1"
+            >
+              <span>{{ publishingId === activeItem.id ? '全量上品中...' : `🚀 立即上品到 Makro (共 ${activeItem.variants ? activeItem.variants.length : 1} 个变体)` }}</span>
+            </button>
+            <button 
+              @click="deleteItem(activeItem)" 
+              class="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200"
+            >
+              🗑️ 删除
+            </button>
+          </div>
+        </div>
+
+        <!-- 左右分栏对比视图 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          
+          <!-- 左栏: Takealot 原始数据 -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b pb-3 border-slate-100">
+              <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Takealot 原始数据</span>
+              <a :href="activeItem.takealot_url" target="_blank" class="text-xs text-blue-600 hover:underline">前台链接 &rarr;</a>
+            </div>
+
+            <!-- 图片预览 -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1.5">原始图片列表 ({{ activeItem.raw_images.length }}张)</label>
+              <div class="flex space-x-2 overflow-x-auto py-2">
+                <img 
+                  v-for="(img, idx) in activeItem.raw_images" 
+                  :key="idx" 
+                  :src="img" 
+                  class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">原始标题</label>
+              <div class="text-xs text-slate-800 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                {{ activeItem.takealot_title }}
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">原始售价</label>
+                <div class="text-sm font-bold text-slate-900 bg-slate-50 p-2 rounded-lg border border-slate-200">
+                  R {{ activeItem.takealot_price }}
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">原始品牌</label>
+                <div class="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                  {{ activeItem.takealot_brand || '无' }}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">原始规格参数 (Specs)</label>
+              <div class="max-h-48 overflow-y-auto bg-slate-50 rounded-lg p-2.5 border border-slate-200 text-[11px] space-y-1">
+                <div v-for="(v, k) in activeItem.takealot_specs" :key="k" class="flex justify-between border-b border-slate-100 pb-1">
+                  <span class="text-slate-500 font-medium">{{ k }}</span>
+                  <span class="text-slate-800">{{ v }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">原始商品描述</label>
+              <div class="max-h-36 overflow-y-auto bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs text-slate-600 whitespace-pre-wrap">
+                {{ activeItem.takealot_description }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 右栏: Makro 待上架规范数据 (可编辑) -->
+          <div class="bg-white p-5 rounded-xl border border-blue-200 ring-2 ring-blue-500/10 shadow-sm space-y-4">
+            <div class="flex items-center justify-between border-b pb-3 border-blue-100">
+              <span class="text-xs font-bold text-blue-700 uppercase tracking-wider">Makro (Flipkart SaaS) 规范化数据</span>
+              <span class="text-[11px] px-2 py-0.5 bg-blue-100 text-blue-700 font-semibold rounded">100% 协议对齐</span>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Makro SEO 标准标题 (自动按公式生成)</label>
+              <textarea 
+                v-model="activeItem.makro_title" 
+                rows="2"
+                class="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              ></textarea>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">垂直类目 (Vertical)</label>
+                <input 
+                  v-model="activeItem.makro_vertical" 
+                  type="text" 
+                  class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">报备品牌 (Brand)</label>
+                <input 
+                  v-model="activeItem.makro_brand" 
+                  type="text" 
+                  class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 bg-blue-50/50 p-3 rounded-xl border border-blue-100">
+              <div>
+                <label class="block text-xs font-bold text-blue-900 mb-1">Makro 最终售价 (R)</label>
+                <input 
+                  v-model.number="activeItem.makro_selling_price" 
+                  type="number" 
+                  class="w-full text-sm font-bold p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-blue-700"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">划线原价 MRP (R)</label>
+                <input 
+                  v-model.number="activeItem.makro_mrp" 
+                  type="number" 
+                  class="w-full text-sm font-bold p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-slate-600"
+                />
+              </div>
+            </div>
+
+            <!-- ★★★ Model Number 专区 (直接映射 Makro 前台标题生成) ★★★ -->
+            <div class="bg-amber-50/80 p-3.5 rounded-xl border border-amber-200">
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-bold text-amber-900">
+                  Model Number (Makro 前台展示标题提取参数)
+                </label>
+                <span class="text-[10px] text-amber-700 font-semibold bg-amber-100 px-1.5 py-0.5 rounded">
+                  ★ Makro 前台标题由此字段完整提取
+                </span>
+              </div>
+              <input 
+                v-if="activeItem.makro_catalog_attributes && activeItem.makro_catalog_attributes.model_number && activeItem.makro_catalog_attributes.model_number[0]"
+                v-model="activeItem.makro_catalog_attributes.model_number[0].value" 
+                type="text" 
+                class="w-full text-xs font-semibold p-2.5 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 bg-white"
+                placeholder="包含品牌、核心词与第三方兼容说明的规范标题"
+              />
+              <input 
+                v-else
+                v-model="activeItem.makro_title"
+                type="text" 
+                class="w-full text-xs font-semibold p-2.5 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 bg-white"
+                placeholder="包含品牌、核心词与第三方兼容说明的规范标题"
+              />
+              <p class="text-[10.5px] text-amber-700 mt-1.5 leading-relaxed">
+                平台规则说明：Makro 前台商品详情页标题是由属性参数拼接而成，通常都会带上完整的 <strong class="text-amber-900">Model Number</strong>。系统已自动将优化规范的标题填入此参数，您可在此直接微调前台最终展示标题！
+              </p>
+            </div>
+
+            <!-- AI 侵权与合规检测卡片 -->
+            <div class="p-3.5 rounded-xl border" :class="{
+              'bg-rose-50/80 border-rose-200': activeItem.compliance_status === 'PROHIBITED',
+              'bg-amber-50/80 border-amber-200': activeItem.compliance_status === 'RISK',
+              'bg-emerald-50/80 border-emerald-200': activeItem.compliance_status === 'SAFE',
+              'bg-slate-50 border-slate-200': !activeItem.compliance_status || activeItem.compliance_status === 'PENDING_CHECK'
+            }">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <span class="text-xs font-bold" :class="{
+                    'text-rose-900': activeItem.compliance_status === 'PROHIBITED',
+                    'text-amber-900': activeItem.compliance_status === 'RISK',
+                    'text-emerald-900': activeItem.compliance_status === 'SAFE',
+                    'text-slate-700': !activeItem.compliance_status || activeItem.compliance_status === 'PENDING_CHECK'
+                  }">
+                    AI 侵权与合规排查:
+                  </span>
+                  <span v-if="activeItem.compliance_status === 'PROHIBITED'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-200 text-rose-800">
+                    🚫 违禁品不可售 ({{ getProhibitedSummary(activeItem) }})
+                  </span>
+                  <span v-else-if="activeItem.compliance_status === 'RISK'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-200 text-amber-800">
+                    ⚠️ 侵权风险 / 配件需合规
+                  </span>
+                  <span v-else-if="activeItem.compliance_status === 'SAFE'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-200 text-emerald-800">
+                    🛡️ 合规安全
+                  </span>
+                  <span v-else class="px-2 py-0.5 rounded text-[11px] bg-slate-200 text-slate-700">
+                    未检测
+                  </span>
+                </div>
+                <button 
+                  @click="checkCompliance(activeItem)" 
+                  :disabled="checkingComplianceId === activeItem.id"
+                  class="px-2.5 py-1 text-xs font-semibold bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-xs"
+                >
+                  {{ checkingComplianceId === activeItem.id ? '正在检测(含首图)...' : '重新检测合规' }}
+                </button>
+              </div>
+
+              <!-- 详细风险与建议 -->
+              <div v-if="activeItem.compliance_details" class="mt-2.5 text-xs space-y-2">
+                <div v-if="activeItem.compliance_details.risk_reasons && activeItem.compliance_details.risk_reasons.length > 0" class="text-rose-700 bg-white/80 p-2.5 rounded-lg border border-rose-100">
+                  <div class="font-bold mb-1">风险诊断项:</div>
+                  <ul class="list-disc list-inside space-y-1 text-[11px]">
+                    <li v-for="(r, i) in activeItem.compliance_details.risk_reasons" :key="i">{{ r }}</li>
+                  </ul>
+                </div>
+                <div v-if="activeItem.compliance_details.image_inspection && activeItem.compliance_details.image_inspection.tested" class="text-slate-700 bg-white/80 p-2.5 rounded-lg border border-slate-200 text-[11px]">
+                  <span class="font-bold text-slate-900">首图 AI 视觉多模态大模型分析:</span>
+                  <div class="mt-0.5">{{ activeItem.compliance_details.image_inspection.summary }}</div>
+                  <div v-if="activeItem.compliance_details.image_inspection.has_brand_logo" class="mt-1 text-amber-700 font-semibold">
+                    发现知名品牌/受限商标 Logo: {{ activeItem.compliance_details.image_inspection.logo_names?.join(', ') }}
+                  </div>
+                </div>
+                <div v-if="activeItem.compliance_details.brand_info && activeItem.compliance_details.brand_info.recommended_title" class="text-blue-800 bg-blue-50/90 p-2.5 rounded-lg border border-blue-200 text-[11px]">
+                  <span class="font-bold">建议第三方配件合规标题:</span>
+                  <div class="font-mono mt-1 p-1 bg-white border rounded text-[11px] select-all">{{ activeItem.compliance_details.brand_info.recommended_title }}</div>
+                  <button @click="adoptRecommendedTitle(activeItem)" class="mt-1.5 px-2.5 py-1 text-xs bg-blue-600 text-white rounded font-medium hover:bg-blue-700">
+                    一键采纳此合规标题并同步更新 Model Number
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 16 项必填属性配置 -->
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1.5">Makro 核心类目必填属性提取结果</label>
+              <div class="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+                <div v-for="(arr, key) in activeItem.makro_catalog_attributes" :key="key" class="flex flex-col">
+                  <span class="text-[11px] text-slate-500 font-medium">{{ key }}</span>
+                  <input 
+                    v-if="arr && arr[0]" 
+                    v-model="arr[0].value" 
+                    type="text" 
+                    class="p-1 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- 变体矩阵与多参数展示 -->
+            <div v-if="activeItem.variants && activeItem.variants.length > 0">
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-xs font-bold text-slate-700">变体矩阵与独立专属图组 (共 {{ activeItem.variants.length }} 个变体)</label>
+                <span class="text-[10.5px] text-indigo-600 font-semibold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                  ✨ 支持 1TB/2TB 容量、尺码、颜色异构参数独立上架
+                </span>
+              </div>
+              <div class="space-y-2 text-xs">
+                <div 
+                  v-for="(v, idx) in activeItem.variants" 
+                  :key="v.id" 
+                  class="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-blue-300 transition-colors space-y-2"
+                >
+                  <div class="flex items-start justify-between">
+                    <div class="flex items-start space-x-2.5">
+                      <img 
+                        v-if="v.images && v.images.length > 0" 
+                        :src="v.images[0]" 
+                        class="w-12 h-12 object-cover rounded-lg border border-slate-300 shrink-0 bg-white"
+                        :title="'变体首图: ' + (v.colour || '默认')"
+                      />
+                      <div v-else class="w-12 h-12 rounded-lg border border-dashed border-slate-300 flex items-center justify-center text-[10px] text-slate-400">
+                        无图
+                      </div>
+                      <div>
+                        <!-- 核心异构参数标签 (容量 1TB/2TB, 尺寸, 颜色, 包装) -->
+                        <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                          <span v-if="v.variant_attributes && v.variant_attributes.capacity" class="px-1.5 py-0.5 text-[10.5px] bg-purple-100 text-purple-800 font-bold rounded border border-purple-200">
+                            💾 {{ v.variant_attributes.capacity }}
+                          </span>
+                          <span v-if="v.colour && v.colour !== '多色'" class="px-1.5 py-0.5 text-[10.5px] bg-blue-50 text-blue-700 font-semibold rounded border border-blue-200">
+                            🎨 {{ v.colour }}
+                          </span>
+                          <span v-if="v.size && v.size !== '均码'" class="px-1.5 py-0.5 text-[10.5px] bg-slate-200 text-slate-800 font-semibold rounded">
+                            📏 {{ v.size }}
+                          </span>
+                          <span v-if="v.pack_of && v.pack_of !== '1'" class="px-1.5 py-0.5 text-[10.5px] bg-amber-50 text-amber-700 font-medium rounded border border-amber-200">
+                            📦 {{ v.pack_of }}件装
+                          </span>
+                          <span class="font-mono text-[11px] text-slate-400">({{ v.sku_id }})</span>
+                        </div>
+
+                        <!-- 变体专属标题 (如包含 1TB / 2TB / 颜色信息) -->
+                        <div v-if="v.variant_title" class="text-[11px] text-slate-600 mt-1 line-clamp-1 font-medium">
+                          {{ v.variant_title }}
+                        </div>
+
+                        <div class="mt-1 flex items-center space-x-2 flex-wrap">
+                          <span class="px-1.5 py-0.5 text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded font-semibold">
+                            📷 {{ v.images ? v.images.length : 0 }} 张专属原图
+                          </span>
+                          <span class="text-[11px] text-slate-400">原售价: R{{ v.takealot_price || 0 }}</span>
+                          <span v-if="v.barcode" class="text-[10.5px] text-slate-400 font-mono">条码: {{ v.barcode }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 价格与单独上架操作 -->
+                    <div class="text-right shrink-0 flex flex-col items-end space-y-1">
+                      <div class="text-xs font-bold text-blue-600">Makro 售价: R{{ v.makro_selling_price }}</div>
+                      <div class="text-[10px] text-slate-400">MRP: R{{ v.makro_mrp }}</div>
+                      <div class="flex items-center space-x-1.5 pt-1">
+                        <span v-if="v.status === 'SUBMITTED'" class="px-2 py-0.5 text-[10px] bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded">
+                          ✅ 已提交审核
+                        </span>
+                        <span v-else-if="v.status === 'FAILED'" class="px-2 py-0.5 text-[10px] bg-rose-50 text-rose-700 font-bold border border-rose-200 rounded cursor-pointer" :title="v.makro_submit_error">
+                          ❌ 上品失败
+                        </span>
+                        <span v-else class="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-500 rounded">
+                          待上品
+                        </span>
+                        <button 
+                          @click="publishSingleVariant(v)" 
+                          :disabled="publishingVariantId === v.id"
+                          class="px-2 py-1 text-[10.5px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded shadow-2xs disabled:opacity-50"
+                        >
+                          {{ publishingVariantId === v.id ? '上架中...' : '🚀 上传此变体' }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 错误信息提示 -->
+                  <div v-if="v.makro_submit_error" class="text-[10.5px] text-rose-600 bg-rose-50/70 p-1.5 rounded border border-rose-100 line-clamp-2">
+                    失败原因: {{ v.makro_submit_error }}
+                  </div>
+
+                  <!-- 横向平铺变体专属图片小预览 -->
+                  <div v-if="v.images && v.images.length > 1" class="flex space-x-1.5 pt-1.5 border-t border-slate-200/60 overflow-x-auto">
+                    <img 
+                      v-for="(imgUrl, imgIdx) in v.images.slice(0, 6)" 
+                      :key="imgIdx" 
+                      :src="imgUrl" 
+                      class="w-8 h-8 object-cover rounded border border-slate-200 shrink-0" 
+                      :title="'变体图 ' + (imgIdx + 1)"
+                    />
+                    <span v-if="v.images.length > 6" class="text-[10px] text-slate-400 self-center px-1">
+                      +{{ v.images.length - 6 }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Tab 3: 上品监控 ================= -->
+      <div v-if="currentTab === 'tasks'" class="space-y-4">
+        <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div>
+            <h2 class="text-sm font-bold text-slate-900">上品与 AI 清洗任务执行日志</h2>
+            <p class="text-xs text-slate-500">实时追踪向 Makro 提交审核的状态与错误反馈</p>
+          </div>
+          <button @click="loadTasks" class="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg">
+            刷新日志
+          </button>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
+                <th class="py-3 px-4 w-16">任务ID</th>
+                <th class="py-3 px-4 w-28">类型</th>
+                <th class="py-3 px-4 w-28">状态</th>
+                <th class="py-3 px-4">执行详情 / 错误回执</th>
+                <th class="py-3 px-4 w-40">Makro RequestId</th>
+                <th class="py-3 px-4 w-36">时间</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-if="tasks.length === 0">
+                <td colspan="6" class="text-center py-10 text-slate-400">暂无任务日志</td>
+              </tr>
+              <tr v-for="t in tasks" :key="t.id" class="hover:bg-slate-50/80">
+                <td class="py-3 px-4 font-mono text-slate-500">#{{ t.id }}</td>
+                <td class="py-3 px-4">
+                  <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700">
+                    {{ t.task_type }}
+                  </span>
+                </td>
+                <td class="py-3 px-4">
+                  <span :class="getStatusBadgeClass(t.status)" class="px-2 py-0.5 rounded-full text-[11px] font-bold">
+                    {{ t.status }}
+                  </span>
+                </td>
+                <td class="py-3 px-4 text-slate-700">
+                  <div>{{ t.message }}</div>
+                  <div v-if="t.detail_logs" class="text-[10px] text-slate-400 font-mono mt-0.5 line-clamp-1">
+                    {{ t.detail_logs }}
+                  </div>
+                </td>
+                <td class="py-3 px-4 font-mono text-blue-600 text-[11px]">
+                  {{ t.request_id || '-' }}
+                </td>
+                <td class="py-3 px-4 text-slate-400 text-[11px]">
+                  {{ new Date(t.created_at).toLocaleString() }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ================= Tab 4: 系统设置 ================= -->
+      <div v-if="currentTab === 'settings'" class="max-w-3xl space-y-6">
+        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+          <h2 class="text-base font-bold text-slate-900 border-b pb-3">⚙️ 系统与自动化配置</h2>
+
+          <!-- 定价策略 -->
+          <div>
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">1. 动态定价与利润策略</h3>
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">加价比例系数</label>
+                <input v-model.number="settings.markup_ratio" type="number" step="0.05" class="w-full text-xs p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                <span class="text-[10px] text-slate-400">例: 1.35 即为加价 35%</span>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">固定加价 (ZAR)</label>
+                <input v-model.number="settings.fixed_markup" type="number" class="w-full text-xs p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                <span class="text-[10px] text-slate-400">附加固定运费/包装 (R)</span>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">划线原价 MRP 倍率</label>
+                <input v-model.number="settings.mrp_ratio" type="number" step="0.1" class="w-full text-xs p-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                <span class="text-[10px] text-slate-400">例: 1.5 即 MRP = 售价 * 1.5</span>
+              </div>
+            </div>
+            <div class="mt-2 p-2.5 bg-blue-50 text-blue-800 rounded-lg text-xs font-medium">
+              💡 实时公式演示：Takealot 卖 R100 &rarr; Makro 售价为 R{{ Math.round(100 * settings.markup_ratio + settings.fixed_markup) }}，MRP 标价为 R{{ Math.round((100 * settings.markup_ratio + settings.fixed_markup) * settings.mrp_ratio) }}
+            </div>
+          </div>
+
+          <!-- AI 配置 -->
+          <div class="border-t pt-4">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">2. AI 智能清洗模型配置</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">当前使用模型商</label>
+                <div class="flex space-x-4">
+                  <label class="flex items-center space-x-2 text-xs font-medium cursor-pointer">
+                    <input type="radio" v-model="settings.ai_provider" value="qwen" class="text-blue-600">
+                    <span>通义千问 (Qwen)</span>
+                  </label>
+                  <label class="flex items-center space-x-2 text-xs font-medium cursor-pointer">
+                    <input type="radio" v-model="settings.ai_provider" value="deepseek" class="text-blue-600">
+                    <span>DeepSeek (深度求索)</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Qwen 字段 -->
+              <div v-if="settings.ai_provider === 'qwen'" class="space-y-2 p-3 bg-slate-50 rounded-xl border">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">通义千问 API Key (DashScope)</label>
+                  <input v-model="settings.qwen_api_key" type="password" placeholder="sk-..." class="w-full text-xs p-2 border rounded-lg bg-white">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">模型代码</label>
+                  <input v-model="settings.qwen_model" type="text" class="w-full text-xs p-2 border rounded-lg bg-white">
+                </div>
+              </div>
+
+              <!-- DeepSeek 字段 -->
+              <div v-if="settings.ai_provider === 'deepseek'" class="space-y-2 p-3 bg-slate-50 rounded-xl border">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">DeepSeek API Key</label>
+                  <input v-model="settings.deepseek_api_key" type="password" placeholder="sk-..." class="w-full text-xs p-2 border rounded-lg bg-white">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">模型代码</label>
+                  <input v-model="settings.deepseek_model" type="text" class="w-full text-xs p-2 border rounded-lg bg-white">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Makro 店铺凭据 -->
+          <div class="border-t pt-4">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">3. Makro 卖家店铺与协议凭据</h3>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">Seller ID (商户ID)</label>
+                <input v-model="settings.seller_id" type="text" class="w-full text-xs p-2 border rounded-lg">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">统一报备品牌 (Brand)</label>
+                <input v-model="settings.default_brand" type="text" class="w-full text-xs p-2 border rounded-lg font-bold text-blue-700">
+              </div>
+              <div class="col-span-2">
+                <label class="block text-xs font-semibold text-slate-600 mb-1">fk-csrf-token (CSRF Token)</label>
+                <input v-model="settings.fk_csrf_token" type="text" class="w-full text-xs p-2 border rounded-lg font-mono">
+              </div>
+              <div class="col-span-2">
+                <label class="block text-xs font-semibold text-slate-600 mb-1">Session Cookie (可通过插件一键更新)</label>
+                <textarea v-model="settings.cookie" rows="2" placeholder="可直接在已登录的 Makro 页面使用浏览器插件点击【同步】按钮自动捕获" class="w-full text-xs p-2 border rounded-lg font-mono"></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t pt-4 flex justify-end">
+            <button @click="saveSettings" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md">
+              保存配置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= AI 侵权与合规诊断弹窗 ================= -->
+      <div v-if="complianceModalItem" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200">
+          <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between" :class="{
+            'bg-rose-50/70 text-rose-900': complianceModalItem.compliance_status === 'PROHIBITED',
+            'bg-amber-50/70 text-amber-900': complianceModalItem.compliance_status === 'RISK',
+            'bg-emerald-50/70 text-emerald-900': complianceModalItem.compliance_status === 'SAFE',
+            'bg-slate-50 text-slate-900': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
+          }">
+            <div class="flex items-center space-x-2">
+              <span class="text-xl">
+                {{ complianceModalItem.compliance_status === 'PROHIBITED' ? '🚫' : (complianceModalItem.compliance_status === 'RISK' ? '⚠️' : '🛡️') }}
+              </span>
+              <div>
+                <h3 class="font-bold text-sm">AI 侵权与平台合规诊断报告</h3>
+                <p class="text-[11px] opacity-80">包含违禁品筛查、品牌侵权与第三方配件规范、首图视觉多模态排查</p>
+              </div>
+            </div>
+            <button @click="complianceModalItem = null" class="text-slate-400 hover:text-slate-600 p-1 text-lg">✕</button>
+          </div>
+
+          <div class="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
+            <!-- 诊断结论横幅 -->
+            <div class="flex items-center justify-between p-3 rounded-xl border" :class="{
+              'bg-rose-100/60 border-rose-300 text-rose-900': complianceModalItem.compliance_status === 'PROHIBITED',
+              'bg-amber-100/60 border-amber-300 text-amber-900': complianceModalItem.compliance_status === 'RISK',
+              'bg-emerald-100/60 border-emerald-300 text-emerald-900': complianceModalItem.compliance_status === 'SAFE',
+              'bg-slate-100 border-slate-300 text-slate-700': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
+            }">
+              <div>
+                <span class="font-bold text-sm">当前状态: </span>
+                <span class="font-black text-sm">
+                  {{ complianceModalItem.compliance_status === 'PROHIBITED' ? '违禁品不可售 (平台严禁)' : (complianceModalItem.compliance_status === 'RISK' ? '存在侵权风险 / 配件未合规' : '合规安全 (可安心上架)') }}
+                </span>
+              </div>
+              <button 
+                @click="checkCompliance(complianceModalItem)" 
+                :disabled="checkingComplianceId === complianceModalItem.id"
+                class="px-3 py-1 bg-white border rounded-lg text-xs font-semibold shadow-xs hover:bg-slate-50"
+              >
+                {{ checkingComplianceId === complianceModalItem.id ? '正在视觉分析中...' : '重新检测 (含首图)' }}
+              </button>
+            </div>
+
+            <!-- 商品基本信息 -->
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <div class="text-[11px] text-slate-500 font-medium">诊断商品标题:</div>
+              <div class="font-semibold text-slate-800 mt-0.5">{{ complianceModalItem.makro_title || complianceModalItem.takealot_title }}</div>
+            </div>
+
+            <div v-if="complianceModalItem.compliance_details" class="space-y-3">
+              <!-- 1. 违禁品排查 (蓝牙/WiFi/红外线/液体) -->
+              <div class="p-3 rounded-xl border" :class="complianceModalItem.compliance_details.prohibited_items?.length ? 'bg-rose-50/60 border-rose-200' : 'bg-slate-50 border-slate-200'">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">1. 违禁品特性排查 (蓝牙 / WiFi / 红外线 / 液体):</span>
+                  <span v-if="complianceModalItem.compliance_details.prohibited_items?.length" class="px-2 py-0.5 bg-rose-600 text-white rounded font-bold text-[10px]">
+                    命中 {{ complianceModalItem.compliance_details.prohibited_items.length }} 项违禁
+                  </span>
+                  <span v-else class="text-emerald-600 font-semibold text-[11px]">✓ 未检出违禁品</span>
+                </div>
+                <div v-if="complianceModalItem.compliance_details.prohibited_items?.length" class="mt-2 text-rose-800 text-[11px]">
+                  <div>检出项: <strong class="underline">{{ complianceModalItem.compliance_details.prohibited_items.join('、') }}</strong></div>
+                  <div class="mt-1 text-slate-600">说明：Makro 平台禁售未经南非工信 ICASA 认证的无线设备 (蓝牙/WiFi/红外发射)，液体跨境物流亦严禁运输。建议下架或改为有线普通款。</div>
+                </div>
+              </div>
+
+              <!-- 2. 品牌与第三方配件侵权排查 -->
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">2. 知名品牌与第三方配件合规:</span>
+                  <span v-if="complianceModalItem.compliance_details.brand_info?.detected_brands?.length" class="text-amber-700 font-semibold text-[11px]">
+                    检出品牌: {{ complianceModalItem.compliance_details.brand_info.detected_brands.join(', ') }}
+                  </span>
+                  <span v-else class="text-emerald-600 font-semibold text-[11px]">✓ 未涉及受保护知名品牌</span>
+                </div>
+                <div v-if="complianceModalItem.compliance_details.brand_info?.detected_brands?.length" class="mt-2 text-[11px] space-y-1">
+                  <div v-if="complianceModalItem.compliance_details.brand_info.is_accessory" class="p-2 bg-amber-50 rounded border border-amber-200 text-amber-900">
+                    <div>★ 该商品为品牌配件。按照跨境平台防侵权规范，必须注明<strong>“第三方配件适用于 (Third-Party ... Compatible with)”</strong>。</div>
+                    <div v-if="complianceModalItem.compliance_details.brand_info.recommended_title" class="mt-1.5 pt-1.5 border-t border-amber-200">
+                      <div class="text-[10px] text-slate-500 font-medium">推荐合规标题:</div>
+                      <div class="font-mono text-blue-800 select-all">{{ complianceModalItem.compliance_details.brand_info.recommended_title }}</div>
+                      <button @click="adoptRecommendedTitle(complianceModalItem); complianceModalItem = null;" class="mt-1 px-2.5 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">
+                        一键采纳并同步更新 Model Number
+                      </button>
+                    </div>
+                  </div>
+                  <div v-else class="p-2 bg-rose-50 rounded border border-rose-200 text-rose-800">
+                    ⚠️ 商品疑似整机提及知名品牌，若非官方授权店铺，严禁直接刊登！
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3. 首图 AI 视觉多模态大模型排查 -->
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-800">3. 首图 AI 多模态视觉诊断 (Qwen-VL-Max):</span>
+                  <span v-if="complianceModalItem.compliance_details.image_inspection?.tested" class="text-blue-600 font-semibold text-[11px]">
+                    已完成视觉分析
+                  </span>
+                  <span v-else class="text-slate-400 text-[11px]">未调用看图模型</span>
+                </div>
+                <div v-if="complianceModalItem.compliance_details.image_inspection?.tested" class="mt-2 text-[11px] text-slate-700 space-y-1">
+                  <div class="flex space-x-3 items-center">
+                    <img :src="complianceModalItem.compliance_details.image_inspection.image_url" class="w-12 h-12 rounded object-cover border" />
+                    <div>
+                      <div>诊断结论: <strong>{{ complianceModalItem.compliance_details.image_inspection.summary }}</strong></div>
+                      <div v-if="complianceModalItem.compliance_details.image_inspection.has_brand_logo" class="text-amber-700 font-bold mt-0.5">
+                        ⚠️ 画面中包含品牌 Logo 或官方商标: {{ complianceModalItem.compliance_details.image_inspection.logo_names?.join(', ') }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. 优化与整改建议 -->
+              <div v-if="complianceModalItem.compliance_details.suggestions?.length" class="p-3 bg-blue-50/70 rounded-xl border border-blue-200 text-[11px] text-blue-900">
+                <div class="font-bold mb-1">💡 合规整改建议:</div>
+                <ul class="list-disc list-inside space-y-0.5">
+                  <li v-for="(s, idx) in complianceModalItem.compliance_details.suggestions" :key="idx">{{ s }}</li>
+                </ul>
+              </div>
+            </div>
+            <div v-else class="text-center py-6 text-slate-400">
+              暂无详细检测数据，请点击右上角【重新检测】按钮触发 AI 诊断。
+            </div>
+          </div>
+
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2">
+            <button @click="complianceModalItem = null" class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 弹窗: PLID / 链接极速采集 ================= -->
+      <div v-if="showQuickCollectModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200">
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-xl">📥</span>
+              <h3 class="text-sm font-bold text-slate-800">Takealot 官方原生 API 极速采集</h3>
+            </div>
+            <button @click="showQuickCollectModal = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg">✕</button>
+          </div>
+
+          <div class="p-6 space-y-4">
+            <p class="text-xs text-slate-500">
+              输入 Takealot 商品的 <strong>PLID</strong>（如 <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">PLID102204256</code>）或 <strong>商品详情页链接</strong>，系统将直接调用 Takealot 官方 API 毫秒级提取高清原图、完整规格与多变体独立图组：
+            </p>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Takealot PLID 或商品网址</label>
+              <input 
+                v-model="quickCollectInput" 
+                type="text" 
+                placeholder="例如: PLID102204256 或 https://www.takealot.com/.../PLID93300750" 
+                class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                @keyup.enter="submitQuickCollect"
+              />
+            </div>
+            <div class="p-3 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 flex items-start space-x-2">
+              <span class="text-sm">💡</span>
+              <div>
+                <strong>官方 API 优势</strong>：单品严格 1 个主变体（绝不多出错误变体）；多变体自动为每个颜色/尺码匹配独立的专属图组。
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showQuickCollectModal = false" 
+              class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg"
+            >
+              取消
+            </button>
+            <button 
+              @click="submitQuickCollect" 
+              :disabled="!quickCollectInput.trim() || isQuickCollecting"
+              class="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg flex items-center space-x-1"
+            >
+              <span v-if="isQuickCollecting">⏳ 正在读取 API...</span>
+              <span v-else>立即采集入库</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          currentTab: 'products',
+          tabs: [
+            { id: 'products', name: '选品箱', icon: '📦' },
+            { id: 'inspector', name: '审品比对', icon: '🔍' },
+            { id: 'tasks', name: '上品监控', icon: '🚀' },
+            { id: 'settings', name: '系统设置', icon: '⚙️' },
+          ],
+          products: { total: 0, items: [] },
+          tasks: [],
+          settings: {
+            markup_ratio: 1.35,
+            fixed_markup: 20,
+            mrp_ratio: 1.5,
+            ai_provider: 'qwen',
+            qwen_api_key: '',
+            qwen_model: 'qwen-plus',
+            deepseek_api_key: '',
+            deepseek_model: 'deepseek-chat',
+            seller_id: 'cb80491bf0a34dc5',
+            fk_csrf_token: 'FbvXzXEP-45o5eUtkeX8Wo6LCq9GBWDg9Rcg',
+            cookie: '',
+            default_brand: 'Beishi'
+          },
+          searchQuery: '',
+          statusFilter: '',
+          selectedIds: [],
+          activeItem: null,
+          complianceModalItem: null,
+          checkingComplianceId: null,
+          loadingProducts: false,
+          isCleaning: false,
+          isBatchCheckingCompliance: false,
+          publishingId: null,
+          publishingVariantId: null,
+          showQuickCollectModal: false,
+          quickCollectInput: '',
+          isQuickCollecting: false
+        };
+      },
+      computed: {
+        isAllSelected() {
+          return this.products.items.length > 0 && this.selectedIds.length === this.products.items.length;
+        }
+      },
+      mounted() {
+        this.loadProducts();
+        this.loadSettings();
+        this.loadTasks();
+      },
+      methods: {
+        async loadProducts() {
+          this.loadingProducts = true;
+          try {
+            let url = `/api/products?page=1&page_size=50`;
+            if (this.searchQuery) url += `&search=${encodeURIComponent(this.searchQuery)}`;
+            if (this.statusFilter) url += `&status=${this.statusFilter}`;
+            const res = await fetch(url);
+            this.products = await res.json();
+            if (!this.activeItem && this.products.items.length > 0) {
+              this.activeItem = JSON.parse(JSON.stringify(this.products.items[0]));
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            this.loadingProducts = false;
+          }
+        },
+        async loadSettings() {
+          try {
+            const res = await fetch('/api/settings');
+            this.settings = await res.json();
+          } catch (e) {
+            console.error(e);
+          }
+        },
+        async saveSettings() {
+          try {
+            await fetch('/api/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.settings)
+            });
+            alert('配置已成功保存！');
+          } catch (e) {
+            alert('保存失败: ' + e);
+          }
+        },
+        async loadTasks() {
+          try {
+            const res = await fetch('/api/tasks?limit=50');
+            this.tasks = await res.json();
+          } catch (e) {
+            console.error(e);
+          }
+        },
+        openInspector(item) {
+          this.activeItem = JSON.parse(JSON.stringify(item));
+          this.currentTab = 'inspector';
+        },
+        async saveActiveItem() {
+          try {
+            const res = await fetch(`/api/products/${this.activeItem.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                makro_title: this.activeItem.makro_title,
+                makro_vertical: this.activeItem.makro_vertical,
+                makro_brand: this.activeItem.makro_brand,
+                makro_selling_price: this.activeItem.makro_selling_price,
+                makro_mrp: this.activeItem.makro_mrp,
+                makro_description: this.activeItem.makro_description,
+                makro_catalog_attributes: this.activeItem.makro_catalog_attributes
+              })
+            });
+            const updated = await res.json();
+            this.activeItem = updated;
+            this.loadProducts();
+            alert('修改已保存！');
+          } catch (e) {
+            alert('保存失败: ' + e);
+          }
+        },
+        async reCleanActiveItem() {
+          this.isCleaning = true;
+          try {
+            const res = await fetch(`/api/cleaner/clean/${this.activeItem.id}`, { method: 'POST' });
+            this.activeItem = await res.json();
+            this.loadProducts();
+            alert('AI 清洗完成！已更新 Makro 属性与建议标题。');
+          } catch (e) {
+            alert('清洗失败: ' + e);
+          } finally {
+            this.isCleaning = false;
+          }
+        },
+        async batchClean() {
+          if (this.selectedIds.length === 0) return;
+          try {
+            const res = await fetch('/api/cleaner/batch-clean', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ product_ids: this.selectedIds })
+            });
+            const resData = await res.json();
+            alert(`批量清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件`);
+            await this.loadProducts();
+            if (this.activeItem) {
+              const updated = this.products.items.find(x => x.id === this.activeItem.id);
+              if (updated) this.activeItem = updated;
+            }
+          } catch (e) {
+            alert('操作失败: ' + e);
+          }
+        },
+        async batchCheckCompliance() {
+          if (this.selectedIds.length === 0 || this.isBatchCheckingCompliance) return;
+          this.isBatchCheckingCompliance = true;
+          try {
+            const res = await fetch('/api/cleaner/batch-compliance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ product_ids: this.selectedIds })
+            });
+            const resData = await res.json();
+            alert(`批量合规排查完成: 成功检测 ${resData.success} 件, 失败 ${resData.failed} 件`);
+            await this.loadProducts();
+            if (this.activeItem) {
+              const updated = this.products.items.find(x => x.id === this.activeItem.id);
+              if (updated) this.activeItem = updated;
+            }
+          } catch (e) {
+            alert('批量合规检测失败: ' + e);
+          } finally {
+            this.isBatchCheckingCompliance = false;
+          }
+        },
+        async submitQuickCollect() {
+          if (!this.quickCollectInput.trim() || this.isQuickCollecting) return;
+          this.isQuickCollecting = true;
+          try {
+            const res = await fetch('/api/products/collect-by-plid', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ plid: this.quickCollectInput.trim() })
+            });
+            if (res.ok) {
+              const p = await res.json();
+              const varCount = p.variants ? p.variants.length : 1;
+              alert(`✅ 采集成功！已通过官方 API 采集【${p.takealot_title}】\n售价: R${p.makro_selling_price}, 变体: ${varCount}个`);
+              this.showQuickCollectModal = false;
+              this.quickCollectInput = '';
+              await this.loadProducts();
+            } else {
+              const err = await res.json();
+              alert(`❌ 采集失败: ${err.detail || res.statusText}`);
+            }
+          } catch (e) {
+            alert(`❌ 采集请求失败: ${e}`);
+          } finally {
+            this.isQuickCollecting = false;
+          }
+        },
+        showComplianceModal(item) {
+          this.complianceModalItem = item;
+        },
+        getProhibitedSummary(item) {
+          if (!item.compliance_details) return '违禁';
+          const p = item.compliance_details.prohibited_items;
+          return p && p.length > 0 ? p.join('、') : '违禁';
+        },
+        adoptRecommendedTitle(item) {
+          if (!item.compliance_details || !item.compliance_details.brand_info || !item.compliance_details.brand_info.recommended_title) return;
+          const rec = item.compliance_details.brand_info.recommended_title;
+          item.makro_title = rec;
+          if (item.makro_catalog_attributes && item.makro_catalog_attributes.model_number && item.makro_catalog_attributes.model_number[0]) {
+            item.makro_catalog_attributes.model_number[0].value = rec;
+          }
+          alert('已采纳合规标题并同步更新 Model Number 参数！');
+        },
+        async checkCompliance(item) {
+          this.checkingComplianceId = item.id;
+          try {
+            const res = await fetch(`/api/cleaner/check-compliance/${item.id}`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              item.compliance_status = data.compliance_status;
+              item.compliance_details = data.compliance_details;
+              if (this.activeItem && this.activeItem.id === item.id) {
+                this.activeItem.compliance_status = data.compliance_status;
+                this.activeItem.compliance_details = data.compliance_details;
+              }
+              if (this.complianceModalItem && this.complianceModalItem.id === item.id) {
+                this.complianceModalItem.compliance_status = data.compliance_status;
+                this.complianceModalItem.compliance_details = data.compliance_details;
+              }
+              if (!this.complianceModalItem && this.currentTab !== 'inspector') {
+                this.complianceModalItem = item;
+              }
+            } else {
+              alert('合规检测失败: ' + res.statusText);
+            }
+          } catch (e) {
+            alert('合规检测网络异常: ' + e);
+          } finally {
+            this.checkingComplianceId = null;
+          }
+        },
+        async publishItem(item) {
+          let forceParam = '';
+          if (item.compliance_status === 'PROHIBITED') {
+            const summary = this.getProhibitedSummary(item);
+            const confirmed = confirm(
+              `【🚨 平台违禁品高风险拦截】\n` +
+              `系统检测到该商品包含违禁特征（${summary}）！\n` +
+              `根据 Makro 平台规则，未经认证的无线设备（蓝牙/WiFi/红外）或液体商品严禁销售，可能导致封店！\n\n` +
+              `如果您确需测试，点击【确定】将强制提交，点击【取消】终止上品。`
+            );
+            if (!confirmed) return;
+            forceParam = '?force=true';
+          } else {
+            if (!confirm(`确认将商品【${item.makro_title || item.takealot_title}】上传至 Makro 卖家中心吗？`)) return;
+          }
+
+          this.publishingId = item.id;
+          try {
+            const res = await fetch(`/api/makro/publish/${item.id}${forceParam}`, { method: 'POST' });
+            let data = {};
+            try {
+              data = await res.json();
+            } catch(jsonErr) {
+              data = { message: res.statusText || '服务器响应异常' };
+            }
+            if (res.ok && data.success) {
+              alert(`🎉 上品成功！已提交至 Makro 审核，RequestId: ${data.request_id}`);
+            } else {
+              const errMsg = data.message || data.detail || (typeof data === 'string' ? data : '未知校验错误');
+              alert(`❌ 上品未能通过校验: ${errMsg}`);
+            }
+            this.loadProducts();
+            this.loadTasks();
+          } catch (e) {
+            alert('上传过程发生网络异常: ' + e);
+          } finally {
+            this.publishingId = null;
+          }
+        },
+        async publishSingleVariant(v) {
+          if (!confirm(`确认单独上传变体【${v.sku_id}】(${v.variant_title || v.colour || v.size}) 到 Makro 吗？`)) return;
+          this.publishingVariantId = v.id;
+          try {
+            const res = await fetch(`/api/makro/publish-variant/${v.id}`, { method: 'POST' });
+            let data = {};
+            try {
+              data = await res.json();
+            } catch(jsonErr) {
+              data = { message: res.statusText || '服务器响应异常' };
+            }
+            if (res.ok && data.success) {
+              alert(`🎉 变体 ${v.sku_id} 上品成功！已提交审核，RequestId: ${data.result?.request_id || data.request_id || '已生成'}`);
+              v.status = 'SUBMITTED';
+              v.makro_submit_error = null;
+            } else {
+              const errMsg = data.message || data.detail || '未知错误';
+              alert(`❌ 变体上品失败: ${errMsg}`);
+              v.status = 'FAILED';
+              v.makro_submit_error = errMsg;
+            }
+            await this.loadProducts();
+            if (this.activeItem) {
+              const updated = this.products.items.find(x => x.id === this.activeItem.id);
+              if (updated) this.activeItem = updated;
+            }
+            this.loadTasks();
+          } catch (e) {
+            alert('上传过程发生网络异常: ' + e);
+          } finally {
+            this.publishingVariantId = null;
+          }
+        },
+        async deleteItem(item) {
+          if (!confirm(`确定要删除商品【${item.makro_title || item.takealot_title}】吗？删除后不可恢复。`)) return;
+          try {
+            const res = await fetch(`/api/products/${item.id}`, { method: 'DELETE' });
+            if (res.ok) {
+              if (this.activeItem && this.activeItem.id === item.id) {
+                this.currentTab = 'products';
+                this.activeItem = null;
+              }
+              this.loadProducts();
+            } else {
+              alert('删除失败');
+            }
+          } catch (e) {
+            alert('删除出错: ' + e);
+          }
+        },
+        async batchDelete() {
+          if (this.selectedIds.length === 0) return;
+          if (!confirm(`确定要批量删除选中的 ${this.selectedIds.length} 件商品吗？删除后不可恢复。`)) return;
+          try {
+            const res = await fetch('/api/products/batch-delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ product_ids: this.selectedIds })
+            });
+            const data = await res.json();
+            alert(data.message || '删除成功');
+            this.selectedIds = [];
+            this.loadProducts();
+          } catch (e) {
+            alert('批量删除出错: ' + e);
+          }
+        },
+        toggleSelectAll(e) {
+          if (e.target.checked) {
+            this.selectedIds = this.products.items.map(x => x.id);
+          } else {
+            this.selectedIds = [];
+          }
+        },
+        formatStatus(st) {
+          const map = {
+            'PENDING_CLEAN': '待AI清洗',
+            'CLEANED': '已清洗待上',
+            'SUBMITTED': '已提交审核',
+            'QC_PENDING': '平台质检中',
+            'ACTIVE': '销售中',
+            'FAILED': '上品失败'
+          };
+          return map[st] || st;
+        },
+        getStatusBadgeClass(st) {
+          if (st === 'CLEANED') return 'bg-blue-100 text-blue-800';
+          if (st === 'SUBMITTED' || st === 'QC_PENDING' || st === 'SUCCESS') return 'bg-emerald-100 text-emerald-800';
+          if (st === 'ACTIVE') return 'bg-green-100 text-green-900 font-bold';
+          if (st === 'FAILED') return 'bg-red-100 text-red-800';
+          return 'bg-slate-100 text-slate-700';
+        }
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
