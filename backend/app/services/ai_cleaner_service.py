@@ -100,8 +100,8 @@ class AICleanerService:
     "{target_brand} Third-Party [Item Type] Compatible with [Target Brand] [Device Model]"
     或 "{target_brand} Replacement [Item Type] Suitable for [Target Brand] [Device Model]"；
 - 【Makro Model Number 参数规则】:
-  Makro 平台的前台商品标题是由填写的参数提取生成的，正常都会完整带上 Model Number 参数！
-  因此 attributes 中的 "model_number" 字段请直接填入生成的完整规范商品标题 (可包含型号与第三方兼容说明)，以便 Makro 前台完整展示！
+  Makro 平台官方要求：model_number 与 model_name 绝不能包含品牌名（严禁含有 "{target_brand}"，否则会被平台报错拦截：Brand name should not be part of the attribute value）！
+  因此 attributes 中的 "model_number" 字段请填入去除品牌名后的规范商品型号/英文描述 (如 "Third-Party USB Flash Drive Compatible with Apple iPhone and USB-C Devices 1TB")！
 
 【Takealot 原始商品数据】:
 原标题: {raw_title}
@@ -118,8 +118,8 @@ class AICleanerService:
   "makro_title": "{target_brand} 规范英文商品标题",
   "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
   "attributes": {{
-    "model_name": "简明型号",
-    "model_number": "{target_brand} 完整规范商品标题(用于Makro前台标题提取)",
+    "model_name": "简明型号(绝不包含品牌名)",
+    "model_number": "去除品牌名后的规范英文名称/型号(绝不能带品牌名)",
     "brand_colour": "颜色",
     "colour": "标准色(如 Yellow, Black, Blue 等)",
     "material": "材质(如 Steel, Plastic, Microfiber 等)",
@@ -169,8 +169,16 @@ class AICleanerService:
             makro_title = f"{target_brand} Third-Party {clean_t[:60]} Compatible with {brand_display}"
             data["makro_title"] = makro_title
 
-        # 将规范标题注入 model_number 参数以主导 Makro 前台标题生成
-        attrs["model_number"] = makro_title[:250]
+        # 将去除品牌名后的规范标题注入 model_number 参数 (规避 Brand name should not be part of attribute value)
+        clean_mn = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', makro_title, flags=re.I)
+        clean_mn = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
+        attrs["model_number"] = clean_mn[:250] if clean_mn else "STD-01"
+
+        if "model_name" in attrs:
+            clean_mname = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', str(attrs["model_name"]), flags=re.I)
+            clean_mname = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mname, flags=re.I).strip(' -_,:;')
+            attrs["model_name"] = clean_mname[:40] if clean_mname else "Standard"
+
         data["attributes"] = attrs
             
         return data
@@ -241,8 +249,10 @@ class AICleanerService:
             clean_t = re.sub(r'\s+', ' ', clean_t)
             makro_title = f"{target_brand} Third-Party {clean_t[:60]} Compatible with {brand_display}"
 
-        # 确保 model_number 放入完整标题，支撑 Makro 前台标题生成
-        attrs["model_number"] = makro_title[:250]
+        # 确保 model_number 绝不包含目标品牌名
+        clean_mn = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', makro_title, flags=re.I)
+        clean_mn = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
+        attrs["model_number"] = clean_mn[:250] if clean_mn else model_number
 
         return {
             "vertical": vertical,

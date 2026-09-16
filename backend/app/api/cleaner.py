@@ -52,8 +52,11 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
                 qualifier = "cm"
             catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
 
-        # 确保 model_number 放入完整标题，支撑 Makro 前台标题生成
-        catalog_attrs["model_number"] = [{"value": (product.makro_title or "")[:250], "qualifier": None}]
+        # 确保 model_number 放入去除品牌名后的商品描述，防止触发 Brand name should not be part of model_number 限制
+        target_b = product.makro_brand or "Beishi"
+        clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', product.makro_title or "", flags=re.I)
+        clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
+        catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{product.id}")[:250], "qualifier": None}]
 
         product.makro_catalog_attributes = json.dumps(catalog_attrs)
         product.makro_submit_error = None
@@ -109,7 +112,10 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                     qualifier = "cm"
                 catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
 
-            catalog_attrs["model_number"] = [{"value": (product.makro_title or "")[:250], "qualifier": None}]
+            target_b = product.makro_brand or "Beishi"
+            clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', product.makro_title or "", flags=re.I)
+            clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
+            catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{product.id}")[:250], "qualifier": None}]
             product.makro_catalog_attributes = json.dumps(catalog_attrs)
             product.makro_submit_error = None
             product.status = "CLEANED"
