@@ -2,7 +2,7 @@ import json
 import time
 import uuid
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -23,6 +23,89 @@ logger = logging.getLogger(__name__)
 def _get_setting_val(db: Session, key: str, default: str) -> str:
     s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
     return s.value if s and s.value else default
+
+def _format_attribute_value_and_qualifier(
+    attr_name: str,
+    raw_val: Any,
+    raw_qual: Optional[str],
+    def_item: Optional[dict]
+) -> Tuple[str, Optional[str]]:
+    """
+    根据 Makro 官方类目属性定义，自动解析并规范化属性值与单位限定符 (Qualifier)
+    """
+    val_str = str(raw_val).strip() if raw_val is not None else ""
+    qual = raw_qual
+
+    if not def_item:
+        return val_str, qual
+
+    qual_vals = [x.strip() for x in (def_item.get("qualifierAllowedValues") or "").split("||") if x.strip()]
+    default_qual = def_item.get("defaultQualifier") or (qual_vals[0] if qual_vals else None)
+    allowed_vals = [x.strip() for x in (def_item.get("allowedValues") or "").split("||") if x.strip()]
+
+    # 1. 处理容量/存储相关字段 (storage_capacity, capacity, internal_storage, ram, etc.)
+    if attr_name in ["storage_capacity", "capacity", "internal_storage", "ram", "memory"]:
+        import re
+        m = re.search(r'([\d\.]+)\s*([a-zA-Z]+)?', val_str)
+        if m:
+            num_val = float(m.group(1))
+            unit = (m.group(2) or "").upper()
+            
+            if unit in ["TB", "T"]:
+                qual = "TB" if "TB" in qual_vals else default_qual
+                val_str = str(int(num_val)) if num_val.is_integer() else str(num_val)
+            elif unit in ["GB", "G"]:
+                if num_val >= 1000 and "TB" in qual_vals:
+                    qual = "TB"
+                    tb_val = num_val / 1000.0
+                    val_str = str(int(tb_val)) if tb_val.is_integer() else str(tb_val)
+                else:
+                    qual = "GB" if "GB" in qual_vals else default_qual
+                    val_str = str(int(num_val)) if num_val.is_integer() else str(num_val)
+            elif unit in ["MB", "M"]:
+                qual = "MB" if "MB" in qual_vals else default_qual
+                val_str = str(int(num_val)) if num_val.is_integer() else str(num_val)
+            else:
+                qual = default_qual
+                val_str = str(int(num_val)) if num_val.is_integer() else str(num_val)
+        elif qual_vals and not qual:
+            qual = default_qual
+
+        if allowed_vals and val_str not in allowed_vals:
+            matched = next((av for av in allowed_vals if av == val_str), allowed_vals[0])
+            val_str = matched
+
+        return val_str, qual
+
+    # 2. 处理尺寸长度 (length, width, height, depth, overall_length)
+    if attr_name in ["overall_length", "width", "length", "height", "depth"]:
+        if not qual or qual not in qual_vals:
+            qual = next((q for q in qual_vals if q.lower() == "cm"), default_qual or "cm")
+        return val_str, qual
+
+    # 3. 处理重量 (weight)
+    if attr_name in ["weight"]:
+        if not qual or qual not in qual_vals:
+            qual = next((q for q in qual_vals if q.lower() in ["g", "kg"]), default_qual or "g")
+        return val_str, qual
+
+    # 4. 处理速度 (speed, read_speed, write_speed)
+    if attr_name in ["speed", "read_speed", "write_speed"]:
+        if not qual or qual not in qual_vals:
+            qual = next((q for q in qual_vals if "mbps" in q.lower() or "mb/s" in q.lower()), default_qual)
+        return val_str, qual
+
+    # 5. 通用 Qualifier 强制匹配 (只要属性定义了 qualifierAllowedValues)
+    if qual_vals:
+        if not qual or qual not in qual_vals:
+            qual = default_qual or qual_vals[0]
+
+    # 6. 通用枚举值 AllowedValues 匹配
+    if allowed_vals and val_str not in allowed_vals:
+        matched = next((av for av in allowed_vals if val_str.lower() in av.lower() or av.lower() in val_str.lower()), allowed_vals[0])
+        val_str = matched
+
+    return val_str, qual
 
 def _build_makro_payload(
     db: Session,
@@ -193,15 +276,14 @@ def _build_makro_payload(
         if var_pack and (not allowed_attrs or "pack_of" in allowed_attrs):
             catalog_attrs["pack_of"] = [{"value": str(var_pack), "qualifier": None}]
 
-        # 容量/内存参数 (如 1TB, 2TB)
-        cap_val = var_attrs.get("capacity")
+        # 容量/内存参数 (如 1TB, 2TB, 512GB)
+        cap_val = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
         if cap_val:
-            if not allowed_attrs or "capacity" in allowed_attrs:
-                catalog_attrs["capacity"] = [{"value": str(cap_val), "qualifier": None}]
-            if not allowed_attrs or "internal_storage" in allowed_attrs:
-                catalog_attrs["internal_storage"] = [{"value": str(cap_val), "qualifier": None}]
-            if not allowed_attrs or "storage_capacity" in allowed_attrs:
-                catalog_attrs["storage_capacity"] = [{"value": str(cap_val), "qualifier": None}]
+            for cap_k in ["storage_capacity", "capacity", "internal_storage"]:
+                if not allowed_attrs or cap_k in allowed_attrs:
+                    def_item = allowed_attrs.get(cap_k)
+                    val_s, q_s = _format_attribute_value_and_qualifier(cap_k, cap_val, None, def_item)
+                    catalog_attrs[cap_k] = [{"value": val_s, "qualifier": q_s}]
 
     # C. 针对 Makro 草稿报错中指明的任何缺失字段，自动根据官方枚举或定义兜底补充
     missing_attrs = []
@@ -230,19 +312,19 @@ def _build_makro_payload(
 
             qual_vals = [x.strip() for x in (def_item.get("qualifierAllowedValues") or "").split("||") if x.strip()]
             qual = qual_vals[0] if qual_vals else (def_item.get("defaultQualifier") or None)
-            catalog_attrs[missing_k] = [{"value": str(val), "qualifier": qual}]
+            
+            val_s, q_s = _format_attribute_value_and_qualifier(missing_k, val, qual, def_item)
+            catalog_attrs[missing_k] = [{"value": val_s, "qualifier": q_s}]
 
-    # D. 校验枚举属性 (特别是 type 字段等)，确保值完全符合 allowedValues
+    # D. 全量清洗与校验所有属性的值与 Qualifier，保证 100% 符合官方定义
     for attr_k, attr_v_list in list(catalog_attrs.items()):
         if attr_k in allowed_attrs:
             def_item = allowed_attrs[attr_k]
-            allowed_vals = [x.strip() for x in (def_item.get("allowedValues") or "").split("||") if x.strip()]
-            if allowed_vals and attr_v_list and isinstance(attr_v_list, list):
+            if attr_v_list and isinstance(attr_v_list, list) and len(attr_v_list) > 0:
                 cur_val = attr_v_list[0].get("value")
-                if cur_val not in allowed_vals:
-                    # 尝试模糊匹配或兜底选择第一个合法枚举
-                    matched = next((av for av in allowed_vals if cur_val.lower() in av.lower() or av.lower() in cur_val.lower()), allowed_vals[0])
-                    catalog_attrs[attr_k][0]["value"] = matched
+                cur_qual = attr_v_list[0].get("qualifier")
+                norm_val, norm_qual = _format_attribute_value_and_qualifier(attr_k, cur_val, cur_qual, def_item)
+                catalog_attrs[attr_k] = [{"value": norm_val, "qualifier": norm_qual}]
 
     now_ms = int(time.time() * 1000)
 
