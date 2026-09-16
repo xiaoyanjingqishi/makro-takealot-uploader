@@ -134,22 +134,180 @@
             >
               <span>📥 + PLID极速采集</span>
             </button>
+            <!-- 视图切换: 聚合 vs 平铺 -->
+            <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button 
+                @click="viewMode = 'grouped'" 
+                :class="viewMode === 'grouped' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-800'"
+                class="px-2.5 py-1.5 text-xs rounded-md transition flex items-center space-x-1"
+                title="按 Takealot 母体折叠聚合变体"
+              >
+                <span>🗂️ 母体聚合</span>
+              </button>
+              <button 
+                @click="viewMode = 'flat'" 
+                :class="viewMode === 'flat' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-800'"
+                class="px-2.5 py-1.5 text-xs rounded-md transition flex items-center space-x-1"
+                title="全量平铺独立变体明细"
+              >
+                <span>📄 变体平铺</span>
+              </button>
+            </div>
+
             <button 
-              @click="loadProducts" 
-              class="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg"
+              @click="loadProducts(currentPage)" 
+              class="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center space-x-1"
             >
-              刷新
+              <span>🔄 刷新</span>
             </button>
           </div>
         </div>
 
-        <!-- 商品列表表格 -->
-        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <!-- ================= 视图 A: 母体聚合视图 ================= -->
+        <div v-if="viewMode === 'grouped'" class="space-y-4">
+          <div v-if="loadingProducts" class="text-center py-12 bg-white rounded-xl border border-slate-200 text-slate-400">
+            ⏳ 正在加载商品数据...
+          </div>
+          <div v-else-if="groupedProducts.length === 0" class="text-center py-12 bg-white rounded-xl border border-slate-200 text-slate-400">
+            暂无采集商品。请使用上方【📥 + PLID极速采集】或 Chrome 插件采集！
+          </div>
+          <div 
+            v-for="grp in groupedProducts" 
+            :key="grp.group_code" 
+            class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden transition hover:border-slate-300"
+          >
+            <!-- 母体卡片头部 -->
+            <div class="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
+              <div class="flex items-center space-x-3.5 flex-1 min-w-0">
+                <input 
+                  type="checkbox" 
+                  :checked="isGroupSelected(grp)" 
+                  @change="toggleGroupSelect(grp, $event)"
+                  class="rounded text-blue-600 cursor-pointer h-4 w-4"
+                  title="全选/取消该母体下的全部变体"
+                />
+                <div class="relative group cursor-pointer shrink-0" @click="openImagePreview(grp.coverImage)" title="点击放大预览主图">
+                  <img 
+                    :src="grp.coverImage || 'https://via.placeholder.com/80'" 
+                    class="w-16 h-16 object-cover rounded-lg border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition"
+                  />
+                  <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
+                    🔍 预览
+                  </div>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center space-x-2 mb-1 flex-wrap gap-y-1">
+                    <span class="px-2 py-0.5 bg-indigo-100 text-indigo-800 border border-indigo-200 rounded font-mono text-[11px] font-bold">
+                      母体: {{ grp.group_code }}
+                    </span>
+                    <span class="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[11px] font-semibold">
+                      {{ grp.items.length }} 个独立变体
+                    </span>
+                    <span class="text-xs text-slate-300">|</span>
+                    <span class="text-xs font-semibold text-slate-800">原售价: R{{ grp.minPrice }} ~ R{{ grp.maxPrice }}</span>
+                    <a v-if="grp.takealot_url" :href="grp.takealot_url" target="_blank" class="text-xs text-blue-600 hover:underline">前台链接 ↗</a>
+                  </div>
+                  <div class="font-bold text-slate-900 text-sm truncate">{{ grp.title }}</div>
+                  <div class="mt-1 flex items-center space-x-3 flex-wrap gap-y-1 text-xs">
+                    <div v-if="grp.colors.length" class="flex items-center space-x-1">
+                      <span class="text-[10px] text-slate-400">颜色:</span>
+                      <span v-for="c in grp.colors" :key="c" class="px-1.5 py-0.2 bg-pink-50 text-pink-700 border border-pink-200 rounded text-[10px]">
+                        {{ c }}
+                      </span>
+                    </div>
+                    <div v-if="grp.sizes.length" class="flex items-center space-x-1">
+                      <span class="text-[10px] text-slate-400">尺码/规格:</span>
+                      <span v-for="s in grp.sizes.slice(0, 8)" :key="s" class="px-1.5 py-0.2 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded text-[10px]">
+                        {{ s }}
+                      </span>
+                      <span v-if="grp.sizes.length > 8" class="text-[10px] text-slate-400">+{{ grp.sizes.length - 8 }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右侧快捷展开按钮 -->
+              <div class="flex items-center space-x-2">
+                <button 
+                  @click="toggleGroupExpand(grp.group_code)" 
+                  class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-xs font-semibold text-slate-700 flex items-center space-x-1 shadow-xs"
+                >
+                  <span>{{ isGroupExpanded(grp.group_code) ? '收起变体明细 ▲' : `展开全部 ${grp.items.length} 个变体明细 ▼` }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 展开的变体子表格 -->
+            <div v-if="isGroupExpanded(grp.group_code)" class="overflow-x-auto border-t border-slate-100 bg-white">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="bg-slate-50/50 text-slate-500 font-medium border-b border-slate-100">
+                    <th class="py-2.5 px-4 w-10"></th>
+                    <th class="py-2.5 px-4 w-16">主图</th>
+                    <th class="py-2.5 px-4">变体参数与标题</th>
+                    <th class="py-2.5 px-4">Makro 待发信息</th>
+                    <th class="py-2.5 px-4 w-28">售价 (ZAR)</th>
+                    <th class="py-2.5 px-4 w-24">状态</th>
+                    <th class="py-2.5 px-4 w-32 text-right">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-for="item in grp.items" :key="item.id" class="hover:bg-slate-50/80 transition">
+                    <td class="py-2.5 px-4">
+                      <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600">
+                    </td>
+                    <td class="py-2.5 px-4">
+                      <div class="relative group cursor-pointer" @click="openImagePreview(item.raw_images[0])" title="点击放大预览主图">
+                        <img :src="item.raw_images[0] || 'https://via.placeholder.com/80'" class="w-10 h-10 object-cover rounded border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition" />
+                      </div>
+                    </td>
+                    <td class="py-2.5 px-4">
+                      <div class="flex items-center space-x-1.5 mb-0.5 flex-wrap">
+                        <span class="px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded font-mono text-[10px]">SKU: {{ item.sku_id }}</span>
+                        <span v-if="item.colour && item.colour !== '多色'" class="px-1.5 py-0.2 bg-pink-50 text-pink-700 border border-pink-200 rounded text-[10px]">🎨 {{ item.colour }}</span>
+                        <span v-if="item.size && item.size !== '均码'" class="px-1.5 py-0.2 bg-cyan-50 text-cyan-700 border border-cyan-200 rounded text-[10px]">📏 {{ item.size }}</span>
+                      </div>
+                      <div class="font-medium text-slate-800 line-clamp-1">{{ item.takealot_title }}</div>
+                      <div class="text-[10px] text-slate-400 mt-0.5">原条码: {{ item.barcode || '无' }}</div>
+                    </td>
+                    <td class="py-2.5 px-4">
+                      <div class="font-medium text-slate-700 line-clamp-1">{{ item.makro_title || '待AI规范化' }}</div>
+                      <div class="flex items-center space-x-1.5 mt-0.5 text-[10px]">
+                        <span class="text-slate-400">类目: {{ item.makro_vertical }}</span>
+                        <span class="text-blue-600 font-semibold">品牌: {{ item.makro_brand }}</span>
+                        <span v-if="item.compliance_status === 'PROHIBITED'" class="text-rose-600 font-bold">🚫 违禁拦截</span>
+                        <span v-else-if="item.compliance_status === 'RISK'" class="text-amber-600 font-bold">⚠️ 风险预警</span>
+                        <span v-else-if="item.compliance_status === 'SAFE'" class="text-emerald-600 font-bold">🛡️ 合规安全</span>
+                      </div>
+                    </td>
+                    <td class="py-2.5 px-4">
+                      <div class="font-bold text-slate-900">R{{ item.makro_selling_price }}</div>
+                      <div class="text-[10px] text-slate-400 line-through">MRP: R{{ item.makro_mrp }}</div>
+                    </td>
+                    <td class="py-2.5 px-4">
+                      <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[10px] font-semibold rounded-full inline-block">
+                        {{ formatStatus(item.status) }}
+                      </span>
+                    </td>
+                    <td class="py-2.5 px-4 text-right space-x-1 whitespace-nowrap">
+                      <button @click="openInspector(item)" class="px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 rounded border border-blue-200">审品</button>
+                      <button @click="publishItem(item)" :disabled="publishingId === item.id" class="px-2 py-0.5 text-[11px] text-white bg-emerald-600 hover:bg-emerald-700 rounded font-semibold">上品</button>
+                      <button @click="deleteItem(item)" class="px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 rounded border border-red-200">删除</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= 视图 B: 变体平铺表格 ================= -->
+        <div v-show="viewMode === 'flat'" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <table class="w-full text-left border-collapse text-xs">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
                 <th class="py-3 px-4 w-10">
-                  <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected" class="rounded text-blue-600">
+                  <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected" class="rounded text-blue-600 cursor-pointer">
                 </th>
                 <th class="py-3 px-4 w-20">变体主图</th>
                 <th class="py-3 px-4">Takealot 来源与变体信息</th>
@@ -161,7 +319,7 @@
             </thead>
             <tbody class="divide-y divide-slate-100">
               <tr v-if="loadingProducts" class="text-center py-10">
-                <td colspan="7" class="py-8 text-slate-400">加载中...</td>
+                <td colspan="7" class="py-8 text-slate-400">⏳ 加载中...</td>
               </tr>
               <tr v-else-if="products.items.length === 0" class="text-center py-10">
                 <td colspan="7" class="py-12 text-slate-400">
@@ -170,13 +328,18 @@
               </tr>
               <tr v-for="item in products.items" :key="item.id" class="hover:bg-slate-50/80 transition">
                 <td class="py-3 px-4">
-                  <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600">
+                  <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600 cursor-pointer">
                 </td>
                 <td class="py-3 px-4">
-                  <img 
-                    :src="item.raw_images[0] || 'https://via.placeholder.com/80'" 
-                    class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs bg-white"
-                  />
+                  <div class="relative group cursor-pointer" @click="openImagePreview(item.raw_images[0])" title="点击放大预览主图">
+                    <img 
+                      :src="item.raw_images[0] || 'https://via.placeholder.com/80'" 
+                      class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs bg-white group-hover:opacity-85 transition"
+                    />
+                    <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
+                      🔍 预览
+                    </div>
+                  </div>
                 </td>
                 <td class="py-3 px-4 max-w-xs">
                   <!-- 母体关联与 SKU 标识 -->
@@ -380,16 +543,25 @@
               <a :href="activeItem.takealot_url" target="_blank" class="text-xs text-blue-600 hover:underline">前台链接 &rarr;</a>
             </div>
 
-            <!-- 图片预览 -->
+            <!-- 图片预览 (支持点击放大预览) -->
             <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1.5">原始图片列表 ({{ activeItem.raw_images.length }}张)</label>
+              <label class="block text-xs font-semibold text-slate-600 mb-1.5">原始图片列表 ({{ activeItem.raw_images.length }}张，点击放大)</label>
               <div class="flex space-x-2 overflow-x-auto py-2">
-                <img 
+                <div 
                   v-for="(img, idx) in activeItem.raw_images" 
                   :key="idx" 
-                  :src="img" 
-                  class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0 bg-white"
-                />
+                  class="relative group cursor-pointer shrink-0"
+                  @click="openImagePreview(img)"
+                  title="点击放大预览"
+                >
+                  <img 
+                    :src="img" 
+                    class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0 bg-white group-hover:opacity-85 transition"
+                  />
+                  <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
+                    🔍
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -420,20 +592,20 @@
               <div class="max-h-48 overflow-y-auto bg-slate-50 rounded-lg p-2.5 border border-slate-200 text-[11px] space-y-1">
                 <div v-for="(v, k) in activeItem.takealot_specs" :key="k" class="flex justify-between border-b border-slate-100 pb-1">
                   <span class="text-slate-500 font-medium">{{ k }}</span>
-                  <span class="text-slate-800">{{ v }}</span>
+                  <span class="text-slate-800 text-right">{{ v }}</span>
                 </div>
               </div>
             </div>
 
             <div>
               <label class="block text-xs font-semibold text-slate-600 mb-1">原始商品描述</label>
-              <div class="max-h-36 overflow-y-auto bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs text-slate-600 whitespace-pre-wrap">
-                {{ activeItem.takealot_description }}
+              <div class="max-h-40 overflow-y-auto bg-slate-50 rounded-lg p-2.5 border border-slate-200 text-[11px] text-slate-600 leading-relaxed whitespace-pre-wrap">
+                {{ activeItem.takealot_description || '无原始描述' }}
               </div>
             </div>
           </div>
 
-          <!-- 右栏: Makro 待上架规范数据 (可编辑) -->
+          <!-- 右栏: Makro 规范化数据 -->
           <div class="bg-white p-5 rounded-xl border border-blue-200 ring-2 ring-blue-500/10 shadow-sm space-y-4">
             <div class="flex items-center justify-between border-b pb-3 border-blue-100">
               <span class="text-xs font-bold text-blue-700 uppercase tracking-wider">Makro (Flipkart SaaS) 规范化数据</span>
@@ -451,11 +623,30 @@
 
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-xs font-semibold text-slate-700 mb-1">垂直类目 (Vertical)</label>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-xs font-semibold text-slate-700">垂直类目 (Vertical)</label>
+                  <select 
+                    @change="onSelectVertical($event.target.value)" 
+                    class="text-[10px] text-blue-600 bg-blue-50 border border-blue-200 rounded px-1 py-0.5"
+                  >
+                    <option value="">快捷选择常用类目...</option>
+                    <option value="cases_covers">cases_covers (手机壳/保护套)</option>
+                    <option value="costume_wear">costume_wear (内衣/文胸/服饰)</option>
+                    <option value="card_holder">card_holder (钱包/卡包)</option>
+                    <option value="usb_flash_drive">usb_flash_drive (U盘/闪存)</option>
+                    <option value="bath_towel">bath_towel (毛巾/浴巾)</option>
+                    <option value="plier">plier (五金工具/钳子)</option>
+                    <option value="data_cable">data_cable (数据线)</option>
+                    <option value="headphone">headphone (耳机/耳麦)</option>
+                    <option value="backpack">backpack (背包/书包)</option>
+                    <option value="smart_switch_plug">smart_switch_plug (智能开关/插座)</option>
+                    <option value="bedsheet">bedsheet (床单/床品)</option>
+                  </select>
+                </div>
                 <input 
                   v-model="activeItem.makro_vertical" 
                   type="text" 
-                  class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  class="w-full text-xs p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono"
                 />
               </div>
               <div>
@@ -1090,6 +1281,82 @@
         </div>
       </div>
 
+      <!-- ================= 全屏图片放大预览模态框 (Lightbox) ================= -->
+      <div 
+        v-if="previewImageUrl" 
+        @click.self="previewImageUrl = null"
+        class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 transition-all duration-200"
+      >
+        <div class="relative max-w-4xl w-full flex flex-col items-center">
+          <button 
+            @click="previewImageUrl = null" 
+            class="absolute -top-12 right-0 bg-white/20 hover:bg-white/40 text-white rounded-full w-9 h-9 flex items-center justify-center text-lg transition font-bold"
+          >
+            ✕
+          </button>
+          <div class="bg-white p-2 rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex items-center justify-center">
+            <img :src="previewImageUrl" class="max-h-[80vh] max-w-full object-contain rounded-xl" />
+          </div>
+          <div class="mt-3 flex items-center space-x-4 text-xs text-white/90">
+            <a :href="previewImageUrl" target="_blank" class="hover:text-white underline flex items-center space-x-1">
+              <span>在新标签页中打开原图 ↗</span>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 通用确认模态对话框 (代替原生 confirm) ================= -->
+      <div 
+        v-if="confirmDialog.show" 
+        class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"
+      >
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 animate-scale-up">
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-800">{{ confirmDialog.title }}</h3>
+            <button @click="confirmDialog.show = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg">✕</button>
+          </div>
+          <div class="p-6 text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
+            {{ confirmDialog.message }}
+          </div>
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="confirmDialog.show = false" 
+              class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg"
+            >
+              {{ confirmDialog.cancelText }}
+            </button>
+            <button 
+              @click="handleConfirm" 
+              :class="{
+                'bg-red-600 hover:bg-red-700 text-white': confirmDialog.type === 'danger',
+                'bg-blue-600 hover:bg-blue-700 text-white': confirmDialog.type === 'primary',
+                'bg-emerald-600 hover:bg-emerald-700 text-white': confirmDialog.type === 'success'
+              }"
+              class="px-4 py-1.5 text-xs font-semibold rounded-lg shadow-xs"
+            >
+              {{ confirmDialog.confirmText }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Toast 浮动通知容器 ================= -->
+      <div class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none">
+        <div 
+          v-for="t in toasts" 
+          :key="t.id" 
+          :class="{
+            'bg-emerald-600 text-white': t.type === 'success',
+            'bg-rose-600 text-white': t.type === 'error',
+            'bg-amber-500 text-white': t.type === 'warning',
+            'bg-blue-600 text-white': t.type === 'info'
+          }"
+          class="px-4 py-2.5 rounded-xl shadow-lg text-xs font-semibold flex items-center space-x-2 pointer-events-auto shadow-slate-900/10 transition-all transform duration-200"
+        >
+          <span>{{ t.message }}</span>
+        </div>
+      </div>
+
     </main>
   </div>
 
@@ -1100,6 +1367,19 @@
       data() {
         return {
           currentTab: 'products',
+          viewMode: 'grouped', // 'grouped' | 'flat'
+          expandedGroups: {},
+          previewImageUrl: null,
+          toasts: [],
+          confirmDialog: {
+            show: false,
+            title: '',
+            message: '',
+            confirmText: '确定',
+            cancelText: '取消',
+            type: 'primary',
+            action: null
+          },
           tabs: [
             { id: 'products', name: '选品箱', icon: '📦' },
             { id: 'inspector', name: '审品比对', icon: '🔍' },
@@ -1148,6 +1428,37 @@
         },
         totalPages() {
           return Math.max(1, Math.ceil((this.products.total || 0) / this.pageSize));
+        },
+        groupedProducts() {
+          if (!this.products.items || this.products.items.length === 0) return [];
+          const map = {};
+          for (const item of this.products.items) {
+            const grpKey = item.group_code || item.takealot_id || `GRP_${item.id}`;
+            if (!map[grpKey]) {
+              map[grpKey] = {
+                group_code: grpKey,
+                title: (item.takealot_title || '').replace(/\s*-\s*[^-]+-[^-]+$/, '').replace(/\s*-\s*[^-]+$/, '').trim(),
+                coverImage: item.raw_images && item.raw_images.length ? item.raw_images[0] : '',
+                takealot_url: item.takealot_url,
+                items: [],
+                colors: [],
+                sizes: [],
+                minPrice: item.makro_selling_price || 0,
+                maxPrice: item.makro_selling_price || 0,
+              };
+            }
+            const g = map[grpKey];
+            g.items.push(item);
+            if (item.colour && item.colour !== '多色' && !g.colors.includes(item.colour)) {
+              g.colors.push(item.colour);
+            }
+            if (item.size && item.size !== '均码' && !g.sizes.includes(item.size)) {
+              g.sizes.push(item.size);
+            }
+            if (item.makro_selling_price < g.minPrice) g.minPrice = item.makro_selling_price;
+            if (item.makro_selling_price > g.maxPrice) g.maxPrice = item.makro_selling_price;
+          }
+          return Object.values(map);
         }
       },
       mounted() {
@@ -1156,6 +1467,58 @@
         this.loadTasks();
       },
       methods: {
+        openImagePreview(url) {
+          if (!url) return;
+          this.previewImageUrl = url;
+        },
+        toggleGroupExpand(code) {
+          this.expandedGroups[code] = !this.expandedGroups[code];
+        },
+        isGroupExpanded(code) {
+          return !!this.expandedGroups[code];
+        },
+        isGroupSelected(grp) {
+          if (!grp.items || grp.items.length === 0) return false;
+          return grp.items.every(x => this.selectedIds.includes(x.id));
+        },
+        toggleGroupSelect(grp, e) {
+          const ids = grp.items.map(x => x.id);
+          if (e.target.checked) {
+            this.selectedIds = Array.from(new Set([...this.selectedIds, ...ids]));
+          } else {
+            this.selectedIds = this.selectedIds.filter(id => !ids.includes(id));
+          }
+        },
+        showToast(message, type = 'info', duration = 3000) {
+          const id = Date.now() + Math.random();
+          this.toasts.push({ id, message, type });
+          setTimeout(() => {
+            this.toasts = this.toasts.filter(t => t.id !== id);
+          }, duration);
+        },
+        openConfirm(options) {
+          this.confirmDialog = {
+            show: true,
+            title: options.title || '操作确认',
+            message: options.message || '确定要执行此操作吗？',
+            confirmText: options.confirmText || '确定',
+            cancelText: options.cancelText || '取消',
+            type: options.type || 'primary',
+            action: options.onConfirm || null
+          };
+        },
+        async handleConfirm() {
+          const act = this.confirmDialog.action;
+          this.confirmDialog.show = false;
+          if (act && typeof act === 'function') {
+            await act();
+          }
+        },
+        onSelectVertical(val) {
+          if (val && this.activeItem) {
+            this.activeItem.makro_vertical = val;
+          }
+        },
         async loadProducts(page = null) {
           if (page !== null && page >= 1) {
             this.currentPage = page;
@@ -1351,10 +1714,17 @@
           if (!item.compliance_details || !item.compliance_details.brand_info || !item.compliance_details.brand_info.recommended_title) return;
           const rec = item.compliance_details.brand_info.recommended_title;
           item.makro_title = rec;
-          if (item.makro_catalog_attributes && item.makro_catalog_attributes.model_number && item.makro_catalog_attributes.model_number[0]) {
-            item.makro_catalog_attributes.model_number[0].value = rec;
+          if (item.makro_catalog_attributes) {
+            if (typeof item.makro_catalog_attributes === 'string') {
+              try {
+                item.makro_catalog_attributes = JSON.parse(item.makro_catalog_attributes);
+              } catch(e) {}
+            }
+            if (item.makro_catalog_attributes.model_number && item.makro_catalog_attributes.model_number[0]) {
+              item.makro_catalog_attributes.model_number[0].value = rec;
+            }
           }
-          alert('已采纳合规标题并同步更新 Model Number 参数！');
+          this.showToast('✅ 已采纳合规建议标题！', 'success');
         },
         async checkCompliance(item) {
           this.checkingComplianceId = item.id;

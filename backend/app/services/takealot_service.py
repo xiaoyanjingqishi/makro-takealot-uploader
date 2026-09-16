@@ -21,6 +21,14 @@ class TakealotService:
         created_products = []
         root_plid = req.takealot_id or "PLID_UNKNOWN"
 
+        from .vertical_service import VerticalService
+        predicted_vertical = VerticalService.predict_vertical(
+            title=req.takealot_title,
+            category=req.takealot_category or "",
+            specs=req.takealot_specs,
+            description=req.takealot_description or ""
+        )
+
         # 如果已有相同 group_code 或 takealot_id 的旧数据，安全级联清理以支持重新采集刷新
         from ..models.task import TaskLog
         existing_pids = [p[0] for p in db.query(Product.id).filter((Product.group_code == root_plid) | (Product.takealot_id == root_plid)).all()]
@@ -80,7 +88,7 @@ class TakealotService:
                     status="PENDING_CLEAN",
                     compliance_status="PENDING_CHECK",
                     compliance_details=None,
-                    makro_vertical="bath_towel",
+                    makro_vertical=predicted_vertical,
                     makro_brand=settings.DEFAULT_BRAND,
                     makro_selling_price=v_selling,
                     makro_mrp=v_mrp
@@ -112,7 +120,7 @@ class TakealotService:
                 status="PENDING_CLEAN",
                 compliance_status="PENDING_CHECK",
                 compliance_details=None,
-                makro_vertical="bath_towel",
+                makro_vertical=predicted_vertical,
                 makro_brand=settings.DEFAULT_BRAND,
                 makro_selling_price=selling_price,
                 makro_mrp=mrp

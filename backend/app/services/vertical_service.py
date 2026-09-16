@@ -75,6 +75,22 @@ class VerticalService:
             "ethernet_cable": "data_cable",
             "usb_cable": "data_cable",
             "charger": "battery_charger",
+            "cellphone_case": "cases_covers",
+            "phone_case": "cases_covers",
+            "case": "cases_covers",
+            "mobile_case": "cases_covers",
+            "cases_covers": "cases_covers",
+            "bra": "costume_wear",
+            "women_bra": "costume_wear",
+            "underwear": "costume_wear",
+            "lingerie": "costume_wear",
+            "wallet": "card_holder",
+            "purse": "clutch",
+            "card_holder": "card_holder",
+            "usb_flash_drive": "usb_flash_drive",
+            "flash_drive": "usb_flash_drive",
+            "pendrive": "usb_flash_drive",
+            "pen_drive": "usb_flash_drive",
             "headphone": "headphone",
             "earphone": "headphone",
             "mouse": "mouse",
@@ -109,3 +125,65 @@ class VerticalService:
     def get_all_vertical_names(cls) -> list:
         verticals = cls._load_verticals()
         return list(verticals.keys())
+
+    @classmethod
+    def predict_vertical(cls, title: str = "", category: str = "", specs: any = None, description: str = "") -> str:
+        """
+        基于标题、Takealot 类目树、规格参数与描述，智能推断最适合的 Makro 官方垂直类目 (Vertical)
+        使用整词匹配 (\bword\b)，防止如 'bra' 误判 'brand' 等问题
+        """
+        import re
+        text = f"{title} {category}".lower()
+        if isinstance(specs, dict):
+            text += " " + " ".join(f"{k} {v}" for k, v in specs.items()).lower()
+        elif isinstance(specs, str):
+            text += " " + specs.lower()
+        if description:
+            text += " " + description[:500].lower()
+
+        def has_any(keywords):
+            for k in keywords:
+                if " " in k or "-" in k or "_" in k:
+                    if k in text:
+                        return True
+                else:
+                    if re.search(rf'\b{re.escape(k)}\b', text):
+                        return True
+            return False
+
+        # 手机壳与保护套
+        if has_any(["phone case", "clear case", "silicone case", "cover case", "protective cover", "phone cover", "cases & covers", "cases_covers"]):
+            return "cases_covers"
+        # 内衣/文胸/服饰 (整词匹配，彻底规避 brand)
+        if has_any(["bra", "bras", "push-up", "wire-free", "brassiere", "lingerie", "underwear", "panties", "boxer", "briefs", "costume_wear"]):
+            return "costume_wear"
+        # 钱包/卡包
+        if has_any(["wallet", "wallets", "purse", "card holder", "leather wallet", "bifold", "money clip", "card_holder"]):
+            return "card_holder"
+        # U盘/闪存
+        if has_any(["usb flash", "flash drive", "pendrive", "pen drive", "thumb drive", "usb3.0", "usb2.0", "usb_flash_drive"]):
+            return "usb_flash_drive"
+        # 五金工具/钳子
+        if has_any(["plier", "pliers", "crimper", "crimping", "wire stripper", "cutting plier", "hand tool", "hardware tool"]):
+            return "plier"
+        # 背包/书包
+        if has_any(["backpack", "backpacks", "travel bag", "laptop bag", "schoolbag", "rucksack", "duffel bag"]):
+            return "backpack"
+        # 耳机
+        if has_any(["headphone", "headphones", "earphone", "earphones", "earbuds", "headset", "tws"]):
+            return "headphone"
+        # 数据线
+        if has_any(["data cable", "charging cable", "usb cable", "type-c cable", "lightning cable"]):
+            return "data_cable"
+        # 智能开关插座
+        if has_any(["smart plug", "smart switch", "wifi plug", "socket plug", "power socket"]):
+            return "smart_switch_plug"
+        # 毛巾浴巾
+        if has_any(["towel", "towels", "bath towel", "hand towel", "washcloth", "microfiber towel", "bath_towel"]):
+            return "bath_towel"
+        # 床品
+        if has_any(["bedsheet", "bed sheet", "duvet cover", "fitted sheet", "pillowcase", "bedding"]):
+            return "bedsheet"
+        
+        return "bath_towel"
+

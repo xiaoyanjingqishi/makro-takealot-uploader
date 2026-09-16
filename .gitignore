@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.class
@@ -27,6 +27,8 @@ wheels/
 
 # SQLite Database & Session Data
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 makro_app.db

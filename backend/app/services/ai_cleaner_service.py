@@ -222,8 +222,64 @@ class AICleanerService:
                 "ideal_for": "Men & Women",
                 "design": "no"
             }
+        elif any(k in title_lower or k in cat_lower for k in ["case", "cover", "phone", "iphone", "samsung", "cellphone"]):
+            vertical = "cases_covers"
+            makro_title = f"{target_brand} Shockproof Protective Clear Phone Case ({colour})"
+            attrs = {
+                "model_name": "Ultra Slim Fit",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "TPU & Polycarbonate",
+                "packaging_type": "Box",
+                "sales_package": "1 Protective Case",
+                "ideal_for": "Everyday Use",
+                "design": "Shockproof"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["bra", "underwear", "sculpting", "lingerie", "corset"]):
+            vertical = "costume_wear"
+            makro_title = f"{target_brand} Wire-Free Push-Up Full Coverage Comfort Bra ({colour})"
+            attrs = {
+                "model_name": "Comfort Fit",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Spandex & Nylon",
+                "packaging_type": "Pack",
+                "sales_package": "1 Bra",
+                "ideal_for": "Women",
+                "design": "Full Coverage"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["wallet", "purse", "card holder", "leather"]):
+            vertical = "card_holder"
+            makro_title = f"{target_brand} Men's Genuine Leather RFID Blocking Slim Wallet ({colour})"
+            attrs = {
+                "model_name": "Slim Card Holder",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Genuine Leather",
+                "packaging_type": "Gift Box",
+                "sales_package": "1 Wallet",
+                "ideal_for": "Men",
+                "design": "Bifold"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["usb", "flash drive", "pendrive", "storage", "thumb"]):
+            vertical = "usb_flash_drive"
+            makro_title = f"{target_brand} High Speed USB 3.0 Metal Flash Drive ({colour})"
+            attrs = {
+                "model_name": "Metal Mini",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Metal Alloy",
+                "packaging_type": "Blister Pack",
+                "sales_package": "1 USB Flash Drive",
+                "ideal_for": "PC, Mac & Mobile",
+                "design": "Compact"
+            }
         elif "crimp" in title_lower or "tool" in title_lower or "cable" in title_lower or "network" in cat_lower:
-            vertical = "crimping_tool"
+            vertical = "plier"
             makro_title = f"{target_brand} Professional RJ45 Network Cable Crimp Tool Cat5e/Cat6 ({colour})"
             attrs = {
                 "model_name": "EZ Pass-through",
@@ -235,6 +291,21 @@ class AICleanerService:
                 "sales_package": "1 Crimping Tool",
                 "ideal_for": "Professional & DIY",
                 "design": "Ergonomic"
+            }
+        else:
+            vertical = "bath_towel"
+            clean_t = re.sub(r'[^\w\s-]', '', raw_title)[:60]
+            makro_title = f"{target_brand} Premium Quality {clean_t} ({colour})"
+            attrs = {
+                "model_name": "Standard Series",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Standard Quality Material",
+                "packaging_type": "Pack",
+                "sales_package": "1 Unit",
+                "ideal_for": "All Users",
+                "design": "Standard"
             }
         # 检查是否涉及知名品牌且为配件
         from .compliance_service import FAMOUS_BRANDS, ACCESSORY_KEYWORDS, COMPATIBILITY_KEYWORDS

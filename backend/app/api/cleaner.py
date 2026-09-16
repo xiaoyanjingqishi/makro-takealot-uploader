@@ -92,37 +92,40 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/batch-clean", summary="批量执行 AI 数据清洗")
+@router.post("/batch-clean", summary="批量执行 AI 数据清洗 (多线程高并发加速)")
 def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
+    from concurrent.futures import ThreadPoolExecutor
+    from ..database import SessionLocal
+
     success_count = 0
     fail_count = 0
     errors = []
 
     ai_service = AICleanerService.from_db(db)
 
-    for pid in req.product_ids:
-        product = db.query(Product).filter(Product.id == pid).first()
-        if not product:
-            fail_count += 1
-            continue
-
+    def _process_single_clean(pid: int):
+        local_db = SessionLocal()
         try:
-            specs = json.loads(product.takealot_specs) if product.takealot_specs else {}
-            var_attrs = json.loads(product.variant_attributes) if product.variant_attributes else {}
+            prod = local_db.query(Product).filter(Product.id == pid).first()
+            if not prod:
+                return False, f"商品 {pid} 不存在"
+
+            specs = json.loads(prod.takealot_specs) if prod.takealot_specs else {}
+            var_attrs = json.loads(prod.variant_attributes) if prod.variant_attributes else {}
             combined_specs = {**specs, **var_attrs}
 
             cleaned = ai_service.clean_product_data({
-                "takealot_title": product.takealot_title,
-                "takealot_brand": product.takealot_brand,
-                "takealot_category": product.takealot_category,
+                "takealot_title": prod.takealot_title,
+                "takealot_brand": prod.takealot_brand,
+                "takealot_category": prod.takealot_category,
                 "takealot_specs": combined_specs,
-                "takealot_description": product.takealot_description
-            }, target_brand=product.makro_brand or "Beishi")
+                "takealot_description": prod.takealot_description
+            }, target_brand=prod.makro_brand or "Beishi")
 
-            product.makro_title = cleaned.get("makro_title", product.takealot_title)
-            raw_desc = cleaned.get("description", product.takealot_description)
-            product.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
-            product.makro_vertical = cleaned.get("vertical", "bath_towel")
+            prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
+            raw_desc = cleaned.get("description", prod.takealot_description)
+            prod.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
+            prod.makro_vertical = cleaned.get("vertical", "bath_towel")
 
             attrs = cleaned.get("attributes", {})
             catalog_attrs = {}
@@ -132,31 +135,43 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                     qualifier = "cm"
                 catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
 
-            if product.colour or var_attrs.get("colour"):
-                c_val = str(product.colour or var_attrs.get("colour"))
+            if prod.colour or var_attrs.get("colour"):
+                c_val = str(prod.colour or var_attrs.get("colour"))
                 catalog_attrs["colour"] = [{"value": c_val, "qualifier": None}]
-                catalog_attrs["brand_colour"] = [{"value": str(product.brand_colour or c_val), "qualifier": None}]
-            if product.size or var_attrs.get("size"):
-                catalog_attrs["size"] = [{"value": str(product.size or var_attrs.get("size")), "qualifier": None}]
-            if product.pack_of or var_attrs.get("pack_of"):
-                catalog_attrs["pack_of"] = [{"value": str(product.pack_of or var_attrs.get("pack_of")), "qualifier": None}]
+                catalog_attrs["brand_colour"] = [{"value": str(prod.brand_colour or c_val), "qualifier": None}]
+            if prod.size or var_attrs.get("size"):
+                catalog_attrs["size"] = [{"value": str(prod.size or var_attrs.get("size")), "qualifier": None}]
+            if prod.pack_of or var_attrs.get("pack_of"):
+                catalog_attrs["pack_of"] = [{"value": str(prod.pack_of or var_attrs.get("pack_of")), "qualifier": None}]
             cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
             if cap:
                 catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
 
-            target_b = product.makro_brand or "Beishi"
-            clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', product.makro_title or "", flags=re.I)
+            target_b = prod.makro_brand or "Beishi"
+            clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', prod.makro_title or "", flags=re.I)
             clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
-            catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{product.id}")[:250], "qualifier": None}]
-            product.makro_catalog_attributes = json.dumps(catalog_attrs)
-            product.makro_submit_error = None
-            product.status = "CLEANED"
-            success_count += 1
+            catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{prod.id}")[:250], "qualifier": None}]
+            prod.makro_catalog_attributes = json.dumps(catalog_attrs)
+            prod.makro_submit_error = None
+            prod.status = "CLEANED"
+            local_db.commit()
+            return True, None
         except Exception as e:
-            fail_count += 1
-            errors.append(f"商品 {pid} 清洗失败: {str(e)}")
+            return False, f"商品 {pid} 清洗失败: {str(e)}"
+        finally:
+            local_db.close()
 
-    db.commit()
+    max_workers = min(6, max(1, len(req.product_ids)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_process_single_clean, req.product_ids))
+
+    for ok, err in results:
+        if ok:
+            success_count += 1
+        else:
+            fail_count += 1
+            if err: errors.append(err)
+
     return {
         "total": len(req.product_ids),
         "success": success_count,
@@ -164,42 +179,57 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
         "errors": errors
     }
 
-@router.post("/batch-compliance", summary="批量执行 AI 侵权与违禁品合规检测")
+@router.post("/batch-compliance", summary="批量执行 AI 侵权与违禁品合规检测 (多线程并发加速)")
 def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)):
+    from concurrent.futures import ThreadPoolExecutor
+    from ..services.compliance_service import ComplianceService
+    from ..database import SessionLocal
+
     success_count = 0
     fail_count = 0
     errors = []
 
-    from ..services.compliance_service import ComplianceService
     cs = ComplianceService.from_db(db)
 
-    for pid in req.product_ids:
-        product = db.query(Product).filter(Product.id == pid).first()
-        if not product:
-            fail_count += 1
-            continue
-
+    def _process_single_comp(pid: int):
+        local_db = SessionLocal()
         try:
-            specs = json.loads(product.takealot_specs) if product.takealot_specs else {}
+            prod = local_db.query(Product).filter(Product.id == pid).first()
+            if not prod:
+                return False, f"商品 {pid} 不存在"
+
+            specs = json.loads(prod.takealot_specs) if prod.takealot_specs else {}
             comp_res = cs.check_product({
-                "takealot_title": product.takealot_title,
-                "makro_title": product.makro_title,
-                "takealot_brand": product.takealot_brand,
-                "takealot_category": product.takealot_category,
+                "takealot_title": prod.takealot_title,
+                "makro_title": prod.makro_title,
+                "takealot_brand": prod.takealot_brand,
+                "takealot_category": prod.takealot_category,
                 "takealot_specs": specs,
-                "takealot_description": product.takealot_description,
-                "makro_brand": product.makro_brand,
-                "raw_images": product.raw_images
-            }, check_image=True)
+                "takealot_description": prod.takealot_description,
+                "makro_brand": prod.makro_brand,
+                "raw_images": prod.raw_images
+            }, check_image=False)
 
-            product.compliance_status = comp_res.get("compliance_status", "SAFE")
-            product.compliance_details = json.dumps(comp_res, ensure_ascii=False)
-            success_count += 1
+            prod.compliance_status = comp_res.get("compliance_status", "SAFE")
+            prod.compliance_details = json.dumps(comp_res, ensure_ascii=False)
+            local_db.commit()
+            return True, None
         except Exception as e:
-            fail_count += 1
-            errors.append(f"商品 {pid} 合规检测异常: {str(e)}")
+            return False, f"商品 {pid} 合规检测异常: {str(e)}"
+        finally:
+            local_db.close()
 
-    db.commit()
+    max_workers = min(8, max(1, len(req.product_ids)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(_process_single_comp, req.product_ids))
+
+    for ok, err in results:
+        if ok:
+            success_count += 1
+        else:
+            fail_count += 1
+            if err: errors.append(err)
+
     return {
         "total": len(req.product_ids),
         "success": success_count,

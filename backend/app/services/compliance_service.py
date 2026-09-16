@@ -104,52 +104,122 @@ class ComplianceService:
             risk_reasons.append("商品包含红外线 (Infrared/IR) 遥控或发射功能，属于平台受限品类。")
             suggestions.append("不可销售红外发射/控制设备，请核实产品规格。")
 
-        # D. 液体检测
-        liquid_match = re.search(
-            r'\b(liquid|fluid|oil|essential\s*oil|lotion|perfume|cologne|fragrance|spray|serum|essence|shampoo|conditioner|gel|cream|toner|lubricant|cleanser|beverage|edible|syrup|mouthwash|ink)\b',
-            full_text
-        ) or re.search(r'(液体|精油|香水|喷雾|乳液|凝胶|膏霜|洗发水|沐浴露|口服液|润滑油)', full_text)
+        # D. 液体检测 (含固态硅胶/凝胶配件白名单排除)
+        is_solid_gel_material = bool(
+            re.search(r'\b(flexible\s*gel|silica\s*gel|silicone\s*gel|tpu\s*gel|gel\s*case|gel\s*cover|gel\s*pen|gel\s*pad|gel\s*cushion|gel\s*insole|heel\s*gel|ice\s*gel|gel\s*grip)\b', full_text)
+            or any(cat_word in category.lower() for cat_word in ["case", "cover", "protector", "shoes", "apparel", "clothing", "tools", "stationery"])
+        )
         
-        is_liquid_cat = any(x in category.lower() for x in ["perfume", "fragrance", "essential oil", "liquid", "oils & fluids"])
-        if liquid_match or is_liquid_cat:
+        liquid_regex = r'\b(liquid|fluid|essential\s*oil|lotion|perfume|cologne|fragrance|spray|serum|essence|shampoo|conditioner|lubricant|cleanser|beverage|edible|syrup|mouthwash|liquid\s*ink)\b'
+        has_true_liquid_words = bool(re.search(liquid_regex, full_text) or re.search(r'(液体|精油|香水|喷雾|乳液|膏霜|洗发水|沐浴露|口服液|润滑油)', full_text))
+        
+        # 仅在非固态配件语境下，独立的 gel / oil / cream 才判定为液体
+        if not is_solid_gel_material:
+            has_true_liquid_words = has_true_liquid_words or bool(re.search(r'\b(oil|gel|cream|toner)\b', full_text) or "凝胶" in full_text)
+
+        is_liquid_cat = any(x in category.lower() for x in ["perfume", "fragrance", "essential oil", "liquid", "oils & fluids", "cosmetic", "skincare"])
+        if has_true_liquid_words or is_liquid_cat:
             prohibited_items_found.append("液体 (Liquid)")
             risk_reasons.append("商品属于液体/精油/香水/喷雾形态，跨境物流及平台禁售或禁止航空运输。")
             suggestions.append("液体类商品无法通过跨境物流和 Makro 平台审核，请停止刊登。")
 
-        # 2. 知名品牌与第三方配件侵权检测
-        detected_brands = []
-        for brand in FAMOUS_BRANDS:
-            if re.search(rf'\b{brand}\b', full_text, re.IGNORECASE):
-                detected_brands.append(brand.title())
+        # 2. 标题专用商标与品牌侵权深度排查 (Title Infringement Inspection)
+        eval_title = (makro_title or title).strip()
+        eval_title_lower = eval_title.lower()
+        title_detected_brands = [b.title() for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', eval_title_lower)]
+        title_detected_brands = list(dict.fromkeys(title_detected_brands))
+
+        # 全文涉及品牌
+        all_detected_brands = [b.title() for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', full_text)]
+        all_detected_brands = list(dict.fromkeys(all_detected_brands))
 
         is_accessory = any(re.search(rf'\b{acc}\b', full_text, re.IGNORECASE) for acc in ACCESSORY_KEYWORDS)
-        
-        brand_infringement_info = {
-            "detected_brands": list(set(detected_brands)),
+        target_brand_name = product_data.get("makro_brand") or "Beishi"
+
+        title_infringement = {
+            "tested": True,
+            "status": "SAFE",
+            "detected_brands": title_detected_brands,
             "is_accessory": is_accessory,
-            "has_compatibility_notice": False,
-            "recommended_title": None
+            "has_proper_compatibility": False,
+            "violation_type": "NONE",
+            "recommended_title": None,
+            "reasons": []
         }
 
-        if detected_brands:
-            check_title = (makro_title or title).lower()
-            has_compat = any(kw in check_title for kw in COMPATIBILITY_KEYWORDS)
-            brand_infringement_info["has_compatibility_notice"] = has_compat
+        if title_detected_brands:
+            first_b = title_detected_brands[0]
+            # 判断标题是否合规包含第三方声明
+            has_compat_clause = any(kw in eval_title_lower for kw in COMPATIBILITY_KEYWORDS)
+            
+            # 判断标题开头是否直接冒用知名品牌 (如 Apple iPhone 17 Case...)
+            first_word_match = re.match(r'^\s*([a-zA-Z0-9_\-]+)', eval_title)
+            starts_with_famous_brand = False
+            if first_word_match:
+                fw = first_word_match.group(1).lower()
+                starts_with_famous_brand = any(b == fw for b in FAMOUS_BRANDS)
 
-            target_brand_name = product_data.get("makro_brand") or "Beishi"
-            first_brand = detected_brands[0]
+            if len(title_detected_brands) >= 3:
+                # 品牌堆砌 (Brand Keyword Stuffing)
+                title_infringement["status"] = "RISK"
+                title_infringement["violation_type"] = "BRAND_SPAMMING"
+                msg = f"【标题关键词堆砌】标题堆砌了多个竞品知名商标品牌 ({', '.join(title_detected_brands)})，易被平台搜索引擎降权或判定侵权！"
+                title_infringement["reasons"].append(msg)
+                risk_reasons.append(msg)
+                suggestions.append("请精简标题，仅保留单一目标兼容机型，切勿堆砌多个品牌名称。")
 
-            if is_accessory:
-                if not has_compat:
-                    risk_reasons.append(f"检测到涉及知名品牌 [{first_brand}] 的配件，但标题缺少【第三方配件适用于】声明，容易被判冒充官方配件导致侵权封店！")
-                    clean_core_title = re.sub(rf'\b{first_brand}\b', '', title, flags=re.IGNORECASE).strip()
-                    clean_core_title = re.sub(r'\s+', ' ', clean_core_title)
-                    recommended = f"{target_brand_name} Third-Party {clean_core_title[:60]} Compatible with {first_brand}"
-                    brand_infringement_info["recommended_title"] = recommended
-                    suggestions.append(f"请将标题规范为第三方配件格式，例如：\"{recommended}\"")
+            elif not is_accessory:
+                # 非配件商品直接在标题使用知名品牌 (直接假冒商标)
+                title_infringement["status"] = "PROHIBITED"
+                title_infringement["violation_type"] = "DIRECT_BRAND_CLAIM"
+                msg = f"【标题品牌侵权拦截】标题包含知名受保护品牌 [{first_b}]，且商品非兼容性配件，涉嫌直接销售受限品牌或假冒正品！"
+                title_infringement["reasons"].append(msg)
+                prohibited_items_found.append(f"商标侵权 ({first_b})")
+                risk_reasons.append(msg)
+                suggestions.append(f"非品牌官方授权店铺严禁销售带有 [{first_b}] 品牌的整机商品。")
+
             else:
-                risk_reasons.append(f"检测到包含知名品牌 [{first_brand}]，疑似非配件商品直接销售知名品牌，存在直接商标侵权风险！")
-                suggestions.append(f"若非官方授权店铺，严禁销售带有 [{first_brand}] 品牌的整机商品。")
+                # 配件类商品排查
+                if starts_with_famous_brand and not has_compat_clause:
+                    title_infringement["status"] = "PROHIBITED"
+                    title_infringement["violation_type"] = "DIRECT_BRAND_CLAIM"
+                    msg = f"【标题侵权】标题开头直接以知名品牌 [{first_b}] 命名，冒充官方原装配件！"
+                    title_infringement["reasons"].append(msg)
+                    prohibited_items_found.append(f"冒充原装配件 ({first_b})")
+                    risk_reasons.append(msg)
+                elif not has_compat_clause:
+                    title_infringement["status"] = "RISK"
+                    title_infringement["violation_type"] = "MISSING_COMPATIBILITY_PREFIX"
+                    msg = f"【标题合规警告】标题包含知名品牌 [{first_b}] 配件，但缺少 'Compatible with' / 'For' 第三方声明，易被判定为未经授权使用商标！"
+                    title_infringement["reasons"].append(msg)
+                    risk_reasons.append(msg)
+                else:
+                    title_infringement["has_proper_compatibility"] = True
+                    title_infringement["status"] = "SAFE"
+
+                # 自动生成建议合规标题
+                clean_core_title = eval_title
+                for b_item in title_detected_brands:
+                    clean_core_title = re.sub(rf'\b{b_item}\b', '', clean_core_title, flags=re.IGNORECASE)
+                for kw in COMPATIBILITY_KEYWORDS:
+                    clean_core_title = re.sub(rf'\b{kw}\b', '', clean_core_title, flags=re.IGNORECASE)
+                clean_core_title = re.sub(rf'\b{re.escape(target_brand_name)}\b', '', clean_core_title, flags=re.IGNORECASE)
+                clean_core_title = re.sub(r'[-_:,/]+', ' ', clean_core_title)
+                clean_core_title = re.sub(r'\s+', ' ', clean_core_title).strip()
+                
+                recommended = f"{target_brand_name} Third-Party {clean_core_title[:55]} Compatible with {first_b}"
+                title_infringement["recommended_title"] = recommended
+                if title_infringement["status"] != "SAFE":
+                    suggestions.append(f"建议修改标题为第三方兼容规范格式：\"{recommended}\"")
+
+        brand_infringement_info = {
+            "detected_brands": all_detected_brands,
+            "title_detected_brands": title_detected_brands,
+            "is_accessory": is_accessory,
+            "has_compatibility_notice": title_infringement["has_proper_compatibility"],
+            "title_infringement": title_infringement,
+            "recommended_title": title_infringement["recommended_title"]
+        }
 
         # 3. 首图 AI 多模态视觉检测
         image_inspection = {
@@ -162,14 +232,21 @@ class ComplianceService:
         }
 
         if check_image and raw_images and self.client:
-            first_img_url = raw_images[0]
-            image_inspection = self._inspect_image_with_vl(first_img_url, detected_brands)
-            if image_inspection.get("is_prohibited"):
-                prohibited_items_found.append("首图违禁特征 (视觉检出)")
-                risk_reasons.append(f"首图视觉检测发现违禁特征: {image_inspection.get('summary')}")
-            if image_inspection.get("has_brand_logo"):
-                risk_reasons.append(f"首图检测到品牌 Logo/受限商标 [{', '.join(image_inspection.get('logo_names', []))}]: {image_inspection.get('summary')}")
-                suggestions.append("建议替换首图为纯净白底商品图，抹除未授权的品牌 Logo 或商标。")
+            img_list = raw_images
+            if isinstance(img_list, str):
+                try:
+                    img_list = json.loads(img_list)
+                except Exception:
+                    img_list = [img_list] if img_list.startswith("http") else []
+            if isinstance(img_list, list) and len(img_list) > 0 and isinstance(img_list[0], str) and img_list[0].startswith("http"):
+                first_img_url = img_list[0]
+                image_inspection = self._inspect_image_with_vl(first_img_url, all_detected_brands)
+                if image_inspection.get("is_prohibited"):
+                    prohibited_items_found.append("首图违禁特征 (视觉检出)")
+                    risk_reasons.append(f"首图视觉检测发现违禁特征: {image_inspection.get('summary')}")
+                if image_inspection.get("has_brand_logo"):
+                    risk_reasons.append(f"首图检测到品牌 Logo/受限商标 [{', '.join(image_inspection.get('logo_names', []))}]: {image_inspection.get('summary')}")
+                    suggestions.append("建议替换首图为纯净白底商品图，抹除未授权的品牌 Logo 或商标。")
 
         # 4. 综合判定风险等级
         if prohibited_items_found:
