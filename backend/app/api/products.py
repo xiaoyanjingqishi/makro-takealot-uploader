@@ -122,17 +122,20 @@ def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"采集异常: {str(e)}")
 
-@router.get("", summary="获取商品列表 (支持状态筛选与分页)")
+@router.get("", summary="获取商品列表 (支持状态、合规筛选与分页)")
 def list_products(
     status: Optional[str] = Query(None, description="状态: PENDING_CLEAN, CLEANED, SUBMITTED, FAILED"),
+    compliance_status: Optional[str] = Query(None, description="合规状态: PENDING_CHECK, SAFE, RISK, PROHIBITED"),
     search: Optional[str] = Query(None, description="搜索关键词"),
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db)
 ):
     query = db.query(Product)
     if status:
         query = query.filter(Product.status == status)
+    if compliance_status:
+        query = query.filter(Product.compliance_status == compliance_status)
     if search:
         s = f"%{search.strip()}%"
         query = query.filter(

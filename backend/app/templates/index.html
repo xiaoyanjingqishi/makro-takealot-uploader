@@ -65,24 +65,35 @@
       <div v-if="currentTab === 'products'" class="space-y-4">
         <!-- 筛选与操作工具栏 -->
         <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-          <div class="flex items-center space-x-3 flex-1 max-w-md">
+          <div class="flex items-center space-x-2 flex-1 max-w-xl">
             <input 
               v-model="searchQuery" 
-              @keyup.enter="loadProducts"
+              @keyup.enter="loadProducts(1)"
               type="text" 
-              placeholder="搜索商品标题或原标题..." 
+              placeholder="搜索商品标题、原标题、母体或条码..." 
               class="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
             <select 
               v-model="statusFilter" 
-              @change="loadProducts"
-              class="text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              @change="loadProducts(1)"
+              class="text-xs px-2.5 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none whitespace-nowrap"
             >
-              <option value="">全部状态</option>
-              <option value="PENDING_CLEAN">待清洗</option>
-              <option value="CLEANED">已清洗/待审核</option>
-              <option value="SUBMITTED">已提交Makro审核</option>
+              <option value="">全部流程状态</option>
+              <option value="PENDING_CLEAN">待AI清洗</option>
+              <option value="CLEANED">已清洗待上</option>
+              <option value="SUBMITTED">已提交审核</option>
               <option value="FAILED">上品失败</option>
+            </select>
+            <select 
+              v-model="complianceFilter" 
+              @change="loadProducts(1)"
+              class="text-xs px-2.5 py-2 border border-purple-300 bg-purple-50/50 text-purple-900 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none whitespace-nowrap font-medium"
+            >
+              <option value="">全部合规状态</option>
+              <option value="SAFE">🛡️ 安全合规 (SAFE)</option>
+              <option value="RISK">⚠️ 疑似风险 (RISK)</option>
+              <option value="PROHIBITED">🚫 违禁拦截 (PROHIBITED)</option>
+              <option value="PENDING_CHECK">⏳ 待检测 (PENDING)</option>
             </select>
           </div>
 
@@ -277,6 +288,46 @@
               </tr>
             </tbody>
           </table>
+
+          <!-- 分页导航条 -->
+          <div class="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+            <div class="flex items-center space-x-2">
+              <span>共 <strong class="text-slate-900 font-bold">{{ products.total || 0 }}</strong> 件商品</span>
+              <span>•</span>
+              <span v-if="products.items.length > 0">
+                当前显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, products.total || 0) }} 条
+              </span>
+              <span v-else>暂无匹配数据</span>
+            </div>
+            <div class="flex items-center space-x-3">
+              <div class="flex items-center space-x-1">
+                <span class="text-slate-500">每页:</span>
+                <select v-model="pageSize" @change="loadProducts(1)" class="px-2 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500">
+                  <option :value="20">20 条/页</option>
+                  <option :value="50">50 条/页</option>
+                  <option :value="100">100 条/页</option>
+                  <option :value="200">200 条/页</option>
+                </select>
+              </div>
+              <div class="flex items-center space-x-1">
+                <button 
+                  @click="loadProducts(currentPage - 1)" 
+                  :disabled="currentPage <= 1 || loadingProducts"
+                  class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-40 font-medium"
+                >
+                  &laquo; 上一页
+                </button>
+                <span class="px-2 font-semibold text-slate-800">{{ currentPage }} / {{ totalPages }}</span>
+                <button 
+                  @click="loadProducts(currentPage + 1)" 
+                  :disabled="currentPage >= totalPages || loadingProducts"
+                  class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-40 font-medium"
+                >
+                  下一页 &raquo;
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1073,6 +1124,9 @@
           },
           searchQuery: '',
           statusFilter: '',
+          complianceFilter: '',
+          currentPage: 1,
+          pageSize: 50,
           selectedIds: [],
           activeItem: null,
           complianceModalItem: null,
@@ -1090,24 +1144,31 @@
       },
       computed: {
         isAllSelected() {
-          return this.products.items.length > 0 && this.selectedIds.length === this.products.items.length;
+          return this.products.items && this.products.items.length > 0 && this.selectedIds.length === this.products.items.length;
+        },
+        totalPages() {
+          return Math.max(1, Math.ceil((this.products.total || 0) / this.pageSize));
         }
       },
       mounted() {
-        this.loadProducts();
+        this.loadProducts(1);
         this.loadSettings();
         this.loadTasks();
       },
       methods: {
-        async loadProducts() {
+        async loadProducts(page = null) {
+          if (page !== null && page >= 1) {
+            this.currentPage = page;
+          }
           this.loadingProducts = true;
           try {
-            let url = `/api/products?page=1&page_size=50`;
+            let url = `/api/products?page=${this.currentPage}&page_size=${this.pageSize}`;
             if (this.searchQuery) url += `&search=${encodeURIComponent(this.searchQuery)}`;
             if (this.statusFilter) url += `&status=${this.statusFilter}`;
+            if (this.complianceFilter) url += `&compliance_status=${this.complianceFilter}`;
             const res = await fetch(url);
             this.products = await res.json();
-            if (!this.activeItem && this.products.items.length > 0) {
+            if (!this.activeItem && this.products.items && this.products.items.length > 0) {
               this.activeItem = JSON.parse(JSON.stringify(this.products.items[0]));
             }
           } catch (e) {
