@@ -161,6 +161,16 @@ def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
                 **primary
             }
         return _format_product(products)
+    except ValueError as ve:
+        err_msg = str(ve)
+        record_audit_log(
+            task_type="COLLECT",
+            status="FAILED",
+            message=f"PLID极速采集失败: {plid_or_url} 原因: {err_msg}",
+            detail_logs={"plid_or_url": plid_or_url, "error": err_msg},
+            db=db
+        )
+        raise HTTPException(status_code=400, detail=err_msg)
     except Exception as e:
         record_audit_log(
             task_type="COLLECT",

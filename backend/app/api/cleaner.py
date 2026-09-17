@@ -48,7 +48,18 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
         product.makro_title = cleaned.get("makro_title", product.takealot_title)
         raw_desc = cleaned.get("description", product.takealot_description)
         product.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
-        product.makro_vertical = cleaned.get("vertical", "bath_towel")
+        
+        from ..services.vertical_service import VerticalService
+        raw_vertical = cleaned.get("vertical", "")
+        resolved_v, _ = VerticalService.resolve_vertical(raw_vertical)
+        if resolved_v == "bath_towel" and "towel" not in (product.takealot_title or "").lower():
+            resolved_v = VerticalService.predict_vertical(
+                title=product.takealot_title,
+                category=product.takealot_category or "",
+                specs=combined_specs,
+                description=product.takealot_description or ""
+            )
+        product.makro_vertical = resolved_v
         
         attrs = cleaned.get("attributes", {})
         catalog_attrs = {}
@@ -134,7 +145,18 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                 prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
                 raw_desc = cleaned.get("description", prod.takealot_description)
                 prod.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
-                prod.makro_vertical = cleaned.get("vertical", "bath_towel")
+                
+                from ..services.vertical_service import VerticalService
+                raw_v = cleaned.get("vertical", "")
+                resolved_batch_v, _ = VerticalService.resolve_vertical(raw_v)
+                if resolved_batch_v == "bath_towel" and "towel" not in (prod.takealot_title or "").lower():
+                    resolved_batch_v = VerticalService.predict_vertical(
+                        title=prod.takealot_title,
+                        category=prod.takealot_category or "",
+                        specs=combined_specs,
+                        description=prod.takealot_description or ""
+                    )
+                prod.makro_vertical = resolved_batch_v
 
                 attrs = cleaned.get("attributes", {})
                 catalog_attrs = {}

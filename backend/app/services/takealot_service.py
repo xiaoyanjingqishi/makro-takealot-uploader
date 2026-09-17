@@ -166,10 +166,38 @@ class TakealotService:
             'Accept': 'application/json'
         }
 
-        api_url = f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}"
-        resp = session.get(api_url, headers=headers, timeout=20)
-        if resp.status_code != 200:
-            raise ValueError(f"Takealot 官方 API 请求失败 (HTTP {resp.status_code}): {resp.text[:200]}")
+        # 依次尝试主流接口版本与 desktop 平台标记
+        api_endpoints = [
+            f"https://api.takealot.com/rest/v-1-19-0/product-details/PLID{plid}?platform=desktop",
+            f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}?platform=desktop",
+            f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}"
+        ]
+
+        resp = None
+        last_err = None
+        for endpoint in api_endpoints:
+            try:
+                r = session.get(endpoint, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    resp = r
+                    break
+                elif r.status_code == 404:
+                    resp = r
+                    last_err = "404"
+                else:
+                    last_err = f"HTTP {r.status_code}"
+            except Exception as e:
+                last_err = str(e)
+
+        if resp is None or resp.status_code != 200:
+            if resp is not None and resp.status_code == 404:
+                raise ValueError(
+                    f"Takealot 官方未找到该商品 (HTTP 404: 资源不存在)。\n"
+                    f"目标编号【PLID{plid}】在平台不存在或已被下架删除。\n"
+                    f"请核对输入的 PLID 或商品网址，或在 Takealot 网站上确认该商品是否仍在线售卖。\n"
+                    f"(建议：在 Chrome 浏览器中打开该商品页面，点击页面右下角的一键采集或插件面板采集，可防止手输错误)"
+                )
+            raise ValueError(f"Takealot 官方 API 请求失败 ({last_err})")
 
         data = resp.json()
 
