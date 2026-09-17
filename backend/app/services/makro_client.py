@@ -25,8 +25,35 @@ class MakroClient:
         self._setup_headers()
 
     @classmethod
-    def from_db(cls, db: Session):
-        """从数据库读取最新的店铺配置和凭据实例化"""
+    def from_store(cls, store):
+        """根据指定的 Store 实体凭据实例化客户端"""
+        if not store:
+            return cls()
+        return cls(
+            seller_id=store.seller_id or settings.DEFAULT_SELLER_ID,
+            csrf_token=store.fk_csrf_token or settings.DEFAULT_FK_CSRF_TOKEN,
+            cookie=store.cookie or ""
+        )
+
+    @classmethod
+    def from_db(cls, db: Session, store_id: Optional[int] = None):
+        """从数据库读取最新的店铺配置和凭据实例化 (优先多店铺 Store，向下兼容 SystemSetting)"""
+        try:
+            from ..models.store import Store
+            if store_id:
+                store = db.query(Store).filter(Store.id == store_id).first()
+                if store:
+                    return cls.from_store(store)
+            # 尝试优先查找默认店铺或第一个激活的店铺
+            default_store = db.query(Store).filter(Store.is_default == True, Store.is_active == True).first()
+            if not default_store:
+                default_store = db.query(Store).filter(Store.is_active == True).first()
+            if default_store:
+                return cls.from_store(default_store)
+        except Exception:
+            pass
+
+        # 降级：从全局 SystemSetting 读取
         s_seller = db.query(SystemSetting).filter(SystemSetting.key == "seller_id").first()
         s_csrf = db.query(SystemSetting).filter(SystemSetting.key == "fk_csrf_token").first()
         s_cookie = db.query(SystemSetting).filter(SystemSetting.key == "cookie").first()

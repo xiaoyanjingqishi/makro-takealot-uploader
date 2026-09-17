@@ -410,7 +410,7 @@
                   <span v-else>🛡️ 批量合规检测</span>
                 </button>
                 <button 
-                  @click="batchPublish" 
+                  @click="openBatchPublishModal" 
                   :disabled="selectedIds.length === 0 || isBatchPublishing"
                   class="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
                 >
@@ -623,6 +623,18 @@
                       <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[10px] font-semibold rounded-full inline-block">
                         {{ formatStatus(item.status) }}
                       </span>
+                      <!-- 多店铺独立上架状态徽章 -->
+                      <div v-if="item.store_listings && item.store_listings.length" class="flex flex-wrap gap-1 mt-1">
+                        <span 
+                          v-for="sl in item.store_listings" 
+                          :key="sl.id" 
+                          :class="sl.status === 'SUBMITTED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'"
+                          class="px-1.5 py-0.2 rounded text-[9.5px] font-mono border"
+                          :title="(sl.store_name || '店铺') + ': ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
+                        >
+                          🏪 {{ sl.store_name }}: {{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }}
+                        </span>
+                      </div>
                     </td>
                     <td class="py-2.5 px-4 text-[11px] text-slate-500 font-mono whitespace-nowrap">
                       <div>{{ formatDateTime(item.created_at) }}</div>
@@ -637,7 +649,7 @@
                       </template>
                       <template v-else>
                         <button @click="openInspector(item)" class="px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 rounded border border-blue-200 cursor-pointer">审品</button>
-                        <button @click="publishItem(item)" :disabled="publishingId === item.id" class="px-2 py-0.5 text-[11px] text-white bg-emerald-600 hover:bg-emerald-700 rounded font-semibold cursor-pointer">上品</button>
+                        <button @click="triggerProductPublish(item)" :disabled="publishingId === item.id" class="px-2 py-0.5 text-[11px] text-white bg-emerald-600 hover:bg-emerald-700 rounded font-semibold cursor-pointer">上品</button>
                         <button @click="deleteItem(item)" class="px-2 py-0.5 text-[11px] text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded border border-slate-200 cursor-pointer" title="移入弃用箱">弃用</button>
                       </template>
                     </td>
@@ -787,6 +799,18 @@
                   <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[11px] font-semibold rounded-full inline-block">
                     {{ formatStatus(item.status) }}
                   </span>
+                  <!-- 多店铺独立上架状态徽章 -->
+                  <div v-if="item.store_listings && item.store_listings.length" class="flex flex-wrap gap-1 mt-1">
+                    <span 
+                      v-for="sl in item.store_listings" 
+                      :key="sl.id" 
+                      :class="sl.status === 'SUBMITTED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'"
+                      class="px-1.5 py-0.2 rounded text-[9.5px] font-mono border"
+                      :title="(sl.store_name || '店铺') + ': ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
+                    >
+                      🏪 {{ sl.store_name }}: {{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }}
+                    </span>
+                  </div>
                 </td>
                 <td class="py-3 px-4 text-[11px] text-slate-500 font-mono whitespace-nowrap">
                   <div>{{ formatDateTime(item.created_at) }}</div>
@@ -818,7 +842,7 @@
                       审品比对
                     </button>
                     <button 
-                      @click="publishItem(item)" 
+                      @click="triggerProductPublish(item)" 
                       :disabled="publishingId === item.id"
                       class="px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded cursor-pointer"
                     >
@@ -907,7 +931,7 @@
               保存更改
             </button>
             <button 
-              @click="publishItem(activeItem)" 
+              @click="triggerProductPublish(activeItem)" 
               :disabled="publishingId === activeItem.id"
               class="px-4 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg shadow-sm flex items-center space-x-1"
             >
@@ -1335,6 +1359,141 @@
                     </span>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Tab: 多店铺协同管理 ================= -->
+      <div v-if="currentTab === 'stores'" class="space-y-4">
+        <!-- 头部标题与统计 -->
+        <div class="flex items-center justify-between bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-wrap gap-3">
+          <div>
+            <h2 class="text-base font-bold text-slate-900 flex items-center space-x-2">
+              <span>🏪 Makro 多店铺协同管理</span>
+              <span class="px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 rounded-full">
+                共 {{ stores.length }} 家店铺 / {{ activeStores.length }} 家已启用
+              </span>
+            </h2>
+            <p class="text-xs text-slate-500 mt-1">
+              集中配置与授权多个 Makro 卖家店铺凭据。支持跨店铺独立上架，同一个商品可同时上架至多家店铺，各自独立跟踪平台状态与 Request ID。
+            </p>
+          </div>
+          <div class="flex items-center space-x-2.5">
+            <button 
+              @click="loadStores" 
+              class="px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 shadow-xs cursor-pointer flex items-center space-x-1"
+            >
+              <span>🔄 刷新店铺</span>
+            </button>
+            <button 
+              @click="openAddStoreModal" 
+              class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-md shadow-blue-500/20 cursor-pointer flex items-center space-x-1.5 transition"
+            >
+              <span>➕ 添加新店铺</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 店铺网格卡片 -->
+        <div v-if="stores.length === 0" class="bg-white p-12 rounded-xl border border-slate-200 text-center text-slate-400">
+          暂无店铺配置，请点击右上角【➕ 添加新店铺】开始配置您的第一个 Makro 店铺！
+        </div>
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div 
+            v-for="s in stores" 
+            :key="s.id" 
+            :class="s.is_default ? 'border-blue-300 ring-2 ring-blue-500/20 bg-white' : 'border-slate-200 bg-white'"
+            class="rounded-xl border shadow-sm p-5 space-y-4 transition-all hover:shadow-md relative flex flex-col justify-between"
+          >
+            <div>
+              <!-- 店铺名与徽章 -->
+              <div class="flex items-start justify-between">
+                <div class="flex items-center space-x-2.5">
+                  <div class="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-xl shrink-0">
+                    🏪
+                  </div>
+                  <div>
+                    <div class="font-bold text-slate-900 text-sm flex items-center space-x-1.5 flex-wrap">
+                      <span>{{ s.name }}</span>
+                      <span v-if="s.is_default" class="px-1.5 py-0.2 text-[10px] bg-blue-100 text-blue-800 font-bold rounded border border-blue-200">
+                        ⭐ 默认主力店
+                      </span>
+                    </div>
+                    <div class="text-[11px] font-mono text-slate-400 mt-0.5">Seller ID: {{ s.seller_id }}</div>
+                  </div>
+                </div>
+                <span 
+                  :class="s.is_active ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'"
+                  class="px-2 py-0.5 rounded text-[11px] font-semibold border shrink-0"
+                >
+                  {{ s.is_active ? '已启用' : '已停用' }}
+                </span>
+              </div>
+
+              <!-- 凭据与上架指标 -->
+              <div class="mt-4 pt-3 border-t border-slate-100 space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500">Cookie 凭据状态:</span>
+                  <span v-if="s.has_cookie" class="text-emerald-600 font-semibold flex items-center space-x-1">
+                    <span>🟢 凭据已就绪</span>
+                  </span>
+                  <span v-else class="text-rose-600 font-semibold flex items-center space-x-1">
+                    <span>🔴 凭据缺失/未登录</span>
+                  </span>
+                </div>
+                <div v-if="s.cookie_preview" class="text-[10.5px] font-mono text-slate-400 bg-slate-50 p-1.5 rounded border border-slate-100 truncate">
+                  Cookie: {{ s.cookie_preview }}
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500">默认刊登品牌:</span>
+                  <span class="font-semibold text-slate-700">{{ s.default_brand || 'Beishi' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500">已成功/提交商品:</span>
+                  <span class="font-bold text-blue-600 font-mono">{{ s.listings_count }} 件</span>
+                </div>
+                <div v-if="s.notes" class="text-[11px] text-slate-400 italic">
+                  备注: {{ s.notes }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部操作按钮 -->
+            <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-1 flex-wrap">
+              <div class="flex items-center space-x-1.5">
+                <button 
+                  @click="testStore(s.id)" 
+                  :disabled="testingStoreId === s.id"
+                  class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                  title="验证该店铺 Cookie 与 Makro 接口有效性"
+                >
+                  <span>{{ testingStoreId === s.id ? '⏳ 测试中...' : '🔄 测试连通' }}</span>
+                </button>
+                <button 
+                  @click="openEditStoreModal(s)" 
+                  class="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition cursor-pointer"
+                >
+                  ✏️ 编辑
+                </button>
+              </div>
+              <div class="flex items-center space-x-1">
+                <button 
+                  v-if="!s.is_default"
+                  @click="setDefaultStore(s.id)" 
+                  class="px-2 py-1.5 text-blue-600 hover:text-blue-800 text-xs font-semibold transition cursor-pointer"
+                  title="设为系统默认上品店铺"
+                >
+                  设为默认
+                </button>
+                <button 
+                  @click="deleteStore(s)" 
+                  class="px-2 py-1.5 text-rose-500 hover:text-rose-700 text-xs font-semibold transition cursor-pointer"
+                  title="删除店铺"
+                >
+                  删除
+                </button>
               </div>
             </div>
           </div>
@@ -2062,6 +2221,315 @@
         </div>
       </div>
 
+      <!-- ================= 店铺新增 / 编辑模态框 ================= -->
+      <div 
+        v-if="showStoreModal" 
+        class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"
+      >
+        <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl overflow-hidden border border-slate-200 animate-scale-up flex flex-col max-h-[90vh]">
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-800">{{ storeModalTitle }}</h3>
+            <button @click="showStoreModal = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block font-bold text-slate-700 mb-1">店铺名称 <span class="text-rose-500">*</span></label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.name" 
+                  placeholder="例: Makro 主力店 / 2号数码店" 
+                  class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label class="block font-bold text-slate-700 mb-1">Seller ID <span class="text-rose-500">*</span></label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.seller_id" 
+                  placeholder="例: cb80491bf0a34dc5" 
+                  class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">FK-CSRF-Token</label>
+              <input 
+                type="text" 
+                v-model="storeForm.fk_csrf_token" 
+                placeholder="Makro 卖家中心请求头中的 fk-csrf-token (如无特殊校验可留空)" 
+                class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+              />
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="font-bold text-slate-700">Cookie 凭据</label>
+                <span v-if="storeForm.id" class="text-[11px] text-slate-400">编辑时留空表示保留原 Cookie</span>
+              </div>
+              <textarea 
+                v-model="storeForm.cookie" 
+                rows="4" 
+                placeholder="粘贴该店铺登录后的完整 Cookie 字符串..."
+                class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none leading-relaxed"
+              ></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block font-bold text-slate-700 mb-1">默认刊登品牌</label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.default_brand" 
+                  placeholder="默认 Beishi" 
+                  class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                />
+              </div>
+              <div>
+                <label class="block font-bold text-slate-700 mb-1">备注说明</label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.notes" 
+                  placeholder="如: 负责家居类目" 
+                  class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div class="flex items-center space-x-6 pt-2 border-t border-slate-100">
+              <label class="flex items-center space-x-2 cursor-pointer select-none">
+                <input type="checkbox" v-model="storeForm.is_active" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer" />
+                <span class="text-xs font-bold text-slate-700">启用该店铺</span>
+              </label>
+              <label class="flex items-center space-x-2 cursor-pointer select-none">
+                <input type="checkbox" v-model="storeForm.is_default" class="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer" />
+                <span class="text-xs font-bold text-slate-700">设为主力默认店</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showStoreModal = false" 
+              class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="saveStore" 
+              class="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition cursor-pointer shadow-sm shadow-blue-500/20"
+            >
+              保存店铺
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 批量上品店铺选择模态框 ================= -->
+      <div 
+        v-if="showBatchPublishModal" 
+        class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"
+      >
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-scale-up flex flex-col">
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-lg">🚀</span>
+              <h3 class="text-sm font-bold text-slate-800">批量上品至 Makro 卖家中心</h3>
+            </div>
+            <button @click="showBatchPublishModal = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 space-y-4 text-xs">
+            <div class="bg-blue-50 border border-blue-100 p-3 rounded-xl flex items-center justify-between">
+              <span class="text-blue-700 font-medium">已勾选待上架商品:</span>
+              <span class="text-blue-900 font-bold font-mono text-sm">{{ selectedIds.length }} 件</span>
+            </div>
+
+            <div>
+              <label class="block font-bold text-slate-700 mb-2">选择上架目标店铺:</label>
+              <div class="space-y-2">
+                <label 
+                  :class="batchPublishTarget === 'all' ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500' : 'border-slate-200 hover:bg-slate-50'"
+                  class="flex items-start space-x-3 p-3 rounded-xl border cursor-pointer transition"
+                >
+                  <input type="radio" value="all" v-model="batchPublishTarget" class="mt-0.5 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                  <div>
+                    <div class="font-bold text-slate-800 flex items-center space-x-1.5">
+                      <span>🌐 全部已启用店铺</span>
+                      <span class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded font-bold">共 {{ activeStores.length }} 家</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 mt-0.5">
+                      系统将同时为每家已启用的店铺创建独立刊登，商品互不干扰。
+                    </div>
+                  </div>
+                </label>
+
+                <label 
+                  :class="batchPublishTarget === 'single' ? 'border-blue-500 bg-blue-50/50 ring-1 ring-blue-500' : 'border-slate-200 hover:bg-slate-50'"
+                  class="flex items-start space-x-3 p-3 rounded-xl border cursor-pointer transition"
+                >
+                  <input type="radio" value="single" v-model="batchPublishTarget" class="mt-0.5 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                  <div class="flex-1">
+                    <div class="font-bold text-slate-800">🏪 指定单一店铺</div>
+                    <div class="text-[11px] text-slate-500 mt-0.5 mb-2">
+                      仅将勾选商品上传至选定的单个 Makro 店铺。
+                    </div>
+                    <select 
+                      v-if="batchPublishTarget === 'single'"
+                      v-model="batchPublishTargetStoreId" 
+                      class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
+                    >
+                      <option v-for="s in activeStores" :key="s.id" :value="s.id">
+                        {{ s.name }} ({{ s.seller_id }}) {{ s.is_default ? '⭐ 默认' : '' }}
+                      </option>
+                    </select>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-slate-100">
+              <label class="flex items-center space-x-2 cursor-pointer select-none">
+                <input type="checkbox" v-model="batchPublishForce" class="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer" />
+                <span class="text-xs text-amber-800 font-medium">跳过违禁品二次确认强行上架 (仅限自审安全商品)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showBatchPublishModal = false" 
+              class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="executeBatchPublish" 
+              class="px-5 py-1.5 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition cursor-pointer shadow-md shadow-blue-500/20 flex items-center space-x-1.5"
+            >
+              <span>🚀 立即启动批量上品</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 单品上品目标店铺选择模态框 ================= -->
+      <div 
+        v-if="showSinglePublishModal && singlePublishItem" 
+        class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"
+      >
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 animate-scale-up flex flex-col max-h-[90vh]">
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-lg">🚀</span>
+              <h3 class="text-sm font-bold text-slate-800">商品上品发布</h3>
+            </div>
+            <button @click="showSinglePublishModal = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs">
+            <!-- 商品概览卡片 -->
+            <div class="flex items-start space-x-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <img :src="getItemImage(singlePublishItem)" class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0 bg-white" />
+              <div class="flex-1 min-w-0">
+                <div class="font-bold text-slate-800 truncate">{{ singlePublishItem.makro_title || singlePublishItem.takealot_title }}</div>
+                <div class="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center space-x-2">
+                  <span>TSIN: {{ singlePublishItem.takealot_tsin_id || singlePublishItem.takealot_tsin }}</span>
+                  <span>|</span>
+                  <span>售价: R{{ singlePublishItem.makro_selling_price || 0 }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 违禁品提示警告 -->
+            <div v-if="singlePublishItem.compliance_status === 'PROHIBITED'" class="bg-rose-50 border border-rose-200 p-3 rounded-xl space-y-1">
+              <div class="font-bold text-rose-800 flex items-center space-x-1">
+                <span>🚨 违禁品高风险拦截警告</span>
+              </div>
+              <p class="text-[11px] text-rose-700 leading-relaxed">
+                系统检测到包含敏感/违禁特征（{{ getProhibitedSummary(singlePublishItem) }}）。如需强行上传，请勾选下方强制上架开关。
+              </p>
+              <label class="flex items-center space-x-1.5 pt-1 cursor-pointer">
+                <input type="checkbox" v-model="singlePublishForce" class="w-3.5 h-3.5 text-rose-600 rounded cursor-pointer" />
+                <span class="text-[11px] font-bold text-rose-800">已知晓风险，强制提交上架</span>
+              </label>
+            </div>
+
+            <!-- 全部店铺一键发布 -->
+            <div class="pt-2">
+              <button 
+                @click="doPublishItem(singlePublishItem, null, true, singlePublishForce)"
+                :disabled="singlePublishItem.compliance_status === 'PROHIBITED' && !singlePublishForce"
+                class="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold shadow-md shadow-blue-500/20 cursor-pointer flex items-center justify-center space-x-2 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span>🌐 一键发布至全部已启用店铺 (共 {{ activeStores.length }} 家)</span>
+              </button>
+            </div>
+
+            <div class="relative flex py-1 items-center">
+              <div class="flex-grow border-t border-slate-200"></div>
+              <span class="flex-shrink mx-3 text-[11px] text-slate-400 font-medium">或单独发布至特定店铺</span>
+              <div class="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <!-- 各店铺列表与已上架状态 -->
+            <div class="space-y-2.5">
+              <div 
+                v-for="s in activeStores" 
+                :key="s.id"
+                class="p-3 rounded-xl border border-slate-200 bg-white hover:border-slate-300 transition flex items-center justify-between"
+              >
+                <div>
+                  <div class="font-bold text-slate-800 flex items-center space-x-1.5">
+                    <span>🏪 {{ s.name }}</span>
+                    <span v-if="s.is_default" class="text-[10px] px-1 py-0.2 bg-blue-100 text-blue-700 rounded font-bold">默认</span>
+                  </div>
+                  <div class="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Seller ID: {{ s.seller_id }}
+                  </div>
+                  <!-- 该店铺上的发布状态 -->
+                  <div class="mt-1 flex items-center space-x-1.5">
+                    <span class="text-[11px] text-slate-500">店铺刊登状态:</span>
+                    <span 
+                      v-if="getListingForStore(singlePublishItem, s.id)"
+                      :class="getStatusBadgeClass(getListingForStore(singlePublishItem, s.id).status)"
+                      class="px-1.5 py-0.2 text-[10px] font-bold rounded"
+                    >
+                      {{ formatStatus(getListingForStore(singlePublishItem, s.id).status) }}
+                      <span v-if="getListingForStore(singlePublishItem, s.id).makro_request_id" class="font-mono text-[9px] opacity-80">
+                        (#{{ getListingForStore(singlePublishItem, s.id).makro_request_id }})
+                      </span>
+                    </span>
+                    <span v-else class="text-[10.5px] text-slate-400">
+                      ⚪ 未在此店刊登
+                    </span>
+                  </div>
+                </div>
+
+                <button 
+                  @click="doPublishItem(singlePublishItem, s.id, false, singlePublishForce)"
+                  :disabled="singlePublishItem.compliance_status === 'PROHIBITED' && !singlePublishForce"
+                  class="px-3 py-1.5 bg-slate-100 hover:bg-blue-600 hover:text-white text-slate-700 rounded-lg font-bold text-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  仅上架此店
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+            <button 
+              @click="showSinglePublishModal = false" 
+              class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- ================= Toast 浮动通知容器 ================= -->
       <div class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none">
         <div 
@@ -2113,11 +2581,35 @@
           tabs: [
             { id: 'products', name: '选品箱', icon: '📦' },
             { id: 'inspector', name: '审品比对', icon: '🔍' },
+            { id: 'stores', name: '多店铺管理', icon: '🏪' },
             { id: 'tasks', name: '操作与任务日志', icon: '📋' },
             { id: 'settings', name: '系统设置', icon: '⚙️' },
           ],
           products: { total: 0, items: [] },
           tasks: [],
+          stores: [],
+          loadingStores: false,
+          showStoreModal: false,
+          storeModalTitle: '添加新店铺',
+          storeForm: {
+            id: null,
+            name: '',
+            seller_id: '',
+            fk_csrf_token: '',
+            cookie: '',
+            default_brand: 'Beishi',
+            is_active: true,
+            is_default: false,
+            notes: ''
+          },
+          testingStoreId: null,
+          showBatchPublishModal: false,
+          batchPublishTarget: 'all', // 'all' | 'single'
+          batchPublishTargetStoreId: null,
+          batchPublishForce: false,
+          showSinglePublishModal: false,
+          singlePublishItem: null,
+          singlePublishForce: false,
           settings: {
             markup_ratio: 1.35,
             fixed_markup: 20,
@@ -2164,6 +2656,9 @@
         };
       },
       computed: {
+        activeStores() {
+          return (this.stores || []).filter(s => s.is_active);
+        },
         isAllSelected() {
           return this.products.items && this.products.items.length > 0 && this.selectedIds.length === this.products.items.length;
         },
@@ -2205,6 +2700,7 @@
       mounted() {
         this.loadProducts(1);
         this.loadSettings();
+        this.loadStores();
         this.loadTasks();
         this.checkActiveTasks();
       },
@@ -2997,6 +3493,231 @@
           if (st === 'FAILED') return 'bg-red-100 text-red-800';
           if (st === 'ABANDONED') return 'bg-slate-200 text-slate-700 font-medium';
           return 'bg-slate-100 text-slate-700';
+        },
+        getListingForStore(item, storeId) {
+          if (!item || !item.store_listings) return null;
+          return item.store_listings.find(l => l.store_id === storeId);
+        },
+        async loadStores() {
+          this.loadingStores = true;
+          try {
+            const res = await fetch('/api/stores');
+            if (res.ok) {
+              this.stores = await res.json();
+            }
+          } catch (e) {
+            console.error('加载店铺失败:', e);
+          } finally {
+            this.loadingStores = false;
+          }
+        },
+        openAddStoreModal() {
+          this.storeForm = {
+            id: null,
+            name: '',
+            seller_id: '',
+            fk_csrf_token: '',
+            cookie: '',
+            default_brand: 'Beishi',
+            is_active: true,
+            is_default: this.stores.length === 0,
+            notes: ''
+          };
+          this.storeModalTitle = '➕ 添加新店铺';
+          this.showStoreModal = true;
+        },
+        openEditStoreModal(s) {
+          this.storeForm = {
+            id: s.id,
+            name: s.name,
+            seller_id: s.seller_id,
+            fk_csrf_token: s.fk_csrf_token || '',
+            cookie: '', // 留空表示保持原 Cookie
+            default_brand: s.default_brand || 'Beishi',
+            is_active: s.is_active,
+            is_default: s.is_default,
+            notes: s.notes || ''
+          };
+          this.storeModalTitle = `✏️ 编辑店铺: ${s.name}`;
+          this.showStoreModal = true;
+        },
+        async saveStore() {
+          if (!this.storeForm.name || !this.storeForm.seller_id) {
+            alert('请填写店铺名称和 Seller ID！');
+            return;
+          }
+          try {
+            const isEdit = !!this.storeForm.id;
+            const url = isEdit ? `/api/stores/${this.storeForm.id}` : '/api/stores';
+            const method = isEdit ? 'PUT' : 'POST';
+            const body = { ...this.storeForm };
+            if (isEdit && !body.cookie) {
+              delete body.cookie;
+            }
+            const res = await fetch(url, {
+              method,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (res.ok) {
+              this.showToast(isEdit ? '✅ 店铺信息修改成功！' : '🎉 新店铺创建成功！', 'success');
+              this.showStoreModal = false;
+              await this.loadStores();
+            } else {
+              alert('保存店铺失败: ' + (data.detail || data.message || '未知错误'));
+            }
+          } catch (e) {
+            alert('保存店铺网络异常: ' + e);
+          }
+        },
+        async deleteStore(s) {
+          if (!confirm(`确定要删除店铺【${s.name}】吗？\n注意：如果该店铺已有关联的上架记录，删除将同时清理该店铺的数据！`)) return;
+          try {
+            const res = await fetch(`/api/stores/${s.id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (res.ok) {
+              this.showToast('🗑️ 店铺已成功删除', 'info');
+              await this.loadStores();
+            } else {
+              alert('删除失败: ' + (data.detail || data.message));
+            }
+          } catch (e) {
+            alert('删除店铺异常: ' + e);
+          }
+        },
+        async setDefaultStore(storeId) {
+          try {
+            const res = await fetch(`/api/stores/${storeId}/set-default`, { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+              this.showToast('⭐ 默认主力店切换成功！', 'success');
+              await this.loadStores();
+            } else {
+              alert('设置默认店铺失败: ' + (data.detail || data.message));
+            }
+          } catch (e) {
+            alert('网络异常: ' + e);
+          }
+        },
+        async testStore(storeId) {
+          this.testingStoreId = storeId;
+          try {
+            const res = await fetch(`/api/stores/${storeId}/test`, { method: 'POST' });
+            const data = await res.json();
+            if (res.ok && data.success) {
+              alert(`✅ 店铺连通性测试通过！\n状态: ${data.message || '凭据有效，可正常通信'}`);
+            } else {
+              alert(`❌ 店铺连通失败: ${data.message || data.detail || 'Cookie 无效或请求超时'}`);
+            }
+          } catch (e) {
+            alert('测试接口网络异常: ' + e);
+          } finally {
+            this.testingStoreId = null;
+          }
+        },
+        openBatchPublishModal() {
+          if (this.selectedIds.length === 0 || this.isBatchPublishing) {
+            this.showToast('请先勾选需要上品的商品！', 'warning');
+            return;
+          }
+          this.batchPublishTarget = 'all';
+          if (this.activeStores.length > 0 && !this.batchPublishTargetStoreId) {
+            this.batchPublishTargetStoreId = this.activeStores[0].id;
+          }
+          this.batchPublishForce = false;
+          this.showBatchPublishModal = true;
+        },
+        async executeBatchPublish() {
+          if (this.selectedIds.length === 0 || this.isBatchPublishing) return;
+          this.showBatchPublishModal = false;
+          this.isBatchPublishing = true;
+          const targetIds = [...this.selectedIds];
+          const isAllStores = this.batchPublishTarget === 'all';
+          const targetStoreId = isAllStores ? null : this.batchPublishTargetStoreId;
+
+          try {
+            const res = await fetch('/api/makro/batch-publish', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                product_ids: targetIds,
+                publish_all_stores: isAllStores,
+                store_id: targetStoreId,
+                force: this.batchPublishForce
+              })
+            });
+            const resData = await res.json();
+            if (resData.task_id) {
+              const storeLabel = isAllStores ? '全部已启用店铺' : (this.stores.find(s => s.id === targetStoreId)?.name || '指定店铺');
+              this.addOrUpdateBgTask({
+                id: resData.task_id,
+                task_type: 'BATCH_PUBLISH',
+                name: `批量上品至 Makro (${storeLabel})`,
+                status: 'RUNNING',
+                total: resData.total || targetIds.length,
+                current: 0,
+                progress: 0,
+                success_count: 0,
+                fail_count: 0,
+                current_title: '正在连接 Makro 卖家中心并发上品...',
+                message: resData.message
+              });
+              this.ensureBgTasksPolling();
+              this.selectedIds = [];
+              this.showToast(`🚀 已启动批量上品任务: ${storeLabel}`, 'info');
+            } else {
+              alert(`🚀 批量上品完成: 成功提交 ${resData.success} 件, 失败 ${resData.failed} 件`);
+              this.selectedIds = [];
+              await this.loadProducts();
+              this.loadTasks();
+            }
+          } catch (e) {
+            alert('批量上品失败: ' + e);
+          } finally {
+            this.isBatchPublishing = false;
+          }
+        },
+        triggerProductPublish(item) {
+          if (!item) return;
+          this.singlePublishItem = item;
+          this.singlePublishForce = item.compliance_status === 'PROHIBITED';
+          this.showSinglePublishModal = true;
+        },
+        async doPublishItem(item, storeId, publishAll, force) {
+          if (!item) return;
+          this.showSinglePublishModal = false;
+          this.publishingId = item.id;
+          try {
+            const queryParams = new URLSearchParams();
+            if (publishAll) queryParams.set('publish_all_stores', 'true');
+            if (storeId) queryParams.set('store_id', storeId);
+            if (force) queryParams.set('force', 'true');
+
+            const res = await fetch(`/api/makro/publish/${item.id}?${queryParams.toString()}`, { method: 'POST' });
+            let data = {};
+            try {
+              data = await res.json();
+            } catch(jsonErr) {
+              data = { message: res.statusText || '服务器响应异常' };
+            }
+            if (res.ok && data.success) {
+              this.showToast(`🎉 上品成功！已提交至 Makro，RequestId: ${data.request_id}`, 'success');
+            } else {
+              const errMsg = data.message || data.detail || (typeof data === 'string' ? data : '未知校验错误');
+              alert(`❌ 上品未能通过校验: ${errMsg}`);
+            }
+            await this.loadProducts();
+            if (this.activeItem && this.activeItem.id === item.id) {
+              const updated = this.products.items.find(x => x.id === item.id);
+              if (updated) this.activeItem = updated;
+            }
+            this.loadTasks();
+          } catch (e) {
+            alert('上传过程发生网络异常: ' + e);
+          } finally {
+            this.publishingId = null;
+          }
         }
       }
     }).mount('#app');

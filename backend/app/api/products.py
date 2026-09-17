@@ -55,6 +55,22 @@ def _format_product(p: Product) -> dict:
             "makro_submit_error": v.makro_submit_error
         })
 
+    store_listings_data = []
+    if hasattr(p, "store_listings") and p.store_listings:
+        for sl in p.store_listings:
+            store_listings_data.append({
+                "id": sl.id,
+                "store_id": sl.store_id,
+                "store_name": sl.store.name if sl.store else f"店铺#{sl.store_id}",
+                "status": sl.status,
+                "makro_sku_id": sl.makro_sku_id,
+                "makro_request_id": sl.makro_request_id,
+                "makro_submit_error": sl.makro_submit_error,
+                "selling_price": sl.selling_price,
+                "mrp": sl.mrp,
+                "submitted_at": sl.submitted_at
+            })
+
     return {
         "id": p.id,
         "takealot_id": p.takealot_id,
@@ -93,7 +109,8 @@ def _format_product(p: Product) -> dict:
         "compliance_details": json.loads(p.compliance_details) if p.compliance_details else None,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
-        "variants": variants_data
+        "variants": variants_data,
+        "store_listings": store_listings_data
     }
 
 @router.post("/collect", summary="接收插件采集的 Takealot 商品")

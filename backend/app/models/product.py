@@ -59,6 +59,8 @@ class Product(Base):
 
     # 关联变体 (保持向下兼容)
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
+    # 关联多店铺上架记录 (支持一品多店铺独立上架)
+    store_listings = relationship("ProductStoreListing", back_populates="product", cascade="all, delete-orphan")
 
 
 class ProductVariant(Base):

@@ -402,13 +402,64 @@ def _build_makro_payload(
     }
     return payload
 
+def _record_store_listing(
+    db: Session,
+    product_id: int,
+    target_store: Any,
+    is_success: bool,
+    sku_id: Optional[str],
+    request_id: Optional[str],
+    msg: Optional[str],
+    selling_price: Optional[float] = None,
+    mrp: Optional[float] = None
+):
+    """记录或更新商品在特定店铺的上架状态与凭据"""
+    if not target_store:
+        try:
+            from ..models.store import Store
+            target_store = db.query(Store).filter(Store.is_default == True).first() or db.query(Store).first()
+        except Exception:
+            pass
+
+    if not target_store or not hasattr(target_store, "id"):
+        return
+
+    try:
+        from ..models.store import ProductStoreListing
+        listing = db.query(ProductStoreListing).filter(
+            ProductStoreListing.product_id == product_id,
+            ProductStoreListing.store_id == target_store.id
+        ).first()
+        if not listing:
+            listing = ProductStoreListing(
+                product_id=product_id,
+                store_id=target_store.id
+            )
+            db.add(listing)
+
+        listing.status = "SUBMITTED" if is_success else "FAILED"
+        if is_success and sku_id:
+            listing.makro_sku_id = sku_id
+        if request_id:
+            listing.makro_request_id = request_id
+        listing.makro_submit_error = None if is_success else msg
+        if selling_price is not None:
+            listing.selling_price = selling_price
+        if mrp is not None:
+            listing.mrp = mrp
+        listing.submitted_at = datetime.utcnow()
+        db.commit()
+    except Exception as ex:
+        logger.error(f"记录 ProductStoreListing 异常: {ex}", exc_info=True)
+
 def _publish_single_product(
     client: MakroClient,
     db: Session,
     product: Product,
     vertical: str,
     vid: Optional[str],
-    brand: str
+    brand: str,
+    target_store: Optional[Any] = None
 ) -> dict:
     """内部函数：为单个扁平独立商品创建草稿、上传图组并提交 Makro 发布"""
     draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
@@ -450,6 +501,20 @@ def _publish_single_product(
         product.makro_submit_error = msg
 
     db.commit()
+
+    # 写入多店铺独立 Listing 记录
+    _record_store_listing(
+        db=db,
+        product_id=product.id,
+        target_store=target_store,
+        is_success=is_success,
+        sku_id=payload.get("skuId"),
+        request_id=request_id,
+        msg=msg,
+        selling_price=product.makro_selling_price,
+        mrp=product.makro_mrp
+    )
+
     return {
         "product_id": product.id,
         "sku_id": product.sku_id or product.makro_sku_id,
@@ -466,7 +531,8 @@ def _publish_single_variant(
     variant: ProductVariant,
     vertical: str,
     vid: Optional[str],
-    brand: str
+    brand: str,
+    target_store: Optional[Any] = None
 ) -> dict:
     """内部函数：兼容遗留子变体结构发布"""
     draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
@@ -509,6 +575,20 @@ def _publish_single_variant(
         variant.makro_submit_error = msg
 
     db.commit()
+
+    # 写入多店铺独立 Listing 记录
+    _record_store_listing(
+        db=db,
+        product_id=product.id,
+        target_store=target_store,
+        is_success=is_success,
+        sku_id=payload.get("skuId"),
+        request_id=request_id,
+        msg=msg,
+        selling_price=variant.makro_selling_price or product.makro_selling_price,
+        mrp=variant.makro_mrp or product.makro_mrp
+    )
+
     return {
         "variant_id": variant.id,
         "sku_id": variant.sku_id,
@@ -518,8 +598,14 @@ def _publish_single_variant(
         "error_details": err_details
     }
 
-@router.post("/publish/{product_id}", summary="自动执行全流程上品到 Makro (独立单品/变体发布)")
-def publish_product_to_makro(product_id: int, force: bool = False, db: Session = Depends(get_db)):
+@router.post("/publish/{product_id}", summary="自动执行全流程上品到 Makro (支持指定店铺或全部店铺)")
+def publish_product_to_makro(
+    product_id: int,
+    store_id: Optional[int] = None,
+    publish_all_stores: bool = False,
+    force: bool = False,
+    db: Session = Depends(get_db)
+):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
@@ -534,147 +620,208 @@ def publish_product_to_makro(product_id: int, force: bool = False, db: Session =
             detail=f"【违禁品拦截】该商品命中平台禁售规则（包含：{items_str}），严禁直接上品以防店铺封禁！如需强制发布请开启强制开关。"
         )
 
-    task = TaskLog(
-        product_id=product.id,
-        task_type="SUBMIT_LISTING",
-        status="RUNNING",
-        message="开始执行 Makro 上品协议调用..."
-    )
-    db.add(task)
+    # 确定目标店铺列表
+    from ..models.store import Store
+    target_stores = []
+    if publish_all_stores:
+        target_stores = db.query(Store).filter(Store.is_active == True).all()
+        if not target_stores:
+            target_stores = [None]
+    elif store_id:
+        store = db.query(Store).filter(Store.id == store_id).first()
+        if not store:
+            raise HTTPException(status_code=404, detail="指定的店铺未找到")
+        target_stores = [store]
+    else:
+        # 默认店铺
+        default_store = db.query(Store).filter(Store.is_default == True, Store.is_active == True).first()
+        if not default_store:
+            default_store = db.query(Store).filter(Store.is_active == True).first()
+        target_stores = [default_store] if default_store else [None]
+
+    raw_vertical = product.makro_vertical or "bath_towel"
+    valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+    if valid_vertical != product.makro_vertical:
+        product.makro_vertical = valid_vertical
+        db.commit()
+
+    store_results = []
+    any_success = False
+
+    for s_item in target_stores:
+        s_name = s_item.name if s_item else "默认店铺"
+        s_id = s_item.id if s_item else None
+        client = MakroClient.from_store(s_item) if s_item else MakroClient.from_db(db)
+        brand = (s_item.default_brand if s_item and s_item.default_brand else product.makro_brand) or "Beishi"
+
+        task = TaskLog(
+            product_id=product.id,
+            task_type="SUBMIT_LISTING",
+            status="RUNNING",
+            message=f"开始向店铺【{s_name}】执行 Makro 上品调用..."
+        )
+        db.add(task)
+        db.commit()
+
+        if not client.cookie:
+            msg = f"店铺【{s_name}】未检测到登录态 Cookie！请先在多店铺管理中配置 Cookie。"
+            _record_store_listing(
+                db=db,
+                product_id=product.id,
+                target_store=s_item,
+                is_success=False,
+                sku_id=None,
+                request_id=None,
+                msg=msg,
+                selling_price=product.makro_selling_price,
+                mrp=product.makro_mrp
+            )
+            task.status = "FAILED"
+            task.message = msg
+            task.finished_at = datetime.utcnow()
+            db.commit()
+            store_results.append({
+                "store_id": s_id,
+                "store_name": s_name,
+                "success": False,
+                "message": msg
+            })
+            continue
+
+        try:
+            if product.variants and len(product.variants) > 0:
+                v_results = []
+                for v in product.variants:
+                    try:
+                        v_res = _publish_single_variant(client, db, product, v, valid_vertical, vid, brand, target_store=s_item)
+                        v_results.append(v_res)
+                    except Exception as ex:
+                        logger.error(f"变体 {v.sku_id} 在店铺 {s_name} 上架异常: {ex}", exc_info=True)
+                        v.status = "FAILED"
+                        v.makro_submit_error = str(ex)
+                        db.commit()
+                        v_results.append({"variant_id": v.id, "sku_id": v.sku_id, "success": False, "message": str(ex)})
+
+                v_succ = sum(1 for r in v_results if r["success"])
+                is_store_success = (v_succ == len(product.variants))
+                if is_store_success:
+                    any_success = True
+                    task.status = "SUCCESS"
+                    task.message = f"全量成功上架所有 {v_succ} 个变体至【{s_name}】！"
+                elif v_succ > 0:
+                    any_success = True
+                    task.status = "WARNING"
+                    task.message = f"部分变体提交成功至【{s_name}】({v_succ}/{len(product.variants)})"
+                else:
+                    task.status = "FAILED"
+                    task.message = f"店铺【{s_name}】所有变体提交均失败"
+
+                task.detail_logs = json.dumps(v_results, ensure_ascii=False)
+                task.finished_at = datetime.utcnow()
+                db.commit()
+
+                store_results.append({
+                    "store_id": s_id,
+                    "store_name": s_name,
+                    "success": is_store_success,
+                    "message": task.message,
+                    "results": v_results
+                })
+            else:
+                # 扁平独立商品直接发布
+                p_res = _publish_single_product(client, db, product, valid_vertical, vid, brand, target_store=s_item)
+                if p_res["success"]:
+                    any_success = True
+                    task.status = "SUCCESS"
+                    task.message = f"成功上架商品至店铺【{s_name}】(已提交审核)！"
+                else:
+                    task.status = "FAILED"
+                    task.message = f"店铺【{s_name}】上架失败: {p_res['message']}"
+
+                task.request_id = p_res.get("request_id")
+                task.detail_logs = json.dumps(p_res, ensure_ascii=False)
+                task.finished_at = datetime.utcnow()
+                db.commit()
+
+                store_results.append({
+                    "store_id": s_id,
+                    "store_name": s_name,
+                    "success": p_res["success"],
+                    "request_id": p_res.get("request_id"),
+                    "message": p_res.get("message")
+                })
+        except Exception as e:
+            logger.error(f"店铺 {s_name} 上架异常: {e}", exc_info=True)
+            task.status = "FAILED"
+            task.message = f"店铺【{s_name}】上架异常: {e}"
+            task.finished_at = datetime.utcnow()
+            db.commit()
+            store_results.append({
+                "store_id": s_id,
+                "store_name": s_name,
+                "success": False,
+                "message": str(e)
+            })
+
+    if any_success:
+        product.status = "SUBMITTED"
+        product.makro_submit_error = None
+    elif not product.status or product.status != "SUBMITTED":
+        product.status = "FAILED"
+        if store_results:
+            product.makro_submit_error = store_results[0].get("message")
     db.commit()
+    db.refresh(product)
 
-    client = MakroClient.from_db(db)
-    if not client.cookie:
-        msg = "未检测到 Makro 登录态 Cookie！请先在 Chrome 打开 Makro 卖家后台并点击【🔄 同步登录态至后台】，或在系统设置中填入 Cookie。"
-        product.status = "FAILED"
-        product.makro_submit_error = msg
-        task.status = "FAILED"
-        task.message = msg
-        task.finished_at = datetime.utcnow()
-        db.commit()
-        return {
-            "success": False,
-            "message": msg,
-            "request_id": None,
-            "product": _format_product(product)
-        }
+    succ_count = sum(1 for r in store_results if r["success"])
+    succ_names = "、".join([r["store_name"] for r in store_results if r["success"]]) or "无"
+    record_audit_log(
+        task_type="SUBMIT_LISTING",
+        status="SUCCESS" if any_success else "FAILED",
+        message=f"商品 #{product.id} 完成跨店铺上品 (成功店铺: {succ_names})",
+        detail_logs={"product_id": product.id, "store_results": store_results},
+        db=db
+    )
 
-    try:
-        raw_vertical = product.makro_vertical or "bath_towel"
-        valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
-        if valid_vertical != product.makro_vertical:
-            product.makro_vertical = valid_vertical
-            db.commit()
+    return {
+        "success": any_success,
+        "message": f"跨店铺上品处理完成: 成功 {succ_count}/{len(store_results)} 家店铺",
+        "request_id": product.makro_request_id,
+        "store_results": store_results,
+        "product": _format_product(product)
+    }
 
-        brand = product.makro_brand or "Beishi"
-
-        # 如果商品带有遗留子变体则循环发布，否则直接发布当前独立商品
-        if product.variants and len(product.variants) > 0:
-            results = []
-            for v in product.variants:
-                try:
-                    res = _publish_single_variant(client, db, product, v, valid_vertical, vid, brand)
-                    results.append(res)
-                except Exception as ex:
-                    logger.error(f"变体 {v.sku_id} 上架异常: {ex}", exc_info=True)
-                    v.status = "FAILED"
-                    v.makro_submit_error = str(ex)
-                    db.commit()
-                    results.append({"variant_id": v.id, "sku_id": v.sku_id, "success": False, "message": str(ex)})
-
-            success_count = sum(1 for r in results if r["success"])
-            total_count = len(product.variants)
-            product.makro_request_id = results[0].get("request_id") if results else None
-            task.request_id = product.makro_request_id
-
-            if success_count == total_count:
-                product.status = "SUBMITTED"
-                product.makro_submit_error = None
-                task.status = "SUCCESS"
-                task.message = f"全量成功上架所有 {total_count} 个变体到 Makro (已提交审核)！"
-                is_overall_success = True
-            elif success_count > 0:
-                product.status = "PARTIAL_SUBMITTED"
-                product.makro_submit_error = f"{success_count}/{total_count} 个变体提交成功，部分失败"
-                task.status = "WARNING"
-                task.message = f"部分变体提交成功 ({success_count}/{total_count})"
-                is_overall_success = True
-            else:
-                product.status = "FAILED"
-                first_err = results[0]["message"] if results else "未知错误"
-                product.makro_submit_error = f"所有变体提交均失败: {first_err}"
-                task.status = "FAILED"
-                task.message = product.makro_submit_error
-                is_overall_success = False
-
-            task.detail_logs = json.dumps(results, ensure_ascii=False)
-            task.finished_at = datetime.utcnow()
-            db.commit()
-            db.refresh(product)
-
-            return {
-                "success": is_overall_success,
-                "message": task.message,
-                "request_id": product.makro_request_id,
-                "results": results,
-                "product": _format_product(product)
-            }
-        else:
-            # 扁平独立商品直接单品发布
-            res = _publish_single_product(client, db, product, valid_vertical, vid, brand)
-            task.request_id = product.makro_request_id
-            if res["success"]:
-                task.status = "SUCCESS"
-                task.message = f"成功上架商品 {product.makro_sku_id or product.id} 到 Makro (已提交审核)！"
-            else:
-                task.status = "FAILED"
-                task.message = f"上架失败: {res['message']}"
-
-            task.detail_logs = json.dumps(res, ensure_ascii=False)
-            task.finished_at = datetime.utcnow()
-            db.commit()
-            db.refresh(product)
-
-            return {
-                "success": res["success"],
-                "message": task.message,
-                "request_id": product.makro_request_id,
-                "results": [res],
-                "product": _format_product(product)
-            }
-    except Exception as e:
-        logger.error(f"上品总流程异常: {e}", exc_info=True)
-        err_msg = str(e)
-        product.status = "FAILED"
-        product.makro_submit_error = err_msg
-        task.status = "FAILED"
-        task.message = f"执行异常: {err_msg}"
-        task.finished_at = datetime.utcnow()
-        db.commit()
-        return {
-            "success": False,
-            "message": f"上品发生异常: {err_msg}",
-            "request_id": getattr(task, "request_id", None),
-            "product": _format_product(product)
-        }
-
-@router.post("/batch-publish", summary="批量上品到 Makro (后台异步执行)")
+@router.post("/batch-publish", summary="批量上品到 Makro (支持指定店铺或全部店铺，后台异步执行)")
 def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Session = Depends(get_db)):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "results": [], "message": "未选择商品"}
 
-    client = MakroClient.from_db(db)
-    if not client.cookie:
-        raise HTTPException(status_code=400, detail="未检测到 Makro 登录态 Cookie！请先在 Chrome 插件同步登录态。")
+    from ..models.store import Store
+    target_stores = []
+    if req.publish_all_stores:
+        target_stores = db.query(Store).filter(Store.is_active == True).all()
+        if not target_stores:
+            target_stores = [None]
+    elif req.store_id:
+        store = db.query(Store).filter(Store.id == req.store_id).first()
+        if store:
+            target_stores = [store]
+    elif req.store_ids:
+        target_stores = db.query(Store).filter(Store.id.in_(req.store_ids), Store.is_active == True).all()
 
-    total = len(req.product_ids)
-    task = task_manager.create_task("BATCH_PUBLISH", "批量上品至 Makro", total, req.product_ids)
+    if not target_stores:
+        def_s = db.query(Store).filter(Store.is_default == True, Store.is_active == True).first() or db.query(Store).filter(Store.is_active == True).first()
+        target_stores = [def_s] if def_s else [None]
+
+    total_ops = len(req.product_ids) * len(target_stores)
+    store_names_str = "、".join([s.name if s else "默认店铺" for s in target_stores])
+    task_title = f"批量上品至 Makro [{store_names_str}] (共 {len(req.product_ids)} 件品 × {len(target_stores)} 店铺)"
+    task = task_manager.create_task("BATCH_PUBLISH", task_title, total_ops, req.product_ids)
     task_id = task["id"]
 
     def _worker(tm: TaskManager, tid: str):
         from ..database import SessionLocal
         local_db = SessionLocal()
-        local_client = MakroClient.from_db(local_db)
         try:
             completed_count = 0
             for pid in req.product_ids:
@@ -683,41 +830,54 @@ def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Se
 
                 product = local_db.query(Product).filter(Product.id == pid).first()
                 if not product:
-                    completed_count += 1
-                    tm.update_progress(tid, current=completed_count, fail_inc=1, error=f"商品 {pid} 不存在")
+                    for _ in target_stores:
+                        completed_count += 1
+                        tm.update_progress(tid, current=completed_count, fail_inc=1, error=f"商品 {pid} 不存在")
                     continue
 
                 p_title = product.takealot_title
 
                 if product.compliance_status == "PROHIBITED" and not force:
-                    completed_count += 1
-                    tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error="违禁品拦截，跳过发布")
+                    for _ in target_stores:
+                        completed_count += 1
+                        tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error="违禁品拦截，跳过发布")
                     continue
 
-                try:
-                    raw_vertical = product.makro_vertical or "bath_towel"
-                    valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
-                    brand = product.makro_brand or "Beishi"
+                raw_vertical = product.makro_vertical or "bath_towel"
+                valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
 
-                    res = _publish_single_product(local_client, local_db, product, valid_vertical, vid, brand)
-                    completed_count += 1
-                    if res["success"]:
-                        tm.update_progress(tid, current=completed_count, current_title=p_title, success_inc=1)
-                    else:
-                        tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error=res.get("message"))
-                except Exception as ex:
-                    logger.error(f"商品 {pid} 批量上架异常: {ex}", exc_info=True)
-                    product.status = "FAILED"
-                    product.makro_submit_error = str(ex)
-                    local_db.commit()
-                    completed_count += 1
-                    tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error=str(ex))
+                for s_item in target_stores:
+                    if tm.is_cancelled(tid):
+                        break
+
+                    s_name = s_item.name if s_item else "默认店铺"
+                    local_client = MakroClient.from_store(s_item) if s_item else MakroClient.from_db(local_db)
+                    brand = (s_item.default_brand if s_item and s_item.default_brand else product.makro_brand) or "Beishi"
+                    disp_title = f"【{s_name}】{p_title[:20]}"
+
+                    if not local_client.cookie:
+                        completed_count += 1
+                        tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=f"店铺【{s_name}】未配置 Cookie")
+                        _record_store_listing(local_db, product.id, s_item, False, None, None, f"店铺【{s_name}】未配置 Cookie", product.makro_selling_price, product.makro_mrp)
+                        continue
+
+                    try:
+                        res = _publish_single_product(local_client, local_db, product, valid_vertical, vid, brand, target_store=s_item)
+                        completed_count += 1
+                        if res["success"]:
+                            tm.update_progress(tid, current=completed_count, current_title=disp_title, success_inc=1)
+                        else:
+                            tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=res.get("message"))
+                    except Exception as ex:
+                        logger.error(f"商品 {pid} 在店铺 {s_name} 批量上架异常: {ex}", exc_info=True)
+                        completed_count += 1
+                        tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=str(ex))
 
             t_now = tm.get_task(tid)
             succ = t_now["success_count"] if t_now else 0
             fail = t_now["fail_count"] if t_now else 0
             status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
-            tm.finish_task(tid, status=status, message=f"批量上品完成: 成功 {succ} 件, 失败 {fail} 件")
+            tm.finish_task(tid, status=status, message=f"批量上品完成: 成功 {succ} 次, 失败 {fail} 次")
         finally:
             local_db.close()
 
@@ -726,8 +886,8 @@ def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Se
     return {
         "task_id": task_id,
         "status": "RUNNING",
-        "total": total,
-        "message": f"已在后台启动批量上品至 Makro (共 {total} 件商品)"
+        "total": total_ops,
+        "message": f"已在后台启动多店铺批量上品至 Makro (共 {total_ops} 次任务分发)"
     }
 
 @router.post("/publish-variant/{variant_id}", summary="单变体独立上品或重新上架到 Makro")

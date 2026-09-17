@@ -94,6 +94,7 @@ class ProductResponse(BaseModel):
     updated_at: datetime
 
     variants: List[ProductVariantResponse] = []
+    store_listings: List[Dict[str, Any]] = []
 
     class Config:
         from_attributes = True
@@ -122,6 +123,9 @@ class BatchCleanRequest(BaseModel):
 
 class BatchPublishRequest(BaseModel):
     product_ids: List[int]
+    store_id: Optional[int] = None
+    publish_all_stores: Optional[bool] = False
+    store_ids: Optional[List[int]] = None
 
 class BatchDeleteRequest(BaseModel):
     product_ids: List[int]

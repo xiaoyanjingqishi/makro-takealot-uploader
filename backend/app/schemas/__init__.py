@@ -8,6 +8,7 @@ from .product import (
 )
 from .setting import SystemSettingsSchema, SyncCredentialsRequest
 from .task import TaskLogResponse
+from .store import StoreBase, StoreCreate, StoreUpdate, StoreResponse, ProductStoreListingItem
 
 __all__ = [
     "TakealotCollectRequest",
@@ -18,5 +19,10 @@ __all__ = [
     "ProductVariantResponse",
     "SystemSettingsSchema",
     "SyncCredentialsRequest",
-    "TaskLogResponse"
+    "TaskLogResponse",
+    "StoreBase",
+    "StoreCreate",
+    "StoreUpdate",
+    "StoreResponse",
+    "ProductStoreListingItem"
 ]

@@ -17,6 +17,55 @@ try:
 except Exception:
     pass
 
+# 确保多店铺初始数据迁移 (如果 stores 为空，从现有系统配置无缝迁移首个默认店铺)
+try:
+    from app.database import SessionLocal
+    from app.models.store import Store, ProductStoreListing
+    from app.models.setting import SystemSetting
+    from app.models.product import Product
+    with SessionLocal() as _db:
+        store_count = _db.query(Store).count()
+        if store_count == 0:
+            s_seller = _db.query(SystemSetting).filter(SystemSetting.key == "seller_id").first()
+            s_csrf = _db.query(SystemSetting).filter(SystemSetting.key == "fk_csrf_token").first()
+            s_cookie = _db.query(SystemSetting).filter(SystemSetting.key == "cookie").first()
+            s_brand = _db.query(SystemSetting).filter(SystemSetting.key == "default_brand").first()
+
+            seller_id = s_seller.value if s_seller and s_seller.value else settings.DEFAULT_SELLER_ID
+            csrf_token = s_csrf.value if s_csrf and s_csrf.value else settings.DEFAULT_FK_CSRF_TOKEN
+            cookie = s_cookie.value if s_cookie and s_cookie.value else ""
+            default_brand = s_brand.value if s_brand and s_brand.value else settings.DEFAULT_BRAND
+
+            default_store = Store(
+                name="Makro 旗舰主力店",
+                seller_id=seller_id,
+                fk_csrf_token=csrf_token,
+                cookie=cookie,
+                default_brand=default_brand,
+                is_active=True,
+                is_default=True,
+                notes="系统初始默认店铺"
+            )
+            _db.add(default_store)
+            _db.commit()
+            _db.refresh(default_store)
+
+            # 将现有已提交的商品关联至默认店铺
+            submitted_products = _db.query(Product).filter(Product.status == "SUBMITTED").all()
+            for p in submitted_products:
+                _db.add(ProductStoreListing(
+                    product_id=p.id,
+                    store_id=default_store.id,
+                    status="SUBMITTED",
+                    makro_sku_id=p.makro_sku_id,
+                    makro_request_id=p.makro_request_id,
+                    selling_price=p.makro_selling_price,
+                    mrp=p.makro_mrp
+                ))
+            _db.commit()
+except Exception as _e:
+    print(f"[INIT] 店铺初始迁移跳过或异常: {_e}")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
