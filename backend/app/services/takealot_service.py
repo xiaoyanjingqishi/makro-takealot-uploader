@@ -234,6 +234,15 @@ class TakealotService:
         num_levels = len(v_selectors)
         current_nodes = []
 
+        # 辅助高清图片提取器
+        def _extract_hd_images(img_list):
+            res = []
+            for img in (img_list or []):
+                hd = img.replace('{size}', 'pdpxl') if '{size}' in img else img
+                if hd not in res:
+                    res.append(hd)
+            return res
+
         if num_levels == 1:
             sel = v_selectors[0]
             sel_title = sel.get('title') or 'Option'
@@ -243,10 +252,11 @@ class TakealotService:
                 href = opt.get('href')
                 if href and not href.startswith('http'):
                     href = f"https://api.takealot.com{href}"
+                opt_imgs = _extract_hd_images(opt.get('image'))
                 current_nodes.append({
                     'href': href,
                     'attrs': {sel_title: v_name},
-                    'fallback_gallery': raw_images[:5],
+                    'branch_gallery': opt_imgs,
                     'opt': opt
                 })
         elif num_levels >= 2:
@@ -259,10 +269,11 @@ class TakealotService:
                 href = opt.get('href')
                 if href and not href.startswith('http'):
                     href = f"https://api.takealot.com{href}"
+                opt_imgs = _extract_hd_images(opt.get('image'))
                 current_nodes.append({
                     'href': href,
                     'attrs': {s0_title: name},
-                    'fallback_gallery': raw_images[:5],
+                    'branch_gallery': opt_imgs,
                     'level': 0,
                     'opt': opt
                 })
@@ -284,12 +295,13 @@ class TakealotService:
 
                 def _expand_branch(node):
                     sub_data = _fetch_node_data(node['href'])
-                    node_gallery = list(node['fallback_gallery'])
+                    node_gallery = []
                     if sub_data:
-                        for img in (sub_data.get('gallery') or {}).get('images') or []:
-                            hd = img.replace('{size}', 'pdpxl') if '{size}' in img else img
-                            if hd not in node_gallery:
-                                node_gallery.append(hd)
+                        sub_imgs = _extract_hd_images((sub_data.get('gallery') or {}).get('images'))
+                        if sub_imgs:
+                            node_gallery = sub_imgs
+                    if not node_gallery:
+                        node_gallery = list(node.get('branch_gallery') or [])
 
                     sub_selectors = (sub_data.get('variants') or {}).get('selectors') if sub_data else None
                     if sub_selectors and len(sub_selectors) > lvl:
@@ -305,12 +317,14 @@ class TakealotService:
                         combo_href = opt.get('href')
                         if combo_href and not combo_href.startswith('http'):
                             combo_href = f"https://api.takealot.com{combo_href}"
+                        opt_imgs = _extract_hd_images(opt.get('image'))
+                        child_gallery = opt_imgs if opt_imgs else list(node_gallery)
                         child_attrs = dict(node['attrs'])
                         child_attrs[n_title] = name
                         children.append({
                             'href': combo_href,
                             'attrs': child_attrs,
-                            'fallback_gallery': node_gallery,
+                            'branch_gallery': child_gallery,
                             'level': lvl,
                             'opt': opt
                         })
@@ -342,7 +356,7 @@ class TakealotService:
 
             for combo, c_data in combo_details:
                 raw_attrs = combo.get('attrs', {})
-                var_images = list(combo.get('fallback_gallery') or [])
+                combo_imgs = []
                 var_price = price
                 var_tsin = None
                 var_title = ""
@@ -351,10 +365,7 @@ class TakealotService:
 
                 if c_data:
                     # 组合相册提取
-                    for img in (c_data.get('gallery') or {}).get('images') or []:
-                        hd = img.replace('{size}', 'pdpxl') if '{size}' in img else img
-                        if hd not in var_images:
-                            var_images.append(hd)
+                    combo_imgs = _extract_hd_images((c_data.get('gallery') or {}).get('images'))
 
                     sub_bb = c_data.get('buybox') or {}
                     var_tsin = sub_bb.get('tsin')
@@ -373,8 +384,17 @@ class TakealotService:
                             if it.get('item_type') == 'barcode' or 'barcode' in dn.lower():
                                 var_barcode = clean_dt
 
-                if not var_images:
-                    var_images = raw_images[:5]
+                # 变体相册隔离：严格优先使用变体专有相册 -> 颜色分支相册 -> 兜底母体相册，杜绝首图串色
+                if combo_imgs:
+                    var_images = list(combo_imgs)
+                    if len(var_images) == 1 and combo.get('branch_gallery'):
+                        for bi in combo.get('branch_gallery'):
+                            if bi not in var_images:
+                                var_images.append(bi)
+                elif combo.get('branch_gallery'):
+                    var_images = list(combo.get('branch_gallery'))
+                else:
+                    var_images = list(raw_images)
 
                 # 规范化与提取变体全部变量 (Colour + Size + Capacity + Pack of 等)
                 var_attrs = {}
