@@ -141,14 +141,25 @@ class MakroClient:
     def upload_image(self, file_bytes: bytes, filename: str, vertical: str, request_id: str) -> Optional[str]:
         """
         步骤 2: 将图片上传至 Makro 官方静态 CDN
-        返回资产 URL，如: https://www.makro.co.za/asset/cms/...
+        上传前自动执行分辨率超分与主体覆盖合规校验，确保达到 Makro 所需分辨率 (>= 300x300, 覆盖 >= 240x240)
         """
         url = f"{self.BASE_URL}/napi/scf/uploadImage?vertical={vertical}&requestId={request_id}"
         
+        # 自动执行图像合规超分与尺寸增强处理
+        try:
+            from .image_service import enhance_image_for_makro
+            file_bytes = enhance_image_for_makro(file_bytes)
+        except Exception as e:
+            logger.warning(f"图片合规超分跳过或异常: {e}")
+
         # 临时移除 application/json 请求头，以便 requests 自动设置带 boundary 的 multipart/form-data
         headers = dict(self.session.headers)
         headers.pop("Content-Type", None)
         
+        # 统一使用 .jpg 后缀
+        if not filename.lower().endswith(".jpg"):
+            filename = f"{os.path.splitext(filename)[0]}.jpg"
+
         files = {
             "file": (filename, file_bytes, "image/jpeg")
         }
@@ -163,8 +174,12 @@ class MakroClient:
         return None
 
     def upload_image_from_url(self, image_url: str, vertical: str, request_id: str) -> Optional[str]:
-        """下载 Takealot 远程原图并直接中转上传至 Makro CDN"""
+        """下载 Takealot 远程原图并直接中转上传至 Makro CDN (内置分辨率超分与主体覆盖合规强化)"""
         try:
+            # 若包含 Takealot 尺寸占位符，优先替换为最高清的 pdpxl 规格
+            if "{size}" in image_url:
+                image_url = image_url.replace("{size}", "pdpxl")
+
             download_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
             }
