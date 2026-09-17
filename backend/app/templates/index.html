@@ -61,6 +61,97 @@
     <!-- 主界面区域 -->
     <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
+      <!-- ================= 全局置顶后台异步任务进度条 ================= -->
+      <div 
+        v-if="activeBgTask" 
+        :class="[
+          'mb-5 p-4 rounded-xl border shadow-md transition-all',
+          activeBgTask.status === 'RUNNING' 
+            ? 'bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-blue-200 ring-1 ring-blue-500/20' 
+            : (activeBgTask.status === 'SUCCESS' 
+                ? 'bg-emerald-50 border-emerald-200' 
+                : (activeBgTask.status === 'CANCELLED' 
+                    ? 'bg-amber-50 border-amber-200' 
+                    : 'bg-rose-50 border-rose-200'))
+        ]"
+      >
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center space-x-2">
+            <span v-if="activeBgTask.status === 'RUNNING'" class="flex h-3 w-3 relative">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
+            </span>
+            <span v-else-if="activeBgTask.status === 'SUCCESS'" class="text-emerald-600 text-sm font-bold">✓</span>
+            <span v-else-if="activeBgTask.status === 'CANCELLED'" class="text-amber-600 text-sm font-bold">⏹</span>
+            <span v-else class="text-rose-600 text-sm font-bold">✕</span>
+
+            <span class="text-xs font-bold text-slate-800">
+              {{ activeBgTask.name || '后台处理任务' }}
+            </span>
+            <span 
+              :class="[
+                'text-[10px] px-2 py-0.5 rounded-full font-bold',
+                activeBgTask.status === 'RUNNING' ? 'bg-blue-100 text-blue-700' :
+                activeBgTask.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-700' :
+                activeBgTask.status === 'CANCELLED' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+              ]"
+            >
+              {{ activeBgTask.status === 'RUNNING' ? '后台执行中...' : (activeBgTask.status === 'SUCCESS' ? '已完成' : (activeBgTask.status === 'CANCELLED' ? '已取消' : '执行失败')) }}
+            </span>
+            <span class="text-xs text-slate-400 font-mono">({{ activeBgTask.id }})</span>
+          </div>
+
+          <div class="flex items-center space-x-3 text-xs">
+            <span class="font-bold font-mono text-slate-700">
+              {{ activeBgTask.current }} / {{ activeBgTask.total }} 件 ({{ activeBgTask.progress }}%)
+            </span>
+            <button 
+              v-if="activeBgTask.status === 'RUNNING'"
+              @click="cancelActiveTask" 
+              class="px-2 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded text-[11px] font-medium transition cursor-pointer"
+            >
+              ⏹ 取消
+            </button>
+            <button 
+              v-else 
+              @click="dismissActiveTask" 
+              class="text-slate-400 hover:text-slate-600 font-bold px-1.5 py-0.5 rounded hover:bg-white/60 cursor-pointer"
+              title="关闭通知"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- 进度条轨道 -->
+        <div class="w-full bg-white/80 rounded-full h-2.5 overflow-hidden border border-slate-200/60 shadow-inner">
+          <div 
+            class="h-full rounded-full transition-all duration-300 ease-out"
+            :class="[
+              activeBgTask.status === 'RUNNING' 
+                ? 'bg-gradient-to-r from-blue-500 to-indigo-600' 
+                : (activeBgTask.status === 'SUCCESS' 
+                    ? 'bg-emerald-500' 
+                    : (activeBgTask.status === 'CANCELLED' ? 'bg-amber-500' : 'bg-rose-500'))
+            ]"
+            :style="{ width: activeBgTask.progress + '%' }"
+          ></div>
+        </div>
+
+        <!-- 实时详情描述 -->
+        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-1">
+          <div class="flex items-center space-x-2 truncate max-w-2xl">
+            <span class="text-slate-400">当前正在处理:</span>
+            <span class="text-slate-700 font-medium truncate">{{ activeBgTask.current_title || '等待中...' }}</span>
+          </div>
+          <div class="flex items-center space-x-3 text-[11px]">
+            <span class="text-emerald-600 font-medium">✓ 成功: {{ activeBgTask.success_count || 0 }}</span>
+            <span v-if="activeBgTask.fail_count" class="text-rose-600 font-medium">✕ 失败: {{ activeBgTask.fail_count }}</span>
+            <span class="text-slate-400">{{ activeBgTask.message }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- ================= Tab 1: 选品箱 ================= -->
       <div v-if="currentTab === 'products'" class="space-y-3">
         <!-- 流程状态分页栏 (Tab 标签分页式无缝切换) -->
@@ -373,6 +464,11 @@
                     </span>
                     <span class="text-xs text-slate-300">|</span>
                     <span class="text-xs font-semibold text-slate-800">原售价: R{{ grp.minPrice }} ~ R{{ grp.maxPrice }}</span>
+                    <span class="text-xs text-slate-300">|</span>
+                    <span class="text-xs text-slate-500 font-mono" :title="'最后更新: ' + formatDateTime(grp.items[0]?.updated_at)">
+                      📅 采集: {{ formatDateTime(grp.items[0]?.created_at) }}
+                    </span>
+                    <span class="text-xs text-slate-300">|</span>
                     <a v-if="grp.takealot_url" :href="grp.takealot_url" target="_blank" class="text-xs text-blue-600 hover:underline">前台链接 ↗</a>
                   </div>
                   <div class="font-bold text-slate-900 text-sm truncate">{{ grp.title }}</div>
@@ -416,6 +512,7 @@
                     <th class="py-2.5 px-4">Makro 待发信息</th>
                     <th class="py-2.5 px-4 w-36">售价与MRP (ZAR)</th>
                     <th class="py-2.5 px-4 w-24">状态</th>
+                    <th class="py-2.5 px-4 w-32">操作/采集日期</th>
                     <th class="py-2.5 px-4 w-32 text-right">操作</th>
                   </tr>
                 </thead>
@@ -470,6 +567,12 @@
                         {{ formatStatus(item.status) }}
                       </span>
                     </td>
+                    <td class="py-2.5 px-4 text-[11px] text-slate-500 font-mono whitespace-nowrap">
+                      <div>{{ formatDateTime(item.created_at) }}</div>
+                      <div v-if="item.updated_at && item.updated_at !== item.created_at" class="text-[10px] text-slate-400 mt-0.5" title="更新时间">
+                        更新: {{ formatDateTime(item.updated_at) }}
+                      </div>
+                    </td>
                     <td class="py-2.5 px-4 text-right space-x-1 whitespace-nowrap">
                       <button @click="openInspector(item)" class="px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 rounded border border-blue-200">审品</button>
                       <button @click="publishItem(item)" :disabled="publishingId === item.id" class="px-2 py-0.5 text-[11px] text-white bg-emerald-600 hover:bg-emerald-700 rounded font-semibold">上品</button>
@@ -495,15 +598,16 @@
                 <th class="py-3 px-4">AI 清洗后的 Makro 独立待发信息</th>
                 <th class="py-3 px-4 w-36">售价与MRP (ZAR)</th>
                 <th class="py-3 px-4 w-28">状态</th>
+                <th class="py-3 px-4 w-32">操作/采集日期</th>
                 <th class="py-3 px-4 w-36 text-right">独立操作</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               <tr v-if="loadingProducts" class="text-center py-10">
-                <td colspan="7" class="py-8 text-slate-400">⏳ 加载中...</td>
+                <td colspan="8" class="py-8 text-slate-400">⏳ 加载中...</td>
               </tr>
               <tr v-else-if="products.items.length === 0" class="text-center py-10">
-                <td colspan="7" class="py-12 text-slate-400">
+                <td colspan="8" class="py-12 text-slate-400">
                   暂无采集商品。请使用上方【📥 + PLID极速采集】或 Chrome 插件采集！
                 </td>
               </tr>
@@ -620,6 +724,12 @@
                   <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[11px] font-semibold rounded-full inline-block">
                     {{ formatStatus(item.status) }}
                   </span>
+                </td>
+                <td class="py-3 px-4 text-[11px] text-slate-500 font-mono whitespace-nowrap">
+                  <div>{{ formatDateTime(item.created_at) }}</div>
+                  <div v-if="item.updated_at && item.updated_at !== item.created_at" class="text-[10px] text-slate-400 mt-0.5" title="更新时间">
+                    更新: {{ formatDateTime(item.updated_at) }}
+                  </div>
                 </td>
                 <td class="py-3 px-4 text-right space-x-2 whitespace-nowrap">
                   <button 
@@ -1133,57 +1243,156 @@
         </div>
       </div>
 
-      <!-- ================= Tab 3: 上品监控 ================= -->
+      <!-- ================= Tab 3: 系统操作与任务日志 ================= -->
       <div v-if="currentTab === 'tasks'" class="space-y-4">
-        <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <!-- 头部标题与统计 -->
+        <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex-wrap gap-3">
           <div>
-            <h2 class="text-sm font-bold text-slate-900">上品与 AI 清洗任务执行日志</h2>
-            <p class="text-xs text-slate-500">实时追踪向 Makro 提交审核的状态与错误反馈</p>
+            <h2 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+              <span>📋 系统全量操作与任务日志审计</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">共 {{ tasks.length }} 条记录</span>
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">记录商品采集、AI清洗、合规排查、批量改价、删除、上品刊登及系统配置等全流程操作历史与执行时间戳</p>
           </div>
-          <button @click="loadTasks" class="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg">
-            刷新日志
-          </button>
+          <div class="flex items-center space-x-2">
+            <button @click="loadTasks" class="px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center space-x-1.5 cursor-pointer">
+              <span>🔄</span> <span>刷新日志</span>
+            </button>
+          </div>
         </div>
 
+        <!-- 筛选与搜索控制栏 -->
+        <div class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between flex-wrap gap-3">
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <!-- 类型过滤 -->
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs text-slate-500 font-medium">操作类型:</span>
+              <select 
+                v-model="logFilterType" 
+                @change="loadTasks"
+                class="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              >
+                <option value="">全部类型 (All Actions)</option>
+                <option value="COLLECT">📥 商品采集 (COLLECT)</option>
+                <option value="BATCH_CLEAN">⚡ 批量AI清洗 (BATCH_CLEAN)</option>
+                <option value="CLEAN">⚡ 单品清洗 (CLEAN)</option>
+                <option value="BATCH_COMPLIANCE">🛡️ 批量合规排查 (BATCH_COMPLIANCE)</option>
+                <option value="COMPLIANCE">🛡️ 单品合规检测 (COMPLIANCE)</option>
+                <option value="BATCH_PRICE">💰 批量改价 (BATCH_PRICE)</option>
+                <option value="BATCH_PUBLISH">🚀 批量上品提交 (BATCH_PUBLISH)</option>
+                <option value="SUBMIT_LISTING">🚀 单品上品 (SUBMIT_LISTING)</option>
+                <option value="BATCH_DELETE">🗑️ 批量删除 (BATCH_DELETE)</option>
+                <option value="DELETE">🗑️ 单品删除 (DELETE)</option>
+                <option value="UPDATE">✏️ 商品属性更新 (UPDATE)</option>
+                <option value="SETTINGS_UPDATE">⚙️ 全局配置修改 (SETTINGS_UPDATE)</option>
+              </select>
+            </div>
+
+            <!-- 状态过滤 -->
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs text-slate-500 font-medium">状态:</span>
+              <select 
+                v-model="logFilterStatus" 
+                @change="loadTasks"
+                class="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              >
+                <option value="">全部状态</option>
+                <option value="SUCCESS">✓ 成功 (SUCCESS)</option>
+                <option value="FAILED">✕ 失败 (FAILED)</option>
+                <option value="RUNNING">⏳ 执行中 (RUNNING)</option>
+                <option value="CANCELLED">⏹ 已取消 (CANCELLED)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 关键词搜索 -->
+          <div class="flex items-center space-x-2">
+            <input 
+              type="text" 
+              v-model="logSearchInput" 
+              @keyup.enter="loadTasks" 
+              placeholder="搜索描述、RequestId或类型..." 
+              class="text-xs px-3 py-1.5 border border-slate-300 rounded-lg w-56 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            <button 
+              @click="loadTasks" 
+              class="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition"
+            >
+              搜索
+            </button>
+            <button 
+              v-if="logFilterType || logFilterStatus || logSearchInput" 
+              @click="logFilterType = ''; logFilterStatus = ''; logSearchInput = ''; loadTasks();" 
+              class="px-2 py-1 text-xs text-slate-500 hover:text-slate-700 underline"
+            >
+              重置
+            </button>
+          </div>
+        </div>
+
+        <!-- 日志表格 -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <table class="w-full text-left border-collapse text-xs">
             <thead>
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
-                <th class="py-3 px-4 w-16">任务ID</th>
-                <th class="py-3 px-4 w-28">类型</th>
-                <th class="py-3 px-4 w-28">状态</th>
-                <th class="py-3 px-4">执行详情 / 错误回执</th>
-                <th class="py-3 px-4 w-40">Makro RequestId</th>
-                <th class="py-3 px-4 w-36">时间</th>
+                <th class="py-3 px-4 w-16">编号</th>
+                <th class="py-3 px-4 w-32">操作类型</th>
+                <th class="py-3 px-4 w-24">执行状态</th>
+                <th class="py-3 px-4">操作描述与回执摘要</th>
+                <th class="py-3 px-4 w-36">关联商品 / 凭据</th>
+                <th class="py-3 px-4 w-36">操作时间</th>
+                <th class="py-3 px-4 w-24 text-right">详细数据</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
               <tr v-if="tasks.length === 0">
-                <td colspan="6" class="text-center py-10 text-slate-400">暂无任务日志</td>
+                <td colspan="7" class="text-center py-12 text-slate-400">暂无符合条件的操作日志</td>
               </tr>
-              <tr v-for="t in tasks" :key="t.id" class="hover:bg-slate-50/80">
-                <td class="py-3 px-4 font-mono text-slate-500">#{{ t.id }}</td>
+              <tr v-for="t in tasks" :key="t.id" class="hover:bg-slate-50/80 transition">
+                <td class="py-3 px-4 font-mono text-slate-400 text-[11px]">#{{ t.id }}</td>
                 <td class="py-3 px-4">
-                  <span class="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700">
-                    {{ t.task_type }}
+                  <span 
+                    :class="getTaskTypeInfo(t.task_type).bg" 
+                    class="px-2 py-0.5 rounded-md text-[11px] font-bold border inline-block whitespace-nowrap"
+                  >
+                    {{ getTaskTypeInfo(t.task_type).text }}
                   </span>
                 </td>
                 <td class="py-3 px-4">
-                  <span :class="getStatusBadgeClass(t.status)" class="px-2 py-0.5 rounded-full text-[11px] font-bold">
-                    {{ t.status }}
+                  <span :class="getStatusBadgeClass(t.status)" class="px-2 py-0.5 rounded-full text-[11px] font-bold inline-block">
+                    {{ t.status === 'SUCCESS' ? '✓ 成功' : (t.status === 'FAILED' ? '✕ 失败' : (t.status === 'CANCELLED' ? '⏹ 已取消' : '⏳ 进行中')) }}
                   </span>
                 </td>
                 <td class="py-3 px-4 text-slate-700">
-                  <div>{{ t.message }}</div>
+                  <div class="font-medium text-slate-800 line-clamp-1">{{ t.message }}</div>
                   <div v-if="t.detail_logs" class="text-[10px] text-slate-400 font-mono mt-0.5 line-clamp-1">
                     {{ t.detail_logs }}
                   </div>
                 </td>
-                <td class="py-3 px-4 font-mono text-blue-600 text-[11px]">
-                  {{ t.request_id || '-' }}
+                <td class="py-3 px-4 font-mono text-[11px]">
+                  <span v-if="t.product_id" class="text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                    商品 #{{ t.product_id }}
+                  </span>
+                  <span v-else-if="t.request_id" class="text-blue-600 font-semibold truncate block max-w-[130px]" :title="t.request_id">
+                    {{ t.request_id }}
+                  </span>
+                  <span v-else class="text-slate-300">-</span>
                 </td>
-                <td class="py-3 px-4 text-slate-400 text-[11px]">
-                  {{ new Date(t.created_at).toLocaleString() }}
+                <td class="py-3 px-4 text-slate-500 font-mono text-[11px] whitespace-nowrap">
+                  <div>{{ formatDateTime(t.created_at) }}</div>
+                  <div v-if="t.finished_at && t.finished_at !== t.created_at" class="text-[10px] text-slate-400">
+                    完成: {{ formatDateTime(t.finished_at) }}
+                  </div>
+                </td>
+                <td class="py-3 px-4 text-right">
+                  <button 
+                    v-if="t.detail_logs" 
+                    @click="openLogDetail(t)" 
+                    class="px-2 py-1 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-blue-200 rounded font-medium transition cursor-pointer"
+                  >
+                    查看数据
+                  </button>
+                  <span v-else class="text-slate-300 text-[11px]">-</span>
                 </td>
               </tr>
             </tbody>
@@ -1690,6 +1899,71 @@
         </div>
       </div>
 
+      <!-- ================= 操作日志回执详情模态框 ================= -->
+      <div 
+        v-if="showLogDetailModal && activeLogDetail" 
+        class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"
+      >
+        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200 animate-scale-up flex flex-col max-h-[85vh]">
+          <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span 
+                :class="getTaskTypeInfo(activeLogDetail.task_type).bg" 
+                class="px-2 py-0.5 rounded-md text-xs font-bold border"
+              >
+                {{ getTaskTypeInfo(activeLogDetail.task_type).text }}
+              </span>
+              <h3 class="text-sm font-bold text-slate-800">操作日志回执详情 #{{ activeLogDetail.id }}</h3>
+            </div>
+            <button @click="showLogDetailModal = false" class="text-slate-400 hover:text-slate-600 p-1 text-lg cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs">
+            <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-1.5">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500">执行状态:</span>
+                <span :class="getStatusBadgeClass(activeLogDetail.status)" class="px-2 py-0.5 rounded-full text-[11px] font-bold">
+                  {{ activeLogDetail.status }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500">记录时间:</span>
+                <span class="font-mono text-slate-700">{{ formatDateTime(activeLogDetail.created_at) }}</span>
+              </div>
+              <div v-if="activeLogDetail.finished_at" class="flex items-center justify-between">
+                <span class="text-slate-500">完成时间:</span>
+                <span class="font-mono text-slate-700">{{ formatDateTime(activeLogDetail.finished_at) }}</span>
+              </div>
+              <div v-if="activeLogDetail.request_id" class="flex items-center justify-between">
+                <span class="text-slate-500">Makro RequestId:</span>
+                <span class="font-mono text-blue-600 font-semibold">{{ activeLogDetail.request_id }}</span>
+              </div>
+              <div class="pt-1 border-t border-slate-200/60">
+                <span class="text-slate-500 block mb-1">操作说明:</span>
+                <div class="text-slate-800 font-medium whitespace-pre-wrap">{{ activeLogDetail.message }}</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="font-bold text-slate-700">回执原始数据 (JSON / 响应内容):</span>
+                <span class="text-[10px] text-slate-400">结构化回执</span>
+              </div>
+              <pre class="bg-slate-900 text-slate-100 p-4 rounded-xl text-[11px] font-mono overflow-x-auto max-h-80 select-text leading-relaxed">{{ formatJsonLog(activeLogDetail.detail_logs) }}</pre>
+            </div>
+          </div>
+
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+            <button 
+              @click="showLogDetailModal = false" 
+              class="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- ================= Toast 浮动通知容器 ================= -->
       <div class="fixed top-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none">
         <div 
@@ -1730,10 +2004,17 @@
             type: 'primary',
             action: null
           },
+          activeBgTask: null,
+          bgTaskTimer: null,
+          logFilterType: '',
+          logFilterStatus: '',
+          logSearchInput: '',
+          showLogDetailModal: false,
+          activeLogDetail: null,
           tabs: [
             { id: 'products', name: '选品箱', icon: '📦' },
             { id: 'inspector', name: '审品比对', icon: '🔍' },
-            { id: 'tasks', name: '上品监控', icon: '🚀' },
+            { id: 'tasks', name: '操作与任务日志', icon: '📋' },
             { id: 'settings', name: '系统设置', icon: '⚙️' },
           ],
           products: { total: 0, items: [] },
@@ -1826,6 +2107,7 @@
         this.loadProducts(1);
         this.loadSettings();
         this.loadTasks();
+        this.checkActiveTask();
       },
       methods: {
         openImagePreview(url) {
@@ -2025,11 +2307,136 @@
         },
         async loadTasks() {
           try {
-            const res = await fetch('/api/tasks?limit=50');
+            let url = `/api/tasks?limit=100`;
+            if (this.logFilterType) url += `&task_type=${encodeURIComponent(this.logFilterType)}`;
+            if (this.logFilterStatus) url += `&status=${encodeURIComponent(this.logFilterStatus)}`;
+            if (this.logSearchInput) url += `&search=${encodeURIComponent(this.logSearchInput)}`;
+            const res = await fetch(url);
             this.tasks = await res.json();
           } catch (e) {
             console.error(e);
           }
+        },
+        async checkActiveTask() {
+          try {
+            const res = await fetch('/api/tasks/active');
+            const data = await res.json();
+            if (data && data.task) {
+              this.activeBgTask = data.task;
+              if (data.task.status === 'RUNNING') {
+                this.startTaskPolling(data.task.id);
+              }
+            }
+          } catch (e) {
+            console.error('检查活跃任务异常:', e);
+          }
+        },
+        startTaskPolling(taskId) {
+          if (this.bgTaskTimer) clearInterval(this.bgTaskTimer);
+          this.bgTaskTimer = setInterval(async () => {
+            try {
+              const res = await fetch(`/api/tasks/${taskId}/status`);
+              if (!res.ok) {
+                this.stopTaskPolling();
+                return;
+              }
+              const data = await res.json();
+              if (data && data.task) {
+                this.activeBgTask = data.task;
+                if (data.task.status !== 'RUNNING') {
+                  this.stopTaskPolling();
+                  this.loadProducts();
+                  this.loadTasks();
+                  setTimeout(() => {
+                    if (this.activeBgTask && this.activeBgTask.id === taskId && this.activeBgTask.status !== 'RUNNING') {
+                      this.activeBgTask = null;
+                    }
+                  }, 10000);
+                }
+              }
+            } catch (err) {
+              console.error('轮询后台任务异常:', err);
+            }
+          }, 800);
+        },
+        stopTaskPolling() {
+          if (this.bgTaskTimer) {
+            clearInterval(this.bgTaskTimer);
+            this.bgTaskTimer = null;
+          }
+        },
+        async cancelActiveTask() {
+          if (!this.activeBgTask) return;
+          if (!confirm('确定要终止当前正在运行的后台任务吗？')) return;
+          try {
+            const res = await fetch(`/api/tasks/${this.activeBgTask.id}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.activeBgTask.status = 'CANCELLED';
+              this.activeBgTask.message = '已请求取消任务';
+              this.stopTaskPolling();
+              this.loadProducts();
+              this.loadTasks();
+            }
+          } catch (e) {
+            alert('取消任务失败: ' + e);
+          }
+        },
+        dismissActiveTask() {
+          this.activeBgTask = null;
+          this.stopTaskPolling();
+        },
+        formatDateTime(dtStr) {
+          if (!dtStr) return '-';
+          try {
+            const d = new Date(dtStr);
+            if (isNaN(d.getTime())) {
+              return String(dtStr).replace('T', ' ').slice(0, 19);
+            }
+            const pad = n => String(n).padStart(2, '0');
+            const Y = d.getFullYear();
+            const M = pad(d.getMonth() + 1);
+            const D = pad(d.getDate());
+            const h = pad(d.getHours());
+            const m = pad(d.getMinutes());
+            const s = pad(d.getSeconds());
+            return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+          } catch (e) {
+            return String(dtStr).slice(0, 19);
+          }
+        },
+        formatJsonLog(logData) {
+          if (!logData) return '暂无详细回执数据';
+          try {
+            if (typeof logData === 'object') {
+              return JSON.stringify(logData, null, 2);
+            }
+            const parsed = JSON.parse(logData);
+            return JSON.stringify(parsed, null, 2);
+          } catch (e) {
+            return String(logData);
+          }
+        },
+        openLogDetail(t) {
+          this.activeLogDetail = t;
+          this.showLogDetailModal = true;
+        },
+        getTaskTypeInfo(type) {
+          const map = {
+            'COLLECT': { text: '📥 商品采集', bg: 'bg-blue-50 text-blue-700 border-blue-200' },
+            'CLEAN': { text: '⚡ 单品清洗', bg: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+            'BATCH_CLEAN': { text: '⚡ 批量AI清洗', bg: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
+            'COMPLIANCE': { text: '🛡️ 单品合规', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+            'BATCH_COMPLIANCE': { text: '🛡️ 批量合规', bg: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+            'BATCH_PRICE': { text: '💰 批量改价', bg: 'bg-amber-50 text-amber-700 border-amber-200' },
+            'BATCH_DELETE': { text: '🗑️ 批量删除', bg: 'bg-rose-50 text-rose-700 border-rose-200' },
+            'DELETE': { text: '🗑️ 单品删除', bg: 'bg-rose-50 text-rose-700 border-rose-200' },
+            'UPDATE': { text: '✏️ 属性修改', bg: 'bg-slate-100 text-slate-700 border-slate-200' },
+            'SUBMIT_LISTING': { text: '🚀 单品上品', bg: 'bg-purple-50 text-purple-700 border-purple-200' },
+            'BATCH_PUBLISH': { text: '🚀 批量上品', bg: 'bg-purple-100 text-purple-800 border-purple-300' },
+            'SETTINGS_UPDATE': { text: '⚙️ 配置更新', bg: 'bg-slate-100 text-slate-600 border-slate-300' },
+          };
+          return map[type] || { text: type, bg: 'bg-slate-100 text-slate-700 border-slate-200' };
         },
         openInspector(item) {
           this.activeItem = JSON.parse(JSON.stringify(item));
@@ -2081,23 +2488,33 @@
         async batchClean() {
           if (this.selectedIds.length === 0 || this.isCleaning) return;
           this.isCleaning = true;
+          const targetIds = [...this.selectedIds];
           try {
             const res = await fetch('/api/cleaner/batch-clean', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ product_ids: this.selectedIds })
+              body: JSON.stringify({ product_ids: targetIds })
             });
             const resData = await res.json();
-            if (resData.failed > 0 && resData.errors && resData.errors.length) {
-              alert(`批量清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件\n首个失败原因: ${resData.errors[0]}`);
+            if (resData.task_id) {
+              this.activeBgTask = {
+                id: resData.task_id,
+                name: '批量AI数据清洗',
+                status: 'RUNNING',
+                total: targetIds.length,
+                current: 0,
+                progress: 0,
+                success_count: 0,
+                fail_count: 0,
+                current_title: '正在启动并发线程...',
+                message: resData.message
+              };
+              this.startTaskPolling(resData.task_id);
+              this.selectedIds = [];
             } else {
               alert(`🎉 批量AI清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件`);
-            }
-            this.selectedIds = [];
-            await this.loadProducts();
-            if (this.activeItem) {
-              const updated = this.products.items.find(x => x.id === this.activeItem.id);
-              if (updated) this.activeItem = updated;
+              this.selectedIds = [];
+              await this.loadProducts();
             }
           } catch (e) {
             alert('批量清洗操作失败: ' + e);
@@ -2109,16 +2526,35 @@
           if (this.selectedIds.length === 0 || this.isBatchPublishing) return;
           if (!confirm(`确定要批量将选中的 ${this.selectedIds.length} 件独立商品/变体上传至 Makro 卖家中心吗？`)) return;
           this.isBatchPublishing = true;
+          const targetIds = [...this.selectedIds];
           try {
             const res = await fetch('/api/makro/batch-publish', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ product_ids: this.selectedIds })
+              body: JSON.stringify({ product_ids: targetIds })
             });
             const resData = await res.json();
-            alert(`🚀 批量上品完成: 成功提交 ${resData.success} 件, 失败 ${resData.failed} 件`);
-            await this.loadProducts();
-            this.loadTasks();
+            if (resData.task_id) {
+              this.activeBgTask = {
+                id: resData.task_id,
+                name: '批量上品至 Makro',
+                status: 'RUNNING',
+                total: targetIds.length,
+                current: 0,
+                progress: 0,
+                success_count: 0,
+                fail_count: 0,
+                current_title: '正在连接 Makro 卖家中心...',
+                message: resData.message
+              };
+              this.startTaskPolling(resData.task_id);
+              this.selectedIds = [];
+            } else {
+              alert(`🚀 批量上品完成: 成功提交 ${resData.success} 件, 失败 ${resData.failed} 件`);
+              this.selectedIds = [];
+              await this.loadProducts();
+              this.loadTasks();
+            }
           } catch (e) {
             alert('批量上品失败: ' + e);
           } finally {
@@ -2128,18 +2564,33 @@
         async batchCheckCompliance() {
           if (this.selectedIds.length === 0 || this.isBatchCheckingCompliance) return;
           this.isBatchCheckingCompliance = true;
+          const targetIds = [...this.selectedIds];
           try {
             const res = await fetch('/api/cleaner/batch-compliance', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ product_ids: this.selectedIds })
+              body: JSON.stringify({ product_ids: targetIds })
             });
             const resData = await res.json();
-            alert(`批量合规排查完成: 成功检测 ${resData.success} 件, 失败 ${resData.failed} 件`);
-            await this.loadProducts();
-            if (this.activeItem) {
-              const updated = this.products.items.find(x => x.id === this.activeItem.id);
-              if (updated) this.activeItem = updated;
+            if (resData.task_id) {
+              this.activeBgTask = {
+                id: resData.task_id,
+                name: '批量合规与侵权排查',
+                status: 'RUNNING',
+                total: targetIds.length,
+                current: 0,
+                progress: 0,
+                success_count: 0,
+                fail_count: 0,
+                current_title: '正在排查品牌侵权与违禁属性...',
+                message: resData.message
+              };
+              this.startTaskPolling(resData.task_id);
+              this.selectedIds = [];
+            } else {
+              alert(`批量合规排查完成: 成功检测 ${resData.success} 件, 失败 ${resData.failed} 件`);
+              this.selectedIds = [];
+              await this.loadProducts();
             }
           } catch (e) {
             alert('批量合规检测失败: ' + e);

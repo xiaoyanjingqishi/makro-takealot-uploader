@@ -15,6 +15,8 @@ from ..schemas.setting import SyncCredentialsRequest
 from ..schemas.product import BatchPublishRequest
 from ..services.makro_client import MakroClient
 from ..services.vertical_service import VerticalService
+from ..services.task_manager import task_manager, TaskManager
+from ..services.audit_logger import record_audit_log
 from ..config import settings
 from .products import _format_product
 
@@ -656,52 +658,76 @@ def publish_product_to_makro(product_id: int, force: bool = False, db: Session =
             "product": _format_product(product)
         }
 
-@router.post("/batch-publish", summary="批量上品到 Makro")
+@router.post("/batch-publish", summary="批量上品到 Makro (后台异步执行)")
 def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Session = Depends(get_db)):
-    success_count = 0
-    fail_count = 0
-    results = []
+    if not req.product_ids:
+        return {"total": 0, "success": 0, "failed": 0, "results": [], "message": "未选择商品"}
 
     client = MakroClient.from_db(db)
     if not client.cookie:
         raise HTTPException(status_code=400, detail="未检测到 Makro 登录态 Cookie！请先在 Chrome 插件同步登录态。")
 
-    for pid in req.product_ids:
-        product = db.query(Product).filter(Product.id == pid).first()
-        if not product:
-            fail_count += 1
-            results.append({"product_id": pid, "success": False, "message": "商品未找到"})
-            continue
+    total = len(req.product_ids)
+    task = task_manager.create_task("BATCH_PUBLISH", "批量上品至 Makro", total, req.product_ids)
+    task_id = task["id"]
 
-        if product.compliance_status == "PROHIBITED" and not force:
-            fail_count += 1
-            results.append({"product_id": pid, "success": False, "message": "违禁品拦截"})
-            continue
-
+    def _worker(tm: TaskManager, tid: str):
+        from ..database import SessionLocal
+        local_db = SessionLocal()
+        local_client = MakroClient.from_db(local_db)
         try:
-            raw_vertical = product.makro_vertical or "bath_towel"
-            valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
-            brand = product.makro_brand or "Beishi"
+            completed_count = 0
+            for pid in req.product_ids:
+                if tm.is_cancelled(tid):
+                    break
 
-            res = _publish_single_product(client, db, product, valid_vertical, vid, brand)
-            if res["success"]:
-                success_count += 1
-            else:
-                fail_count += 1
-            results.append(res)
-        except Exception as ex:
-            logger.error(f"商品 {pid} 批量上架异常: {ex}", exc_info=True)
-            product.status = "FAILED"
-            product.makro_submit_error = str(ex)
-            db.commit()
-            fail_count += 1
-            results.append({"product_id": pid, "success": False, "message": str(ex)})
+                product = local_db.query(Product).filter(Product.id == pid).first()
+                if not product:
+                    completed_count += 1
+                    tm.update_progress(tid, current=completed_count, fail_inc=1, error=f"商品 {pid} 不存在")
+                    continue
+
+                p_title = product.takealot_title
+
+                if product.compliance_status == "PROHIBITED" and not force:
+                    completed_count += 1
+                    tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error="违禁品拦截，跳过发布")
+                    continue
+
+                try:
+                    raw_vertical = product.makro_vertical or "bath_towel"
+                    valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+                    brand = product.makro_brand or "Beishi"
+
+                    res = _publish_single_product(local_client, local_db, product, valid_vertical, vid, brand)
+                    completed_count += 1
+                    if res["success"]:
+                        tm.update_progress(tid, current=completed_count, current_title=p_title, success_inc=1)
+                    else:
+                        tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error=res.get("message"))
+                except Exception as ex:
+                    logger.error(f"商品 {pid} 批量上架异常: {ex}", exc_info=True)
+                    product.status = "FAILED"
+                    product.makro_submit_error = str(ex)
+                    local_db.commit()
+                    completed_count += 1
+                    tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error=str(ex))
+
+            t_now = tm.get_task(tid)
+            succ = t_now["success_count"] if t_now else 0
+            fail = t_now["fail_count"] if t_now else 0
+            status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
+            tm.finish_task(tid, status=status, message=f"批量上品完成: 成功 {succ} 件, 失败 {fail} 件")
+        finally:
+            local_db.close()
+
+    task_manager.start_task(task_id, _worker)
 
     return {
-        "total": len(req.product_ids),
-        "success": success_count,
-        "failed": fail_count,
-        "results": results
+        "task_id": task_id,
+        "status": "RUNNING",
+        "total": total,
+        "message": f"已在后台启动批量上品至 Makro (共 {total} 件商品)"
     }
 
 @router.post("/publish-variant/{variant_id}", summary="单变体独立上品或重新上架到 Makro")

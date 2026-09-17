@@ -14,6 +14,7 @@ from ..schemas.product import (
     ProductVariantResponse
 )
 from ..services.takealot_service import TakealotService
+from ..services.audit_logger import record_audit_log
 
 router = APIRouter(prefix="/products", tags=["商品管理"])
 
@@ -97,6 +98,16 @@ def _format_product(p: Product) -> dict:
 @router.post("/collect", summary="接收插件采集的 Takealot 商品")
 def collect_product(req: TakealotCollectRequest, db: Session = Depends(get_db)):
     products = TakealotService.save_collected_product(db, req)
+    v_count = len(products) if isinstance(products, list) else 1
+    p_obj = products[0] if isinstance(products, list) else products
+    record_audit_log(
+        task_type="COLLECT",
+        status="SUCCESS",
+        message=f"浏览器插件采集: {req.takealot_title[:35]} (共 {v_count} 个独立变体)",
+        product_id=p_obj.id if p_obj else None,
+        detail_logs={"url": req.url, "title": req.takealot_title, "variants_count": v_count, "plid": req.takealot_id},
+        db=db
+    )
     if isinstance(products, list):
         primary = _format_product(products[0]) if products else {}
         return {
@@ -113,6 +124,16 @@ def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="请提供 plid 或 url 参数")
     try:
         products = TakealotService.fetch_and_save_by_plid(plid_or_url, db)
+        v_count = len(products) if isinstance(products, list) else 1
+        p_obj = products[0] if isinstance(products, list) else products
+        record_audit_log(
+            task_type="COLLECT",
+            status="SUCCESS",
+            message=f"PLID极速采集: {plid_or_url} (入库 {v_count} 个变体)",
+            product_id=p_obj.id if p_obj else None,
+            detail_logs={"plid_or_url": plid_or_url, "variants_count": v_count},
+            db=db
+        )
         if isinstance(products, list):
             primary = _format_product(products[0]) if products else {}
             return {
@@ -122,6 +143,13 @@ def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
             }
         return _format_product(products)
     except Exception as e:
+        record_audit_log(
+            task_type="COLLECT",
+            status="FAILED",
+            message=f"PLID极速采集失败: {plid_or_url} 异常: {str(e)}",
+            detail_logs={"plid_or_url": plid_or_url, "error": str(e)},
+            db=db
+        )
         raise HTTPException(status_code=500, detail=f"采集异常: {str(e)}")
 
 @router.post("/check-existence", summary="批量检查商品/PLID是否已被采集入库")
@@ -271,6 +299,13 @@ def update_product(product_id: int, req: ProductUpdateRequest, db: Session = Dep
 
     db.commit()
     db.refresh(product)
+    record_audit_log(
+        task_type="UPDATE",
+        status="SUCCESS",
+        message=f"修改商品属性: ID {product_id}「{(product.makro_title or product.takealot_title)[:35]}」",
+        product_id=product_id,
+        db=db
+    )
     return _format_product(product)
 
 @router.delete("/{product_id}", summary="删除商品")
@@ -278,11 +313,21 @@ def delete_product(product_id: int, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
+    p_title = product.takealot_title or f"ID {product_id}"
+    p_plid = product.takealot_id or ""
     # 显式清理关联的变体记录与任务日志，防止 SQLite 孤儿残留
     db.query(ProductVariant).filter(ProductVariant.product_id == product_id).delete(synchronize_session=False)
     db.query(TaskLog).filter(TaskLog.product_id == product_id).delete(synchronize_session=False)
     db.delete(product)
     db.commit()
+
+    record_audit_log(
+        task_type="DELETE",
+        status="SUCCESS",
+        message=f"删除单品: ID {product_id} (PLID: {p_plid}, 标题: {p_title[:35]})",
+        product_id=product_id,
+        db=db
+    )
     return {"message": "删除成功", "id": product_id}
 
 @router.post("/batch-delete", summary="批量删除商品")
@@ -295,6 +340,14 @@ def batch_delete_products(req: dict, db: Session = Depends(get_db)):
     db.query(TaskLog).filter(TaskLog.product_id.in_(product_ids)).delete(synchronize_session=False)
     deleted = db.query(Product).filter(Product.id.in_(product_ids)).delete(synchronize_session=False)
     db.commit()
+
+    record_audit_log(
+        task_type="BATCH_DELETE",
+        status="SUCCESS",
+        message=f"批量删除商品: 成功删除 {deleted} 件商品",
+        detail_logs={"deleted_ids": product_ids[:50]},
+        db=db
+    )
     return {"message": f"成功删除 {deleted} 件商品", "deleted_count": deleted}
 
 @router.post("/batch-update-price", summary="批量修改商品售价与MRP")
@@ -338,6 +391,15 @@ def batch_update_price(payload: dict, db: Session = Depends(get_db)):
         updated_count += 1
 
     db.commit()
+
+    record_audit_log(
+        task_type="BATCH_PRICE",
+        status="SUCCESS",
+        message=f"批量改价: 修改了 {updated_count} 件商品 (模式: {'固定价 R' + str(fixed_price) if mode == 'fixed' else f'公式 ×{multiplier} +R{fixed_offset}'}, MRP倍率 {mrp_ratio})",
+        detail_logs={"product_ids": product_ids[:50], "mode": mode, "updated_count": updated_count},
+        db=db
+    )
+
     return {
         "updated_count": updated_count,
         "message": f"成功批量修改 {updated_count} 件商品售价与划线原价"

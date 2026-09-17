@@ -59,4 +59,12 @@ def save_settings(req: SystemSettingsSchema, db: Session = Depends(get_db)):
             db.add(SystemSetting(key=key, value=val_str))
 
     db.commit()
-    return {"message": "配置保存成功"}
+    from ..services.audit_logger import record_audit_log
+    record_audit_log(
+        task_type="SETTINGS_UPDATE",
+        status="SUCCESS",
+        message="更新系统全局配置 (包含定价规则、Makro凭据与AI模型配置)",
+        detail_logs={"updated_keys": list(data.keys())},
+        db=db
+    )
+    return {"message": "配置更新成功"}
