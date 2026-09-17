@@ -126,14 +126,20 @@ def _build_makro_payload(
     images_map: Dict[str, str],
     client: Optional[MakroClient] = None,
     draft_resp: Optional[Dict[str, Any]] = None,
-    variant: Optional[ProductVariant] = None
+    variant: Optional[ProductVariant] = None,
+    target_store: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     基于抓包逆向结果精准构建 Makro (Flipkart SaaS) submit 请求体
     动态根据类目定义过滤与补齐必填属性（支持特定变体专属参数与多变体聚合）
     """
-    seller_id = _get_setting_val(db, "seller_id", settings.DEFAULT_SELLER_ID)
-    brand = product.makro_brand or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
+    seller_id = (
+        (target_store.seller_id if target_store and getattr(target_store, "seller_id", None) else None)
+        or (client.seller_id if client and getattr(client, "seller_id", None) else None)
+        or _get_setting_val(db, "seller_id", settings.DEFAULT_SELLER_ID)
+    )
+    store_brand = target_store.default_brand if target_store and getattr(target_store, "default_brand", None) else None
+    brand = product.makro_brand or store_brand or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
     raw_vertical = product.makro_vertical or "bath_towel"
     valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
     vertical = valid_vertical
@@ -488,7 +494,7 @@ def _publish_single_product(
     # 组装 Payload 并提交
     payload = _build_makro_payload(
         db, product, request_id, txn_id, req_id, images_map,
-        client=client, draft_resp=draft_resp
+        client=client, draft_resp=draft_resp, target_store=target_store
     )
     is_success, err_details, msg = client.submit_product(payload)
 
@@ -562,7 +568,7 @@ def _publish_single_variant(
 
     payload = _build_makro_payload(
         db, product, request_id, txn_id, req_id, images_map,
-        client=client, draft_resp=draft_resp, variant=variant
+        client=client, draft_resp=draft_resp, variant=variant, target_store=target_store
     )
     is_success, err_details, msg = client.submit_product(payload)
 
