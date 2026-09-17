@@ -127,6 +127,8 @@ def list_products(
     status: Optional[str] = Query(None, description="状态: PENDING_CLEAN, CLEANED, SUBMITTED, FAILED"),
     compliance_status: Optional[str] = Query(None, description="合规状态: PENDING_CHECK, SAFE, RISK, PROHIBITED"),
     search: Optional[str] = Query(None, description="搜索关键词"),
+    min_price: Optional[float] = Query(None, description="最低售价 (ZAR)"),
+    max_price: Optional[float] = Query(None, description="最高售价 (ZAR)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db)
@@ -136,6 +138,10 @@ def list_products(
         query = query.filter(Product.status == status)
     if compliance_status:
         query = query.filter(Product.compliance_status == compliance_status)
+    if min_price is not None:
+        query = query.filter(Product.makro_selling_price >= min_price)
+    if max_price is not None:
+        query = query.filter(Product.makro_selling_price <= max_price)
     if search:
         s = f"%{search.strip()}%"
         query = query.filter(

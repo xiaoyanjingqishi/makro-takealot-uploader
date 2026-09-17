@@ -65,13 +65,13 @@
       <div v-if="currentTab === 'products'" class="space-y-4">
         <!-- 筛选与操作工具栏 -->
         <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-          <div class="flex items-center space-x-2 flex-1 max-w-xl">
+          <div class="flex items-center space-x-2 flex-1 max-w-2xl flex-wrap gap-y-2">
             <input 
               v-model="searchQuery" 
               @keyup.enter="loadProducts(1)"
               type="text" 
               placeholder="搜索商品标题、原标题、母体或条码..." 
-              class="w-full text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              class="w-48 text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
             />
             <select 
               v-model="statusFilter" 
@@ -95,6 +95,40 @@
               <option value="PROHIBITED">🚫 违禁拦截 (PROHIBITED)</option>
               <option value="PENDING_CHECK">⏳ 待检测 (PENDING)</option>
             </select>
+            <!-- 价格区间过滤 -->
+            <div class="flex items-center space-x-1 border border-slate-300 rounded-lg px-2 py-1.5 bg-white text-xs text-slate-600 shrink-0">
+              <span class="text-slate-400 text-[10px] font-bold">R</span>
+              <input 
+                v-model.number="minPriceFilter" 
+                @keyup.enter="loadProducts(1)"
+                type="number" 
+                placeholder="最低价" 
+                class="w-14 text-xs p-0 border-none focus:outline-none focus:ring-0 text-slate-800"
+              />
+              <span class="text-slate-300">-</span>
+              <span class="text-slate-400 text-[10px] font-bold">R</span>
+              <input 
+                v-model.number="maxPriceFilter" 
+                @keyup.enter="loadProducts(1)"
+                type="number" 
+                placeholder="最高价" 
+                class="w-14 text-xs p-0 border-none focus:outline-none focus:ring-0 text-slate-800"
+              />
+              <button 
+                @click="loadProducts(1)" 
+                class="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded font-semibold transition"
+              >
+                过滤
+              </button>
+              <button 
+                v-if="minPriceFilter !== null || maxPriceFilter !== null" 
+                @click="minPriceFilter = null; maxPriceFilter = null; loadProducts(1)" 
+                class="text-[10px] text-slate-400 hover:text-slate-600 px-0.5"
+                title="清除价格过滤"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           <div class="flex items-center space-x-2">
@@ -165,6 +199,37 @@
 
         <!-- ================= 视图 A: 母体聚合视图 ================= -->
         <div v-if="viewMode === 'grouped'" class="space-y-4">
+          <!-- 母体聚合顶部全选与全局折叠控制条 -->
+          <div v-if="!loadingProducts && groupedProducts.length > 0" class="flex items-center justify-between bg-white px-4 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-700 shadow-xs">
+            <div class="flex items-center space-x-3">
+              <label class="flex items-center space-x-2 cursor-pointer font-semibold select-none">
+                <input 
+                  type="checkbox" 
+                  :checked="isAllSelected" 
+                  @change="toggleSelectAll" 
+                  class="rounded text-blue-600 cursor-pointer h-4 w-4"
+                />
+                <span>全选当前页全部母体与变体 (已选 {{ selectedIds.length }} / {{ products.items ? products.items.length : 0 }} 件)</span>
+              </label>
+              <span class="text-slate-300">|</span>
+              <span class="text-slate-500 text-[11px]">共 {{ groupedProducts.length }} 个母体商品 (聚合 {{ products.items ? products.items.length : 0 }} 个独立变体)</span>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button 
+                @click="expandAllGroups(true)" 
+                class="px-2.5 py-1 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 font-medium transition"
+              >
+                全部展开 ▼
+              </button>
+              <button 
+                @click="expandAllGroups(false)" 
+                class="px-2.5 py-1 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 font-medium transition"
+              >
+                全部收起 ▲
+              </button>
+            </div>
+          </div>
+
           <div v-if="loadingProducts" class="text-center py-12 bg-white rounded-xl border border-slate-200 text-slate-400">
             ⏳ 正在加载商品数据...
           </div>
@@ -246,7 +311,7 @@
                     <th class="py-2.5 px-4 w-16">主图</th>
                     <th class="py-2.5 px-4">变体参数与标题</th>
                     <th class="py-2.5 px-4">Makro 待发信息</th>
-                    <th class="py-2.5 px-4 w-28">售价 (ZAR)</th>
+                    <th class="py-2.5 px-4 w-36">售价与MRP (ZAR)</th>
                     <th class="py-2.5 px-4 w-24">状态</th>
                     <th class="py-2.5 px-4 w-32 text-right">操作</th>
                   </tr>
@@ -280,9 +345,22 @@
                         <span v-else-if="item.compliance_status === 'SAFE'" class="text-emerald-600 font-bold">🛡️ 合规安全</span>
                       </div>
                     </td>
-                    <td class="py-2.5 px-4">
-                      <div class="font-bold text-slate-900">R{{ item.makro_selling_price }}</div>
-                      <div class="text-[10px] text-slate-400 line-through">MRP: R{{ item.makro_mrp }}</div>
+                    <td class="py-2.5 px-4 w-36">
+                      <div class="flex items-center space-x-1">
+                        <span class="text-xs font-bold text-slate-700">R</span>
+                        <input 
+                          type="number" 
+                          v-model.number="item.makro_selling_price" 
+                          @change="quickUpdatePrice(item)" 
+                          class="w-20 text-xs font-bold text-slate-900 px-1.5 py-0.5 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50 hover:bg-white transition"
+                          title="修改售价 (回车/失焦自动保存，MRP 按系统系数联动计算)"
+                        />
+                      </div>
+                      <div class="text-[10px] text-slate-400 mt-0.5 flex items-center space-x-1">
+                        <span>MRP:</span>
+                        <span class="line-through font-mono">R{{ item.makro_mrp }}</span>
+                        <span class="text-[9px] text-blue-500 font-sans" title="MRP倍率系数">(x{{ settings.mrp_ratio || 1.5 }})</span>
+                      </div>
                     </td>
                     <td class="py-2.5 px-4">
                       <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[10px] font-semibold rounded-full inline-block">
@@ -312,7 +390,7 @@
                 <th class="py-3 px-4 w-20">变体主图</th>
                 <th class="py-3 px-4">Takealot 来源与变体信息</th>
                 <th class="py-3 px-4">AI 清洗后的 Makro 独立待发信息</th>
-                <th class="py-3 px-4 w-32">价格计算 (ZAR)</th>
+                <th class="py-3 px-4 w-36">售价与MRP (ZAR)</th>
                 <th class="py-3 px-4 w-28">状态</th>
                 <th class="py-3 px-4 w-36 text-right">独立操作</th>
               </tr>
@@ -418,9 +496,22 @@
                     错误: {{ item.makro_submit_error }}
                   </div>
                 </td>
-                <td class="py-3 px-4">
-                  <div class="text-sm font-bold text-slate-900">R{{ item.makro_selling_price }}</div>
-                  <div class="text-[11px] text-slate-400 line-through">MRP: R{{ item.makro_mrp }}</div>
+                <td class="py-3 px-4 w-36">
+                  <div class="flex items-center space-x-1">
+                    <span class="text-xs font-bold text-slate-700">R</span>
+                    <input 
+                      type="number" 
+                      v-model.number="item.makro_selling_price" 
+                      @change="quickUpdatePrice(item)" 
+                      class="w-20 text-xs font-bold text-slate-900 px-1.5 py-0.5 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50 hover:bg-white transition"
+                      title="修改售价 (回车/失焦自动保存，MRP 按系统系数联动计算)"
+                    />
+                  </div>
+                  <div class="text-[10px] text-slate-400 mt-0.5 flex items-center space-x-1">
+                    <span>MRP:</span>
+                    <span class="line-through font-mono">R{{ item.makro_mrp }}</span>
+                    <span class="text-[9px] text-blue-500 font-sans" title="MRP倍率系数">(x{{ settings.mrp_ratio || 1.5 }})</span>
+                  </div>
                 </td>
                 <td class="py-3 px-4">
                   <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[11px] font-semibold rounded-full inline-block">
@@ -664,16 +755,20 @@
                 <label class="block text-xs font-bold text-blue-900 mb-1">Makro 最终售价 (R)</label>
                 <input 
                   v-model.number="activeItem.makro_selling_price" 
+                  @input="onInspectorSellingPriceInput"
                   type="number" 
-                  class="w-full text-sm font-bold p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-blue-700"
+                  class="w-full text-sm font-bold p-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-blue-700 bg-white"
                 />
               </div>
               <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">划线原价 MRP (R)</label>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-xs font-bold text-slate-700">划线原价 MRP (R)</label>
+                  <span class="text-[10px] text-blue-600 font-normal">按系数 (x{{ settings.mrp_ratio || 1.5 }}) 自动计算</span>
+                </div>
                 <input 
                   v-model.number="activeItem.makro_mrp" 
                   type="number" 
-                  class="w-full text-sm font-bold p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-slate-600"
+                  class="w-full text-sm font-bold p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-slate-600 bg-white"
                 />
               </div>
             </div>
@@ -1405,6 +1500,8 @@
           searchQuery: '',
           statusFilter: '',
           complianceFilter: '',
+          minPriceFilter: null,
+          maxPriceFilter: null,
           currentPage: 1,
           pageSize: 50,
           selectedIds: [],
@@ -1519,6 +1616,48 @@
             this.activeItem.makro_vertical = val;
           }
         },
+        expandAllGroups(expand = true) {
+          const map = {};
+          if (expand) {
+            for (const g of this.groupedProducts) {
+              map[g.group_code] = true;
+            }
+          }
+          this.expandedGroups = map;
+        },
+        onInspectorSellingPriceInput() {
+          if (this.activeItem) {
+            const ratio = Number(this.settings.mrp_ratio) || 1.5;
+            const price = Number(this.activeItem.makro_selling_price) || 0;
+            this.activeItem.makro_mrp = Math.round(price * ratio);
+          }
+        },
+        async quickUpdatePrice(item) {
+          const ratio = Number(this.settings.mrp_ratio) || 1.5;
+          const price = Number(item.makro_selling_price) || 0;
+          item.makro_mrp = Math.round(price * ratio);
+          try {
+            const res = await fetch(`/api/products/${item.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                makro_selling_price: item.makro_selling_price,
+                makro_mrp: item.makro_mrp
+              })
+            });
+            if (res.ok) {
+              this.showToast(`✅ [${item.sku_id || item.id}] 售价已更新为 R${item.makro_selling_price}，MRP 自动同步为 R${item.makro_mrp}`, 'success');
+              if (this.activeItem && this.activeItem.id === item.id) {
+                this.activeItem.makro_selling_price = item.makro_selling_price;
+                this.activeItem.makro_mrp = item.makro_mrp;
+              }
+            } else {
+              this.showToast(`❌ 价格更新失败: ${res.statusText}`, 'error');
+            }
+          } catch (e) {
+            this.showToast(`❌ 价格更新网络异常: ${e}`, 'error');
+          }
+        },
         async loadProducts(page = null) {
           if (page !== null && page >= 1) {
             this.currentPage = page;
@@ -1529,6 +1668,12 @@
             if (this.searchQuery) url += `&search=${encodeURIComponent(this.searchQuery)}`;
             if (this.statusFilter) url += `&status=${this.statusFilter}`;
             if (this.complianceFilter) url += `&compliance_status=${this.complianceFilter}`;
+            if (this.minPriceFilter !== null && this.minPriceFilter !== undefined && this.minPriceFilter !== '') {
+              url += `&min_price=${this.minPriceFilter}`;
+            }
+            if (this.maxPriceFilter !== null && this.maxPriceFilter !== undefined && this.maxPriceFilter !== '') {
+              url += `&max_price=${this.maxPriceFilter}`;
+            }
             const res = await fetch(url);
             this.products = await res.json();
             if (!this.activeItem && this.products.items && this.products.items.length > 0) {

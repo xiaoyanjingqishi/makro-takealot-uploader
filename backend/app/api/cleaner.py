@@ -208,7 +208,7 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
                 "takealot_description": prod.takealot_description,
                 "makro_brand": prod.makro_brand,
                 "raw_images": prod.raw_images
-            }, check_image=False)
+            }, check_image=True)
 
             prod.compliance_status = comp_res.get("compliance_status", "SAFE")
             prod.compliance_details = json.dumps(comp_res, ensure_ascii=False)
@@ -219,7 +219,7 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
         finally:
             local_db.close()
 
-    max_workers = min(8, max(1, len(req.product_ids)))
+    max_workers = min(6, max(1, len(req.product_ids)))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(_process_single_comp, req.product_ids))
 
