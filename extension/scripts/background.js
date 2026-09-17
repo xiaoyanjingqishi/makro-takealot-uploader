@@ -33,6 +33,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // 保持异步消息通道
   }
 
+  // 1.5 批量检查商品 PLID 是否已在选品箱中
+  if (request.action === "CHECK_PLIDS_EXISTENCE") {
+    const plids = Array.isArray(request.plids) ? request.plids : [request.plids];
+    fetch(`${BACKEND_URL}/api/products/check-existence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plids })
+    })
+      .then(res => res.json())
+      .then(data => sendResponse({ success: true, exists: data.exists || {} }))
+      .catch(err => {
+        console.warn("查询商品已采集状态失败:", err);
+        sendResponse({ success: false, exists: {}, error: err.message });
+      });
+    return true;
+  }
+
   // 2. 跨域透传请求 Takealot 官方 API
   if (request.action === "FETCH_TAKEALOT_API") {
     const targetUrl = request.url || `https://api.takealot.com/rest/v-1-19-0/product-details/PLID${request.plid}?platform=desktop`;

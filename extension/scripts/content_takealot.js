@@ -83,6 +83,46 @@
     }, 4500);
   }
 
+  let currentCollectedInfo = null;
+
+  // 检查当前商品在后端选品箱中的存在状态
+  function checkCurrentPageExistence(plid) {
+    if (!plid) return;
+    chrome.runtime.sendMessage({
+      action: "CHECK_PLIDS_EXISTENCE",
+      plids: [plid]
+    }, (res) => {
+      if (res && res.success && res.exists) {
+        const info = res.exists[plid] || res.exists[plid.replace(/[^0-9]/g, '')];
+        if (info && info.collected) {
+          currentCollectedInfo = info;
+          applyCollectedStateToDetailCard(info);
+        }
+      }
+    });
+  }
+
+  function applyCollectedStateToDetailCard(info) {
+    const btn = document.getElementById("makro-collect-btn");
+    const container = document.getElementById("makro-collect-floating-card");
+    if (!container || !btn) return;
+
+    let badge = document.getElementById("makro-collected-badge");
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.id = "makro-collected-badge";
+      badge.style.cssText = "background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px;";
+      const header = container.firstElementChild;
+      if (header) header.insertAdjacentElement('afterend', badge);
+    }
+    badge.innerHTML = `<span>✓ 已在选品箱中 (${info.count} 个独立变体)</span>`;
+
+    if (btn.dataset.reconfirmArmed !== '1') {
+      btn.innerHTML = `<span>🔄 重新采集覆盖旧数据</span>`;
+      btn.style.background = "linear-gradient(135deg, #0284c7, #0369a1)";
+    }
+  }
+
   // 执行采集核心逻辑
   function triggerCollect(callback) {
     const plid = extractPlid();
@@ -93,9 +133,39 @@
     }
 
     const btn = document.getElementById("makro-collect-btn");
+    const defaultText = currentCollectedInfo ? "🔄 重新采集覆盖旧数据" : "📦 一键采集到 Makro";
+
+    // 1. 已采集商品二次点击确认守卫
+    if (currentCollectedInfo && currentCollectedInfo.collected) {
+      if (btn && btn.dataset.reconfirmArmed !== '1') {
+        btn.dataset.reconfirmArmed = '1';
+        btn.innerText = "⚠️ 再次点击确认重新采集 (覆盖)";
+        btn.classList.add("reconfirm-warning");
+        showToast(`💡 该商品已在选品箱中 (${currentCollectedInfo.count} 个变体)，再次点击确认重新拉取并覆盖！`, false);
+
+        if (btn._reconfirmTimer) clearTimeout(btn._reconfirmTimer);
+        btn._reconfirmTimer = setTimeout(() => {
+          if (btn.dataset.reconfirmArmed === '1') {
+            delete btn.dataset.reconfirmArmed;
+            btn.classList.remove("reconfirm-warning");
+            btn.innerText = defaultText;
+          }
+          btn._reconfirmTimer = null;
+        }, 10000);
+        return;
+      } else if (btn) {
+        // 第二次点击已确认
+        delete btn.dataset.reconfirmArmed;
+        btn.classList.remove("reconfirm-warning");
+        if (btn._reconfirmTimer) {
+          clearTimeout(btn._reconfirmTimer);
+          btn._reconfirmTimer = null;
+        }
+      }
+    }
     
-    // 品牌侵权风控与二次确认守卫
-    if (btn && window.TkBrandChecker && window.TkBrandChecker.guard(btn, document, "📦 一键采集到 Makro")) {
+    // 2. 品牌侵权风控与二次确认守卫
+    if (btn && window.TkBrandChecker && window.TkBrandChecker.guard(btn, document, defaultText)) {
       return;
     }
 
@@ -117,16 +187,20 @@
       }
     }, (response) => {
       if (btn) {
-        btn.innerText = "📦 一键采集到 Makro";
         btn.disabled = false;
       }
 
       if (response && response.success) {
         const p = response.data;
-        const varCount = p.variants ? p.variants.length : 1;
+        const varCount = response.count || (p.variants ? p.variants.length : 1);
         const shortTitle = (p.takealot_title || plid).slice(0, 32);
-        showToast(`✅ 采集成功！已由后端完整入库【${shortTitle}...】(变体: ${varCount}个, 售价: R${p.makro_selling_price})`, true);
+
+        currentCollectedInfo = { collected: true, count: varCount };
+        applyCollectedStateToDetailCard(currentCollectedInfo);
+
+        showToast(`✅ 采集成功！已由后端完整入库【${shortTitle}...】(变体: ${varCount}个, 售价: R${p.makro_selling_price || ''})`, true);
       } else {
+        if (btn) btn.innerText = defaultText;
         const err = response ? (response.error || response.message) : "无法连接本地后端服务 (请确保 http://localhost:8001 已启动)";
         showToast(`❌ 采集失败: ${err}`, false);
       }
@@ -192,6 +266,11 @@
     `;
 
     document.body.appendChild(card);
+
+    const plid = extractPlid();
+    if (plid) {
+      checkCurrentPageExistence(plid);
+    }
 
     const btn = document.getElementById("makro-collect-btn");
     btn.addEventListener("click", () => {

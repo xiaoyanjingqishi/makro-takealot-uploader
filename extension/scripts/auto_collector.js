@@ -25,6 +25,7 @@
     maxScanPages: 10,
     filterSponsored: true,
     filterRestricted: true,
+    filterAlreadyCollected: true,
     autoList: false,
 
     // 运行统计
@@ -123,6 +124,11 @@
           </div>
 
           <!-- 安全过滤开关 -->
+          <div class="tk-auto-checkbox-row">
+            <input type="checkbox" id="tkFilterAlreadyCollected" checked>
+            <label for="tkFilterAlreadyCollected">📦 自动跳过已在选品箱中的商品 (取消则重新采集覆盖)</label>
+          </div>
+
           <div class="tk-auto-checkbox-row">
             <input type="checkbox" id="tkFilterRestricted" checked>
             <label for="tkFilterRestricted">🛡️ 智能排除受限/独立品牌与选品黑名单 (假发/液体/3C等)</label>
@@ -229,7 +235,7 @@
     });
 
     // 实时保存配置
-    const inputs = ['tkMinPrice', 'tkMaxPrice', 'tkMinReviews', 'tkMaxReviews', 'tkMinRating', 'tkMaxCollect', 'tkMaxPages', 'tkFilterRestricted', 'tkFilterSponsored', 'tkAutoList'];
+    const inputs = ['tkMinPrice', 'tkMaxPrice', 'tkMinReviews', 'tkMaxReviews', 'tkMinRating', 'tkMaxCollect', 'tkMaxPages', 'tkFilterAlreadyCollected', 'tkFilterRestricted', 'tkFilterSponsored', 'tkAutoList'];
     inputs.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -269,6 +275,7 @@
     state.minRating = document.getElementById('tkMinRating').value.trim();
     state.maxCollectItems = parseInt(document.getElementById('tkMaxCollect').value, 10) || 50;
     state.maxScanPages = parseInt(document.getElementById('tkMaxPages').value, 10) || 10;
+    state.filterAlreadyCollected = document.getElementById('tkFilterAlreadyCollected') ? document.getElementById('tkFilterAlreadyCollected').checked : true;
     state.filterRestricted = document.getElementById('tkFilterRestricted').checked;
     state.filterSponsored = document.getElementById('tkFilterSponsored').checked;
     state.autoList = document.getElementById('tkAutoList').checked;
@@ -282,6 +289,7 @@
         minRating: state.minRating,
         maxCollectItems: state.maxCollectItems,
         maxScanPages: state.maxScanPages,
+        filterAlreadyCollected: state.filterAlreadyCollected,
         filterRestricted: state.filterRestricted,
         filterSponsored: state.filterSponsored,
         autoList: state.autoList
@@ -321,6 +329,10 @@
       if (c.maxScanPages !== undefined) {
         document.getElementById('tkMaxPages').value = c.maxScanPages;
         state.maxScanPages = c.maxScanPages;
+      }
+      if (c.filterAlreadyCollected !== undefined && document.getElementById('tkFilterAlreadyCollected')) {
+        document.getElementById('tkFilterAlreadyCollected').checked = !!c.filterAlreadyCollected;
+        state.filterAlreadyCollected = !!c.filterAlreadyCollected;
       }
       if (c.filterRestricted !== undefined) {
         document.getElementById('tkFilterRestricted').checked = !!c.filterRestricted;
@@ -473,7 +485,12 @@
 
   // 3. 过滤规则核验
   function evaluateCard(data) {
-    const { price, rating, reviewCount, isSponsored, hitBrand } = data;
+    const { price, rating, reviewCount, isSponsored, hitBrand, isAlreadyCollected, collectedCount } = data;
+
+    // 0. 已入库重复商品过滤 (勾选跳过时直接拦截)
+    if (state.filterAlreadyCollected && isAlreadyCollected) {
+      return { pass: false, reason: `已在选品箱 (${collectedCount || 1}变体)`, type: 'skip' };
+    }
 
     // A. 品牌与黑名单风控拦截
     if (state.filterRestricted && hitBrand) {
@@ -543,6 +560,23 @@
     badge.textContent = text;
   }
 
+  // 批量检查 PLID 列表是否已在选品箱中
+  function checkPlidsExistence(plids) {
+    return new Promise((resolve) => {
+      if (!plids || !plids.length) return resolve({});
+      chrome.runtime.sendMessage({
+        action: 'CHECK_PLIDS_EXISTENCE',
+        plids: plids
+      }, (res) => {
+        if (res && res.success && res.exists) {
+          resolve(res.exists);
+        } else {
+          resolve({});
+        }
+      });
+    });
+  }
+
   // 5. 自动采集执行主调度器
   async function startAutoCollect() {
     saveSettingsFromUI();
@@ -563,7 +597,7 @@
     updateDashboard();
 
     addLog(`🚀 启动自动采集: 价格[${state.minPrice || '不限'}~${state.maxPrice || '不限'}] 评论>=${state.minReviews || '不限'} 评分>=${state.minRating || '不限'}⭐`, 'info');
-    addLog(`🎯 目标采集上限: ${state.maxCollectItems} 件, 最大翻页数: ${state.maxScanPages} 页`, 'info');
+    addLog(`🎯 目标采集上限: ${state.maxCollectItems} 件, 最大翻页数: ${state.maxScanPages} 页, 跳过已采商品: ${state.filterAlreadyCollected ? '开启' : '关闭(覆盖)'}`, 'info');
 
     try {
       await runCollectionLoop();
@@ -599,6 +633,23 @@
 
       addLog(`本批次发现 ${unscannedCards.length} 个新商品 (总计加载 ${cards.length} 件)`, 'info');
 
+      // 批量预检当前批次新商品的选品箱入库状态
+      const plidsToCheck = unscannedCards.map(c => c.plid);
+      if (plidsToCheck.length > 0) {
+        try {
+          const existenceMap = await checkPlidsExistence(plidsToCheck);
+          for (const item of unscannedCards) {
+            const info = existenceMap[item.plid] || existenceMap['PLID' + item.plid] || null;
+            if (info && info.collected) {
+              item.isAlreadyCollected = true;
+              item.collectedCount = info.count || 1;
+            }
+          }
+        } catch (e) {
+          console.warn('[AutoCollector] 批量存在性检查失败:', e);
+        }
+      }
+
       // 逐个比对并采集
       for (const item of unscannedCards) {
         if (!state.running) break;
@@ -613,23 +664,27 @@
         if (!check.pass) {
           state.skippedCount++;
           markCardBadge(item.card, `✗ ${check.reason}`, check.type);
-          // 如果是受限品牌或重要广告，记录日志
+          // 如果是受限品牌或重要广告或已在选品箱跳过，记录日志
           if (check.type === 'danger') {
             addLog(`[PLID ${item.plid}] 🛡️ 排除: ${check.reason}`, 'warn');
+          } else if (item.isAlreadyCollected) {
+            addLog(`[PLID ${item.plid}] 📦 跳过: 已在选品箱 (${item.collectedCount || 1}变体)`, 'info');
           }
           updateDashboard();
           continue;
         }
 
-        // 符合条件 -> 采集入库
-        markCardBadge(item.card, '⏳ 正在采集入库...', 'ok');
-        addLog(`[PLID ${item.plid}] 🎯 命中目标 (R${item.price}, ${item.rating}⭐, ${item.reviewCount}评) -> 入库中...`, 'info');
+        // 符合条件 -> 采集入库 (识别是首次入库还是重新采集覆盖)
+        const isReScrape = !!item.isAlreadyCollected;
+        markCardBadge(item.card, isReScrape ? '⏳ 正在重采覆盖...' : '⏳ 正在采集入库...', 'ok');
+        addLog(`[PLID ${item.plid}] 🎯 ${isReScrape ? '重新采集覆盖' : '命中目标'} (R${item.price || 0}, ${item.rating || 0}⭐, ${item.reviewCount || 0}评) -> 入库中...`, 'info');
 
         const success = await scrapeSingleProduct(item);
         if (success) {
           state.collectedCount++;
-          markCardBadge(item.card, '✓ 符合已入库', 'ok');
-          addLog(`[PLID ${item.plid}] ✓ 采集成功入库！(当前已达成 ${state.collectedCount}/${state.maxCollectItems})`, 'success');
+          const succBadge = isReScrape ? '✓ 重采已覆盖' : '✓ 符合已入库';
+          markCardBadge(item.card, succBadge, 'ok');
+          addLog(`[PLID ${item.plid}] ${succBadge}！(当前已达成 ${state.collectedCount}/${state.maxCollectItems})`, 'success');
         } else {
           markCardBadge(item.card, '❌ 入库失败', 'skip');
         }

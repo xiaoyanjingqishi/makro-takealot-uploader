@@ -1,3 +1,4 @@
+import re
 import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -122,6 +123,64 @@ def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
         return _format_product(products)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"采集异常: {str(e)}")
+
+@router.post("/check-existence", summary="批量检查商品/PLID是否已被采集入库")
+def check_products_existence(payload: dict, db: Session = Depends(get_db)):
+    raw_plids = payload.get("plids", [])
+    if not raw_plids:
+        return {"exists": {}}
+
+    lookup_keys = set()
+    key_mapping = {}
+    for raw in raw_plids:
+        raw_str = str(raw).strip()
+        if not raw_str:
+            continue
+        clean_num = re.sub(r'[^0-9]', '', raw_str)
+        candidates = [raw_str]
+        if clean_num:
+            candidates.extend([f"PLID{clean_num}", clean_num])
+        for c in candidates:
+            lookup_keys.add(c)
+            if c not in key_mapping:
+                key_mapping[c] = []
+            if raw_str not in key_mapping[c]:
+                key_mapping[c].append(raw_str)
+
+    if not lookup_keys:
+        return {"exists": {}}
+
+    rows = db.query(
+        Product.group_code,
+        Product.takealot_id,
+        func.count(Product.id).label("cnt"),
+        func.max(Product.status).label("status"),
+        func.max(Product.takealot_title).label("title")
+    ).filter(
+        Product.group_code.in_(lookup_keys) | Product.takealot_id.in_(lookup_keys)
+    ).group_by(Product.group_code).all()
+
+    exists = {}
+    for r in rows:
+        matched_keys = set()
+        if r.group_code: matched_keys.add(r.group_code)
+        if r.takealot_id: matched_keys.add(r.takealot_id)
+
+        info = {
+            "collected": True,
+            "count": r.cnt,
+            "status": r.status,
+            "title": r.title
+        }
+        for mk in matched_keys:
+            for orig in key_mapping.get(mk, []):
+                exists[orig] = info
+                clean_n = re.sub(r'[^0-9]', '', orig)
+                if clean_n:
+                    exists[clean_n] = info
+                    exists[f"PLID{clean_n}"] = info
+
+    return {"exists": exists}
 
 @router.get("", summary="获取商品列表 (支持状态、合规筛选与分页)")
 def list_products(

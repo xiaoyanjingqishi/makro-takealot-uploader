@@ -1,4 +1,4 @@
-﻿/* Takealot PLP 列表页/搜索页/类目页 采集按钮与品牌风控气泡样式 */
+/* Takealot PLP 列表页/搜索页/类目页 采集按钮与品牌风控气泡样式 */
 
 /* 1. 商品卡片底部全宽醒目采集按钮 (置于 Add to Cart 上方) */
 .tk-plp-action-btn {
@@ -139,4 +139,62 @@
   0% { transform: scale(1); box-shadow: 0 0 4px rgba(220, 38, 38, 0.4); }
   50% { transform: scale(1.02); box-shadow: 0 0 14px rgba(220, 38, 38, 0.8); }
   100% { transform: scale(1); box-shadow: 0 0 4px rgba(220, 38, 38, 0.4); }
+}
+
+/* 5. 已采集入库状态 (清新蓝青渐变 + 已采集标记) */
+.tk-plp-action-btn.collected {
+  background: linear-gradient(135deg, #0284c7, #0369a1) !important;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35) !important;
+}
+
+.tk-plp-badge-btn.collected {
+  background: #0284c7 !important;
+  border-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* 6. 已采集二次确认警告态 (橙黄色呼吸闪烁) */
+.tk-plp-action-btn.reconfirm-warning,
+#makro-collect-btn.reconfirm-warning {
+  background: linear-gradient(135deg, #d97706, #b45309) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 12px rgba(217, 119, 6, 0.7) !important;
+  animation: tk-reconfirm-pulse 1.2s infinite !important;
+}
+
+.tk-plp-badge-btn.reconfirm-warning {
+  background: #d97706 !important;
+  box-shadow: 0 0 10px rgba(217, 119, 6, 0.8) !important;
+  animation: tk-reconfirm-pulse 1.2s infinite !important;
+}
+
+@keyframes tk-reconfirm-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 4px rgba(217, 119, 6, 0.4); }
+  50% { transform: scale(1.02); box-shadow: 0 0 14px rgba(217, 119, 6, 0.8); }
+  100% { transform: scale(1); box-shadow: 0 0 4px rgba(217, 119, 6, 0.4); }
+}
+
+/* 7. 已采集悬浮二次确认气泡 */
+.tk-reconfirm-bubble {
+  position: fixed;
+  z-index: 2147483647;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #fffbeb;
+  border: 1px solid #d97706;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  box-shadow: 0 6px 20px rgba(180, 83, 9, 0.25);
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.tk-reconfirm-bubble.show {
+  opacity: 1;
+  transform: translateY(0);
 }
