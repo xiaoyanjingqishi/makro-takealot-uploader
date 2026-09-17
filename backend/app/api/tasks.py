@@ -8,10 +8,13 @@ from ..services.task_manager import task_manager
 
 router = APIRouter(prefix="/tasks", tags=["任务监控与操作日志"])
 
-@router.get("/active", summary="获取当前运行中或刚结束的后台任务 (供刷新恢复)")
-def get_active_task() -> Dict[str, Any]:
-    task = task_manager.get_active_task()
-    return {"task": task}
+@router.get("/active", summary="获取当前运行中或刚结束的所有后台任务 (供刷新恢复及多任务并发监控)")
+def get_active_tasks() -> Dict[str, Any]:
+    tasks = task_manager.get_active_tasks()
+    return {
+        "tasks": tasks,
+        "task": tasks[-1] if tasks else None
+    }
 
 @router.get("/{task_id}/status", summary="查询特定后台任务实时状态与进度")
 def get_task_status(task_id: str) -> Dict[str, Any]:

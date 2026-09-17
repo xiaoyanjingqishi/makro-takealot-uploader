@@ -160,29 +160,32 @@ class TaskManager:
             t = self._tasks.get(task_id)
             return dict(t) if t else None
 
-    def get_active_task(self) -> Optional[Dict[str, Any]]:
+    def get_active_tasks(self) -> List[Dict[str, Any]]:
         """
-        获取当前正在运行的任务，或者最近刚刚完成的任务 (12秒内)
-        供前端页面刷新/重新挂载时恢复进度条展示
+        获取所有当前正在运行的任务，以及最近 15 秒内刚完成/取消的任务列表
+        支持多个批处理任务（如批量清洗与批量上品）并发推进且进度条独立展示互不覆盖
         """
+        result = []
+        now = time.time()
         with self._task_lock:
-            # 1. 优先查找正在运行中的任务
-            for t in reversed(list(self._tasks.values())):
+            for t in self._tasks.values():
                 if t["status"] == "RUNNING":
-                    return dict(t)
-
-            # 2. 若没有运行中任务，查找 12 秒内刚刚完成的任务
-            now = time.time()
-            for t in reversed(list(self._tasks.values())):
-                if t.get("finished_at"):
+                    result.append(dict(t))
+                elif t.get("finished_at"):
                     try:
                         fin_dt = datetime.strptime(t["finished_at"], "%Y-%m-%d %H:%M:%S")
-                        fin_epoch = fin_dt.timestamp()
-                        if (now - fin_epoch) < 12:
-                            return dict(t)
+                        if (now - fin_dt.timestamp()) < 15:
+                            result.append(dict(t))
                     except Exception:
                         pass
-        return None
+        return result
+
+    def get_active_task(self) -> Optional[Dict[str, Any]]:
+        """
+        向后兼容获取单个最近任务
+        """
+        tasks = self.get_active_tasks()
+        return tasks[-1] if tasks else None
 
 # 全局单例
 task_manager = TaskManager()

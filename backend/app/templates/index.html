@@ -61,93 +61,111 @@
     <!-- 主界面区域 -->
     <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-      <!-- ================= 全局置顶后台异步任务进度条 ================= -->
-      <div 
-        v-if="activeBgTask" 
-        :class="[
-          'mb-5 p-4 rounded-xl border shadow-md transition-all',
-          activeBgTask.status === 'RUNNING' 
-            ? 'bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-blue-200 ring-1 ring-blue-500/20' 
-            : (activeBgTask.status === 'SUCCESS' 
-                ? 'bg-emerald-50 border-emerald-200' 
-                : (activeBgTask.status === 'CANCELLED' 
-                    ? 'bg-amber-50 border-amber-200' 
-                    : 'bg-rose-50 border-rose-200'))
-        ]"
-      >
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center space-x-2">
-            <span v-if="activeBgTask.status === 'RUNNING'" class="flex h-3 w-3 relative">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
-            </span>
-            <span v-else-if="activeBgTask.status === 'SUCCESS'" class="text-emerald-600 text-sm font-bold">✓</span>
-            <span v-else-if="activeBgTask.status === 'CANCELLED'" class="text-amber-600 text-sm font-bold">⏹</span>
-            <span v-else class="text-rose-600 text-sm font-bold">✕</span>
+      <!-- ================= 全局置顶后台异步任务进度条列表 (支持多任务并行独立展示互不顶掉) ================= -->
+      <div v-if="activeBgTasks.length > 0" class="mb-5 space-y-3">
+        <div 
+          v-for="task in activeBgTasks" 
+          :key="task.id"
+          :class="[
+            'p-4 rounded-xl border shadow-md transition-all',
+            task.status === 'RUNNING' 
+              ? (task.task_type === 'BATCH_PUBLISH' 
+                  ? 'bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 border-purple-200 ring-1 ring-purple-500/20' 
+                  : (task.task_type === 'BATCH_COMPLIANCE' 
+                      ? 'bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-emerald-200 ring-1 ring-emerald-500/20' 
+                      : 'bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-blue-200 ring-1 ring-blue-500/20'))
+              : (task.status === 'SUCCESS' 
+                  ? 'bg-emerald-50 border-emerald-200' 
+                  : (task.status === 'CANCELLED' 
+                      ? 'bg-amber-50 border-amber-200' 
+                      : 'bg-rose-50 border-rose-200'))
+          ]"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center space-x-2">
+              <span v-if="task.status === 'RUNNING'" class="flex h-3 w-3 relative">
+                <span 
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                  :class="task.task_type === 'BATCH_PUBLISH' ? 'bg-purple-400' : (task.task_type === 'BATCH_COMPLIANCE' ? 'bg-emerald-400' : 'bg-blue-400')"
+                ></span>
+                <span 
+                  class="relative inline-flex rounded-full h-3 w-3"
+                  :class="task.task_type === 'BATCH_PUBLISH' ? 'bg-purple-600' : (task.task_type === 'BATCH_COMPLIANCE' ? 'bg-emerald-600' : 'bg-blue-600')"
+                ></span>
+              </span>
+              <span v-else-if="task.status === 'SUCCESS'" class="text-emerald-600 text-sm font-bold">✓</span>
+              <span v-else-if="task.status === 'CANCELLED'" class="text-amber-600 text-sm font-bold">⏹</span>
+              <span v-else class="text-rose-600 text-sm font-bold">✕</span>
 
-            <span class="text-xs font-bold text-slate-800">
-              {{ activeBgTask.name || '后台处理任务' }}
-            </span>
-            <span 
+              <span class="text-xs font-bold text-slate-800">
+                {{ task.name || '后台处理任务' }}
+              </span>
+              <span 
+                :class="[
+                  'text-[10px] px-2 py-0.5 rounded-full font-bold',
+                  task.status === 'RUNNING' 
+                    ? (task.task_type === 'BATCH_PUBLISH' ? 'bg-purple-100 text-purple-800' : (task.task_type === 'BATCH_COMPLIANCE' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-700')) :
+                  task.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-700' :
+                  task.status === 'CANCELLED' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+                ]"
+              >
+                {{ task.status === 'RUNNING' ? '后台执行中...' : (task.status === 'SUCCESS' ? '已完成' : (task.status === 'CANCELLED' ? '已取消' : '执行失败')) }}
+              </span>
+              <span class="text-xs text-slate-400 font-mono">({{ task.id }})</span>
+            </div>
+
+            <div class="flex items-center space-x-3 text-xs">
+              <span class="font-bold font-mono text-slate-700">
+                {{ task.current }} / {{ task.total }} 件 ({{ task.progress }}%)
+              </span>
+              <button 
+                v-if="task.status === 'RUNNING'"
+                @click="cancelBgTask(task)" 
+                class="px-2 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded text-[11px] font-medium transition cursor-pointer"
+              >
+                ⏹ 取消
+              </button>
+              <button 
+                v-else 
+                @click="dismissBgTask(task.id)" 
+                class="text-slate-400 hover:text-slate-600 font-bold px-1.5 py-0.5 rounded hover:bg-white/60 cursor-pointer"
+                title="关闭此任务通知"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <!-- 进度条轨道 -->
+          <div class="w-full bg-white/80 rounded-full h-2.5 overflow-hidden border border-slate-200/60 shadow-inner">
+            <div 
+              class="h-full rounded-full transition-all duration-300 ease-out"
               :class="[
-                'text-[10px] px-2 py-0.5 rounded-full font-bold',
-                activeBgTask.status === 'RUNNING' ? 'bg-blue-100 text-blue-700' :
-                activeBgTask.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-700' :
-                activeBgTask.status === 'CANCELLED' ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'
+                task.status === 'RUNNING' 
+                  ? (task.task_type === 'BATCH_PUBLISH' 
+                      ? 'bg-gradient-to-r from-purple-500 to-indigo-600' 
+                      : (task.task_type === 'BATCH_COMPLIANCE' 
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600' 
+                          : 'bg-gradient-to-r from-blue-500 to-indigo-600'))
+                  : (task.status === 'SUCCESS' 
+                      ? 'bg-emerald-500' 
+                      : (task.status === 'CANCELLED' ? 'bg-amber-500' : 'bg-rose-500'))
               ]"
-            >
-              {{ activeBgTask.status === 'RUNNING' ? '后台执行中...' : (activeBgTask.status === 'SUCCESS' ? '已完成' : (activeBgTask.status === 'CANCELLED' ? '已取消' : '执行失败')) }}
-            </span>
-            <span class="text-xs text-slate-400 font-mono">({{ activeBgTask.id }})</span>
+              :style="{ width: task.progress + '%' }"
+            ></div>
           </div>
 
-          <div class="flex items-center space-x-3 text-xs">
-            <span class="font-bold font-mono text-slate-700">
-              {{ activeBgTask.current }} / {{ activeBgTask.total }} 件 ({{ activeBgTask.progress }}%)
-            </span>
-            <button 
-              v-if="activeBgTask.status === 'RUNNING'"
-              @click="cancelActiveTask" 
-              class="px-2 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded text-[11px] font-medium transition cursor-pointer"
-            >
-              ⏹ 取消
-            </button>
-            <button 
-              v-else 
-              @click="dismissActiveTask" 
-              class="text-slate-400 hover:text-slate-600 font-bold px-1.5 py-0.5 rounded hover:bg-white/60 cursor-pointer"
-              title="关闭通知"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-
-        <!-- 进度条轨道 -->
-        <div class="w-full bg-white/80 rounded-full h-2.5 overflow-hidden border border-slate-200/60 shadow-inner">
-          <div 
-            class="h-full rounded-full transition-all duration-300 ease-out"
-            :class="[
-              activeBgTask.status === 'RUNNING' 
-                ? 'bg-gradient-to-r from-blue-500 to-indigo-600' 
-                : (activeBgTask.status === 'SUCCESS' 
-                    ? 'bg-emerald-500' 
-                    : (activeBgTask.status === 'CANCELLED' ? 'bg-amber-500' : 'bg-rose-500'))
-            ]"
-            :style="{ width: activeBgTask.progress + '%' }"
-          ></div>
-        </div>
-
-        <!-- 实时详情描述 -->
-        <div class="mt-2 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-1">
-          <div class="flex items-center space-x-2 truncate max-w-2xl">
-            <span class="text-slate-400">当前正在处理:</span>
-            <span class="text-slate-700 font-medium truncate">{{ activeBgTask.current_title || '等待中...' }}</span>
-          </div>
-          <div class="flex items-center space-x-3 text-[11px]">
-            <span class="text-emerald-600 font-medium">✓ 成功: {{ activeBgTask.success_count || 0 }}</span>
-            <span v-if="activeBgTask.fail_count" class="text-rose-600 font-medium">✕ 失败: {{ activeBgTask.fail_count }}</span>
-            <span class="text-slate-400">{{ activeBgTask.message }}</span>
+          <!-- 实时详情描述 -->
+          <div class="mt-2 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-1">
+            <div class="flex items-center space-x-2 truncate max-w-2xl">
+              <span class="text-slate-400">当前正在处理:</span>
+              <span class="text-slate-700 font-medium truncate">{{ task.current_title || '等待中...' }}</span>
+            </div>
+            <div class="flex items-center space-x-3 text-[11px]">
+              <span class="text-emerald-600 font-medium">✓ 成功: {{ task.success_count || 0 }}</span>
+              <span v-if="task.fail_count" class="text-rose-600 font-medium">✕ 失败: {{ task.fail_count }}</span>
+              <span class="text-slate-400">{{ task.message }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -2004,8 +2022,8 @@
             type: 'primary',
             action: null
           },
-          activeBgTask: null,
-          bgTaskTimer: null,
+          activeBgTasks: [],
+          bgTasksPollTimer: null,
           logFilterType: '',
           logFilterStatus: '',
           logSearchInput: '',
@@ -2107,7 +2125,7 @@
         this.loadProducts(1);
         this.loadSettings();
         this.loadTasks();
-        this.checkActiveTask();
+        this.checkActiveTasks();
       },
       methods: {
         openImagePreview(url) {
@@ -2317,74 +2335,96 @@
             console.error(e);
           }
         },
-        async checkActiveTask() {
+        async checkActiveTasks() {
           try {
-            const res = await fetch('/api/tasks/active');
-            const data = await res.json();
-            if (data && data.task) {
-              this.activeBgTask = data.task;
-              if (data.task.status === 'RUNNING') {
-                this.startTaskPolling(data.task.id);
-              }
+            await this.pollActiveTasks();
+            if (this.activeBgTasks.some(t => t.status === 'RUNNING')) {
+              this.ensureBgTasksPolling();
             }
           } catch (e) {
             console.error('检查活跃任务异常:', e);
           }
         },
-        startTaskPolling(taskId) {
-          if (this.bgTaskTimer) clearInterval(this.bgTaskTimer);
-          this.bgTaskTimer = setInterval(async () => {
-            try {
-              const res = await fetch(`/api/tasks/${taskId}/status`);
-              if (!res.ok) {
-                this.stopTaskPolling();
-                return;
-              }
-              const data = await res.json();
-              if (data && data.task) {
-                this.activeBgTask = data.task;
-                if (data.task.status !== 'RUNNING') {
-                  this.stopTaskPolling();
+        ensureBgTasksPolling() {
+          if (this.bgTasksPollTimer) return;
+          this.bgTasksPollTimer = setInterval(async () => {
+            await this.pollActiveTasks();
+          }, 800);
+        },
+        stopBgTasksPolling() {
+          if (this.bgTasksPollTimer) {
+            clearInterval(this.bgTasksPollTimer);
+            this.bgTasksPollTimer = null;
+          }
+        },
+        async pollActiveTasks() {
+          try {
+            const res = await fetch('/api/tasks/active');
+            if (!res.ok) return;
+            const data = await res.json();
+            const serverTasks = data.tasks || (data.task ? [data.task] : []);
+
+            let hasRunning = false;
+            for (const st of serverTasks) {
+              if (st.status === 'RUNNING') hasRunning = true;
+              const idx = this.activeBgTasks.findIndex(x => x.id === st.id);
+              if (idx >= 0) {
+                const prev = this.activeBgTasks[idx];
+                // 如果任务状态从未完成变为已结束，触发数据表格刷新与定时关闭
+                if (prev.status === 'RUNNING' && st.status !== 'RUNNING') {
                   this.loadProducts();
                   this.loadTasks();
                   setTimeout(() => {
-                    if (this.activeBgTask && this.activeBgTask.id === taskId && this.activeBgTask.status !== 'RUNNING') {
-                      this.activeBgTask = null;
-                    }
-                  }, 10000);
+                    this.dismissBgTask(st.id);
+                  }, 12000);
+                }
+                this.activeBgTasks.splice(idx, 1, { ...prev, ...st });
+              } else {
+                this.activeBgTasks.push(st);
+                if (st.status !== 'RUNNING') {
+                  setTimeout(() => {
+                    this.dismissBgTask(st.id);
+                  }, 12000);
                 }
               }
-            } catch (err) {
-              console.error('轮询后台任务异常:', err);
             }
-          }, 800);
-        },
-        stopTaskPolling() {
-          if (this.bgTaskTimer) {
-            clearInterval(this.bgTaskTimer);
-            this.bgTaskTimer = null;
+
+            const anyLocalRunning = this.activeBgTasks.some(t => t.status === 'RUNNING');
+            if (!hasRunning && !anyLocalRunning) {
+              this.stopBgTasksPolling();
+            }
+          } catch (err) {
+            console.error('轮询后台任务异常:', err);
           }
         },
-        async cancelActiveTask() {
-          if (!this.activeBgTask) return;
-          if (!confirm('确定要终止当前正在运行的后台任务吗？')) return;
+        addOrUpdateBgTask(task) {
+          const idx = this.activeBgTasks.findIndex(x => x.id === task.id);
+          if (idx >= 0) {
+            this.activeBgTasks.splice(idx, 1, { ...this.activeBgTasks[idx], ...task });
+          } else {
+            this.activeBgTasks.unshift(task);
+          }
+        },
+        dismissBgTask(taskId) {
+          this.activeBgTasks = this.activeBgTasks.filter(t => t.id !== taskId);
+          if (this.activeBgTasks.length === 0) {
+            this.stopBgTasksPolling();
+          }
+        },
+        async cancelBgTask(task) {
+          if (!confirm(`确定要终止当前任务【${task.name}】吗？`)) return;
           try {
-            const res = await fetch(`/api/tasks/${this.activeBgTask.id}/cancel`, { method: 'POST' });
+            const res = await fetch(`/api/tasks/${task.id}/cancel`, { method: 'POST' });
             const data = await res.json();
             if (data.success) {
-              this.activeBgTask.status = 'CANCELLED';
-              this.activeBgTask.message = '已请求取消任务';
-              this.stopTaskPolling();
+              task.status = 'CANCELLED';
+              task.message = '已请求取消任务';
               this.loadProducts();
               this.loadTasks();
             }
           } catch (e) {
             alert('取消任务失败: ' + e);
           }
-        },
-        dismissActiveTask() {
-          this.activeBgTask = null;
-          this.stopTaskPolling();
         },
         formatDateTime(dtStr) {
           if (!dtStr) return '-';
@@ -2497,8 +2537,9 @@
             });
             const resData = await res.json();
             if (resData.task_id) {
-              this.activeBgTask = {
+              this.addOrUpdateBgTask({
                 id: resData.task_id,
+                task_type: 'BATCH_CLEAN',
                 name: '批量AI数据清洗',
                 status: 'RUNNING',
                 total: targetIds.length,
@@ -2506,10 +2547,10 @@
                 progress: 0,
                 success_count: 0,
                 fail_count: 0,
-                current_title: '正在启动并发线程...',
+                current_title: '正在启动并发清洗线程...',
                 message: resData.message
-              };
-              this.startTaskPolling(resData.task_id);
+              });
+              this.ensureBgTasksPolling();
               this.selectedIds = [];
             } else {
               alert(`🎉 批量AI清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件`);
@@ -2535,8 +2576,9 @@
             });
             const resData = await res.json();
             if (resData.task_id) {
-              this.activeBgTask = {
+              this.addOrUpdateBgTask({
                 id: resData.task_id,
+                task_type: 'BATCH_PUBLISH',
                 name: '批量上品至 Makro',
                 status: 'RUNNING',
                 total: targetIds.length,
@@ -2544,10 +2586,10 @@
                 progress: 0,
                 success_count: 0,
                 fail_count: 0,
-                current_title: '正在连接 Makro 卖家中心...',
+                current_title: '正在连接 Makro 卖家中心并发上品...',
                 message: resData.message
-              };
-              this.startTaskPolling(resData.task_id);
+              });
+              this.ensureBgTasksPolling();
               this.selectedIds = [];
             } else {
               alert(`🚀 批量上品完成: 成功提交 ${resData.success} 件, 失败 ${resData.failed} 件`);
@@ -2573,8 +2615,9 @@
             });
             const resData = await res.json();
             if (resData.task_id) {
-              this.activeBgTask = {
+              this.addOrUpdateBgTask({
                 id: resData.task_id,
+                task_type: 'BATCH_COMPLIANCE',
                 name: '批量合规与侵权排查',
                 status: 'RUNNING',
                 total: targetIds.length,
@@ -2584,8 +2627,8 @@
                 fail_count: 0,
                 current_title: '正在排查品牌侵权与违禁属性...',
                 message: resData.message
-              };
-              this.startTaskPolling(resData.task_id);
+              });
+              this.ensureBgTasksPolling();
               this.selectedIds = [];
             } else {
               alert(`批量合规排查完成: 成功检测 ${resData.success} 件, 失败 ${resData.failed} 件`);
