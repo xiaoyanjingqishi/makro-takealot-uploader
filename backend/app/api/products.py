@@ -1,6 +1,7 @@
 import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.product import Product, ProductVariant
@@ -157,11 +158,22 @@ def list_products(
     total = query.count()
     items = query.order_by(Product.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
+    # 统计各流程状态商品数量
+    counts_raw = db.query(Product.status, func.count(Product.id)).group_by(Product.status).all()
+    status_counts = {k: 0 for k in ["PENDING_CLEAN", "CLEANED", "SUBMITTED", "FAILED"]}
+    total_all = 0
+    for st, cnt in counts_raw:
+        if st in status_counts:
+            status_counts[st] = cnt
+        total_all += cnt
+    status_counts["ALL"] = total_all
+
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [_format_product(p) for p in items]
+        "items": [_format_product(p) for p in items],
+        "status_counts": status_counts
     }
 
 @router.get("/{product_id}", response_model=ProductResponse, summary="获取单个商品详情")
@@ -225,3 +237,49 @@ def batch_delete_products(req: dict, db: Session = Depends(get_db)):
     deleted = db.query(Product).filter(Product.id.in_(product_ids)).delete(synchronize_session=False)
     db.commit()
     return {"message": f"成功删除 {deleted} 件商品", "deleted_count": deleted}
+
+@router.post("/batch-update-price", summary="批量修改商品售价与MRP")
+def batch_update_price(payload: dict, db: Session = Depends(get_db)):
+    product_ids = payload.get("product_ids", [])
+    if not product_ids:
+        raise HTTPException(status_code=400, detail="请选择要修改价格的商品")
+    
+    mode = payload.get("mode", "formula")  # "fixed" 或 "formula"
+    fixed_price = payload.get("fixed_price")
+    multiplier = payload.get("multiplier", 1.0)
+    fixed_offset = payload.get("fixed_offset", 0.0)
+
+    from ..services.pricing_service import get_pricing_rules
+    _, _, mrp_ratio = get_pricing_rules(db)
+    if payload.get("mrp_ratio"):
+        try:
+            mrp_ratio = float(payload.get("mrp_ratio"))
+        except (ValueError, TypeError):
+            pass
+
+    products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+    updated_count = 0
+
+    for p in products:
+        if mode == "fixed":
+            if fixed_price is None or float(fixed_price) <= 0:
+                continue
+            new_selling = float(fixed_price)
+        else:
+            curr = float(p.makro_selling_price or p.takealot_price or 0.0)
+            mult = float(multiplier) if multiplier is not None else 1.0
+            offset = float(fixed_offset) if fixed_offset is not None else 0.0
+            new_selling = curr * mult + offset
+
+        new_selling = max(1, round(new_selling))
+        new_mrp = max(new_selling, round(new_selling * mrp_ratio))
+
+        p.makro_selling_price = new_selling
+        p.makro_mrp = new_mrp
+        updated_count += 1
+
+    db.commit()
+    return {
+        "updated_count": updated_count,
+        "message": f"成功批量修改 {updated_count} 件商品售价与划线原价"
+    }
