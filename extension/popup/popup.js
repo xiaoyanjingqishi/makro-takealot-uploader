@@ -4,33 +4,142 @@ document.addEventListener("DOMContentLoaded", () => {
   const actionBtn = document.getElementById("action-btn");
   const statCount = document.getElementById("stat-count");
   const statMarkup = document.getElementById("stat-markup");
-
   const autoCollectorBtn = document.getElementById("auto-collector-btn");
+  const openDashboardBtn = document.getElementById("open-dashboard-btn");
 
-  const BACKEND_URL = "http://localhost:8001";
+  const backendUrlInput = document.getElementById("backend-url-input");
+  const saveBackendBtn = document.getElementById("save-backend-btn");
+  const presetLocal = document.getElementById("preset-local");
+  const presetLan = document.getElementById("preset-lan");
+  const presetLan8001 = document.getElementById("preset-lan-8001");
+  const connFeedback = document.getElementById("conn-feedback");
+  const pingIndicator = document.getElementById("ping-indicator");
 
-  // 1. 检查后端连接与拉取基础数据
-  fetch(`${BACKEND_URL}/api/settings`)
-    .then(res => res.json())
-    .then(settings => {
-      backendStatus.innerText = "服务在线";
-      backendStatus.className = "status-badge online";
-      statMarkup.innerText = `+${Math.round((settings.markup_ratio - 1) * 100)}% +R${settings.fixed_markup}`;
+  let detectedLanIp = "192.168.110.145";
+  let currentBackendUrl = "http://localhost:8001";
 
-      // 拉取商品数量
-      return fetch(`${BACKEND_URL}/api/products?page=1&page_size=1`);
-    })
-    .then(res => res ? res.json() : null)
-    .then(pData => {
-      if (pData) statCount.innerText = `${pData.total} 件`;
-    })
-    .catch(() => {
-      backendStatus.innerText = "离线 (请启动后端)";
-      backendStatus.className = "status-badge offline";
-      statCount.innerText = "-";
+  function showFeedback(msg, isSuccess = true) {
+    if (!connFeedback) return;
+    connFeedback.innerText = msg;
+    connFeedback.className = isSuccess ? "conn-feedback success" : "conn-feedback error";
+    setTimeout(() => {
+      if (connFeedback.innerText === msg) {
+        connFeedback.innerText = "";
+      }
+    }, 4000);
+  }
+
+  // 1. 检查指定地址连通性并拉取核心指标
+  function checkConnectionAndRefresh(targetUrl) {
+    if (!targetUrl) targetUrl = currentBackendUrl;
+    targetUrl = targetUrl.replace(/\/+$/, "");
+
+    if (pingIndicator) pingIndicator.innerText = "正在探测...";
+
+    fetch(`${targetUrl}/api/settings`)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(settings => {
+        backendStatus.innerText = "服务在线";
+        backendStatus.className = "status-badge online";
+        if (pingIndicator) pingIndicator.innerText = "✅ 延迟良好";
+        if (statMarkup) {
+          statMarkup.innerText = `+${Math.round(((settings.markup_ratio || 1.35) - 1) * 100)}% +R${settings.fixed_markup || 20}`;
+        }
+        if (openDashboardBtn) {
+          openDashboardBtn.href = targetUrl;
+        }
+
+        // 尝试探测更详细的网络信息
+        fetch(`${targetUrl}/api/settings/network-info`)
+          .then(r => r.ok ? r.json() : null)
+          .then(net => {
+            if (net && net.primary_ip) {
+              detectedLanIp = net.primary_ip;
+              if (presetLan) presetLan.title = `http://${detectedLanIp}`;
+              if (presetLan8001) presetLan8001.title = `http://${detectedLanIp}:8001`;
+            }
+          })
+          .catch(() => {});
+
+        // 拉取商品箱总数
+        return fetch(`${targetUrl}/api/products?page=1&page_size=1`);
+      })
+      .then(res => res ? res.json() : null)
+      .then(pData => {
+        if (pData && statCount) statCount.innerText = `${pData.total} 件`;
+      })
+      .catch((err) => {
+        backendStatus.innerText = "离线 (请检查)";
+        backendStatus.className = "status-badge offline";
+        if (pingIndicator) pingIndicator.innerText = "❌ 无法连通";
+        if (statCount) statCount.innerText = "-";
+      });
+  }
+
+  // 2. 初始化加载存储的后端 URL 配置
+  chrome.storage.local.get(["backend_url"], (res) => {
+    let savedUrl = (res && res.backend_url) ? res.backend_url.trim() : "http://localhost:8001";
+    currentBackendUrl = savedUrl;
+    if (backendUrlInput) backendUrlInput.value = savedUrl;
+    if (openDashboardBtn) openDashboardBtn.href = savedUrl;
+    checkConnectionAndRefresh(savedUrl);
+  });
+
+  // 3. 保存并测试后端地址配置
+  function saveAndApplyUrl(newUrl) {
+    newUrl = (newUrl || "").trim();
+    if (!newUrl) newUrl = "http://localhost:8001";
+    if (!/^https?:\/\//i.test(newUrl)) {
+      newUrl = "http://" + newUrl;
+    }
+    newUrl = newUrl.replace(/\/+$/, "");
+
+    if (backendUrlInput) backendUrlInput.value = newUrl;
+    currentBackendUrl = newUrl;
+
+    chrome.runtime.sendMessage({ action: "SET_BACKEND_CONFIG", backend_url: newUrl }, (resp) => {
+      showFeedback(`已保存中台地址: ${newUrl}`, true);
+      checkConnectionAndRefresh(newUrl);
     });
+  }
 
-  // 2. 获取当前活动标签页
+  if (saveBackendBtn) {
+    saveBackendBtn.onclick = () => {
+      saveAndApplyUrl(backendUrlInput ? backendUrlInput.value : "");
+    };
+  }
+
+  if (backendUrlInput) {
+    backendUrlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        saveAndApplyUrl(backendUrlInput.value);
+      }
+    });
+  }
+
+  // 4. 预设快捷按钮绑定
+  if (presetLocal) {
+    presetLocal.onclick = () => {
+      saveAndApplyUrl("http://localhost:8001");
+    };
+  }
+
+  if (presetLan) {
+    presetLan.onclick = () => {
+      saveAndApplyUrl(`http://${detectedLanIp}`);
+    };
+  }
+
+  if (presetLan8001) {
+    presetLan8001.onclick = () => {
+      saveAndApplyUrl(`http://${detectedLanIp}:8001`);
+    };
+  }
+
+  // 5. 获取当前活动标签页并设置页面快捷操作
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs || tabs.length === 0) return;
     const currentTab = tabs[0];
@@ -59,51 +168,46 @@ document.addEventListener("DOMContentLoaded", () => {
         actionBtn.innerText = "📦 立即采集当前商品";
         actionBtn.disabled = false;
         actionBtn.onclick = () => {
-        actionBtn.innerText = "⏳ 采集处理中...";
-        actionBtn.disabled = true;
+          actionBtn.innerText = "⏳ 采集处理中...";
+          actionBtn.disabled = true;
 
-        // 优先向 content_takealot.js 发送 DO_COLLECT 触发提取
-        chrome.tabs.sendMessage(currentTab.id, { action: "DO_COLLECT" }, (res) => {
-          if (chrome.runtime.lastError || !res) {
-            // 如果 content_script 未响应，尝试直接从 tab.url 解析 PLID 调 background
-            const urlMatch = url.match(/PLID(\d+)/i);
-            if (urlMatch) {
-              const plid = `PLID${urlMatch[1]}`;
-              chrome.runtime.sendMessage({
-                action: "COLLECT_PLID",
-                data: { plid, url }
-              }, (bgRes) => {
-                if (bgRes && bgRes.success) {
-                  actionBtn.innerText = "✅ 采集入库成功！";
-                  fetch(`${BACKEND_URL}/api/products?page=1&page_size=1`)
-                    .then(r => r.json())
-                    .then(p => { if (p) statCount.innerText = `${p.total} 件`; });
-                } else {
-                  actionBtn.innerText = "❌ 采集失败";
-                }
-                setTimeout(() => {
-                  actionBtn.innerText = "📦 立即采集当前商品";
-                  actionBtn.disabled = false;
-                }, 2500);
-              });
-              return;
+          chrome.tabs.sendMessage(currentTab.id, { action: "DO_COLLECT" }, (res) => {
+            if (chrome.runtime.lastError || !res) {
+              const urlMatch = url.match(/PLID(\d+)/i);
+              if (urlMatch) {
+                const plid = `PLID${urlMatch[1]}`;
+                chrome.runtime.sendMessage({
+                  action: "COLLECT_PLID",
+                  data: { plid, url }
+                }, (bgRes) => {
+                  if (bgRes && bgRes.success) {
+                    actionBtn.innerText = "✅ 采集入库成功！";
+                    checkConnectionAndRefresh(currentBackendUrl);
+                  } else {
+                    actionBtn.innerText = "❌ 采集失败";
+                  }
+                  setTimeout(() => {
+                    actionBtn.innerText = "📦 立即采集当前商品";
+                    actionBtn.disabled = false;
+                  }, 2500);
+                });
+                return;
+              }
             }
-          }
 
-          if (res && res.success) {
-            actionBtn.innerText = "✅ 采集入库成功！";
-            fetch(`${BACKEND_URL}/api/products?page=1&page_size=1`)
-              .then(r => r.json())
-              .then(p => { if (p) statCount.innerText = `${p.total} 件`; });
-          } else {
-            actionBtn.innerText = res ? "❌ 采集失败" : "✅ 已发送采集指令";
-          }
-          setTimeout(() => {
-            actionBtn.innerText = "📦 立即采集当前商品";
-            actionBtn.disabled = false;
-          }, 2500);
-        });
-      };
+            if (res && res.success) {
+              actionBtn.innerText = "✅ 采集入库成功！";
+              checkConnectionAndRefresh(currentBackendUrl);
+            } else {
+              actionBtn.innerText = res ? "❌ 采集失败" : "✅ 已发送采集指令";
+            }
+            setTimeout(() => {
+              actionBtn.innerText = "📦 立即采集当前商品";
+              actionBtn.disabled = false;
+            }, 2500);
+          });
+        };
+      }
     } else if (url.includes("seller.makro.co.za")) {
       pageInfo.innerText = "Makro 卖家中心";
       actionBtn.innerText = "🔄 同步 Makro 店铺凭据";

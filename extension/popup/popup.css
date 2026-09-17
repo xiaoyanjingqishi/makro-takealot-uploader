@@ -170,3 +170,91 @@ body {
   border-top: 1px solid #e2e8f0;
   background: white;
 }
+
+/* 服务配置区域样式 */
+.server-settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f8fafc;
+}
+
+.server-input-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.server-input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  outline: none;
+  background: #ffffff;
+  color: #0f172a;
+  font-family: monospace;
+}
+
+.server-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.preset-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.preset-pill {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  cursor: pointer;
+  transition: all 0.1s ease;
+}
+
+.preset-pill:hover {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+
+.save-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: #0f172a;
+  color: white;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.save-btn:hover {
+  background: #1e293b;
+}
+
+.conn-feedback {
+  font-size: 11px;
+  margin-top: 2px;
+  min-height: 16px;
+  line-height: 16px;
+}
+
+.conn-feedback.success {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.conn-feedback.error {
+  color: #dc2626;
+  font-weight: 600;
+}
+

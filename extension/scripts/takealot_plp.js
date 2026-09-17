@@ -295,7 +295,7 @@
             badge.innerHTML = defaultText;
           }, 3000);
         }
-        const errMsg = res ? (res.error || res.message || res.detail) : '采集失败，请确保本地中台服务 (http://localhost:8001) 已启动';
+        const errMsg = res ? (res.error || res.message || res.detail) : '采集失败，请检查中台服务是否已启动或在插件弹窗中确认中台连接地址';
         alert(errMsg);
       }
     });

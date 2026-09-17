@@ -50,6 +50,23 @@
 
         <!-- 状态指示 -->
         <div class="flex items-center space-x-3">
+          <!-- 局域网访问徽章 (支持一键复制与端口展示) -->
+          <div v-if="networkInfo && networkInfo.lan_url" class="relative group">
+            <button 
+              @click="copyLanUrl" 
+              class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 transition-colors shadow-sm cursor-pointer"
+              :title="'点击复制局域网访问地址: ' + networkInfo.lan_url"
+            >
+              <span class="mr-1.5 text-blue-500">🌐</span>
+              <span>局域网: {{ networkInfo.primary_ip }}</span>
+              <span class="ml-1 text-[10px] text-blue-500 font-mono" v-if="networkInfo.proxy_port !== 80">:{{ networkInfo.proxy_port }}</span>
+              <span class="ml-1.5 text-[11px] text-blue-400 group-hover:text-blue-600">📋</span>
+            </button>
+            <div v-if="copiedLan" class="absolute -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-slate-800 text-white text-[10px] rounded shadow-md whitespace-nowrap z-50 animate-bounce">
+              已复制局域网链接！
+            </div>
+          </div>
+
           <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
             <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
             Makro 协议在线
@@ -2565,6 +2582,8 @@
       data() {
         return {
           currentTab: 'products',
+          networkInfo: null,
+          copiedLan: false,
           viewMode: 'grouped', // 'grouped' | 'flat'
           expandedGroups: {},
           previewImageUrl: null,
@@ -2711,8 +2730,33 @@
         this.loadStores();
         this.loadTasks();
         this.checkActiveTasks();
+        this.loadNetworkInfo();
       },
       methods: {
+        async loadNetworkInfo() {
+          try {
+            const res = await fetch('/api/settings/network-info');
+            if (res.ok) {
+              this.networkInfo = await res.json();
+            }
+          } catch (e) {
+            console.warn('获取局域网信息失败:', e);
+          }
+        },
+        copyLanUrl() {
+          if (!this.networkInfo || !this.networkInfo.lan_url) return;
+          const urlToCopy = this.networkInfo.lan_url;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(urlToCopy).then(() => {
+              this.copiedLan = true;
+              setTimeout(() => { this.copiedLan = false; }, 2500);
+            }).catch(() => {
+              prompt('请手动复制局域网访问地址:', urlToCopy);
+            });
+          } else {
+            prompt('请手动复制局域网访问地址:', urlToCopy);
+          }
+        },
         getItemImage(item) {
           if (!item) return this.placeholderImg;
           if (Array.isArray(item.raw_images) && item.raw_images.length > 0 && item.raw_images[0]) return item.raw_images[0];

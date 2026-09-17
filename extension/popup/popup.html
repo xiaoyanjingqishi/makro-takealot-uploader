@@ -37,6 +37,24 @@
         </div>
       </div>
 
+      <!-- 中台服务连接设置 -->
+      <div class="card server-settings-card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>中台服务连接配置</span>
+          <span id="ping-indicator" style="font-size:10px;color:#64748b;">局域网/本机</span>
+        </div>
+        <div class="server-input-group">
+          <input id="backend-url-input" type="text" class="server-input" placeholder="http://192.168.110.145" />
+          <button id="save-backend-btn" class="save-btn" title="保存并测试连接">保存连接</button>
+        </div>
+        <div class="preset-group">
+          <button type="button" id="preset-local" class="preset-pill">本机 :8001</button>
+          <button type="button" id="preset-lan" class="preset-pill">局域网反代 (:80)</button>
+          <button type="button" id="preset-lan-8001" class="preset-pill">局域网 :8001</button>
+        </div>
+        <div id="conn-feedback" class="conn-feedback"></div>
+      </div>
+
       <div class="actions-area">
         <a id="open-dashboard-btn" href="http://localhost:8001" target="_blank" class="btn outline-btn">
           🚀 打开搬品控制台

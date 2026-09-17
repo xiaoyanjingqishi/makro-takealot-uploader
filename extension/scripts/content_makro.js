@@ -114,7 +114,7 @@
             setTimeout(() => { btn.innerText = "🔄 同步登录态至后台"; }, 3000);
           } else {
             btn.innerText = "❌ 失败，点此重试";
-            alert("同步失败: " + (resp ? resp.error : "请确保本地后端已启动运行在 http://localhost:8001"));
+            alert("同步失败: " + (resp ? resp.error : "请检查中台服务是否在线，并在搬品插件弹窗中确认中台连接配置"));
           }
         }
       );

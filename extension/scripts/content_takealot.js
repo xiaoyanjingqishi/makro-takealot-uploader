@@ -201,7 +201,7 @@
         showToast(`✅ 采集成功！已由后端完整入库【${shortTitle}...】(变体: ${varCount}个, 售价: R${p.makro_selling_price || ''})`, true);
       } else {
         if (btn) btn.innerText = defaultText;
-        const err = response ? (response.error || response.message) : "无法连接本地后端服务 (请确保 http://localhost:8001 已启动)";
+        const err = response ? (response.error || response.message) : "无法连接中台服务 (请检查服务是否运行或在插件弹窗中配置服务地址)";
         showToast(`❌ 采集失败: ${err}`, false);
       }
       if (callback) callback(response);
@@ -244,7 +244,7 @@
           <span style="display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:50%;"></span>
           Makro 搬品助手
         </span>
-        <a href="http://localhost:8001" target="_blank" style="color:#2563eb;font-size:12px;text-decoration:none;">打开中台 &rarr;</a>
+        <a id="makro-card-open-dashboard" href="javascript:void(0)" style="color:#2563eb;font-size:12px;text-decoration:none;cursor:pointer;">打开中台 &rarr;</a>
       </div>
       <button id="makro-collect-btn" style="
         background: linear-gradient(135deg, #2563eb, #1d4ed8);
@@ -259,11 +259,20 @@
         align-items: center;
         justify-content: center;
         gap: 8px;
-        transition: transform 0.1s;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+        transition: all 0.2s ease;
       ">
-        <span>📦 一键采集到 Makro</span>
+        📦 极速采集本商品入库
       </button>
     `;
+
+    const dashLink = card.querySelector("#makro-card-open-dashboard");
+    if (dashLink) {
+      dashLink.onclick = (e) => {
+        e.preventDefault();
+        chrome.runtime.sendMessage({ action: "OPEN_DASHBOARD" });
+      };
+    }
 
     document.body.appendChild(card);
 

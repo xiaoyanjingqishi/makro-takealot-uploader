@@ -17,8 +17,8 @@
   "host_permissions": [
     "https://*.takealot.com/*",
     "https://seller.makro.co.za/*",
-    "http://127.0.0.1:*/*",
-    "http://localhost:*/*"
+    "http://*/*",
+    "https://*/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

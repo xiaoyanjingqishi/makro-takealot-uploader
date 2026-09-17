@@ -68,3 +68,23 @@ def save_settings(req: SystemSettingsSchema, db: Session = Depends(get_db)):
         db=db
     )
     return {"message": "配置更新成功"}
+
+@router.get("/network-info", summary="获取宿主机局域网访问地址与网络配置")
+def get_network_config():
+    from ..services.lan_proxy import get_network_info
+    info = get_network_info()
+    primary_ip = info.get("primary_ip", "127.0.0.1")
+    proxy_port = info.get("proxy_port", 80)
+    backend_port = info.get("backend_port", 8001)
+
+    lan_url = f"http://{primary_ip}" if proxy_port == 80 else f"http://{primary_ip}:{proxy_port}"
+    lan_direct_url = f"http://{primary_ip}:{backend_port}"
+    localhost_url = f"http://localhost:{backend_port}"
+
+    return {
+        **info,
+        "lan_url": lan_url,
+        "lan_direct_url": lan_direct_url,
+        "localhost_url": localhost_url
+    }
+
