@@ -294,8 +294,10 @@
           setTimeout(() => {
             badge.innerHTML = defaultText;
           }, 3000);
+        let errMsg = res ? (res.error || res.message || res.detail) : '采集失败，请检查中台服务是否已启动或在插件弹窗中确认中台连接地址';
+        if (typeof errMsg === "string" && errMsg.includes("Failed to fetch")) {
+          errMsg = "无法连接中台服务 (若在局域网电脑，请点击右上角插件图标配置服务器 IP 如 http://192.168.110.145:8001)";
         }
-        const errMsg = res ? (res.error || res.message || res.detail) : '采集失败，请检查中台服务是否已启动或在插件弹窗中确认中台连接地址';
         alert(errMsg);
       }
     });

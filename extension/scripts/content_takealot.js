@@ -7,17 +7,23 @@
 
   // 判断是否为详情页
   const isDetailPage = () => {
-    return /PLID\d+/i.test(window.location.href) || 
+    return /(?:PLID|TSIN)\d+/i.test(window.location.href) || 
            (document.querySelector("h1") !== null && (document.querySelector("[class*='buybox']") || document.querySelector("[class*='price']")));
   };
 
-  // 从当前页面多重维度精准提取 PLID
+  // 从当前页面多重维度精准提取 PLID / TSIN
   function extractPlid() {
     // 1. 从 URL 路径、搜索参数或哈希中提取
-    const urlMatch = window.location.pathname.match(/PLID(\d+)/i) || 
-                     window.location.href.match(/PLID(\d+)/i) ||
-                     window.location.search.match(/PLID(\d+)/i);
-    if (urlMatch) return `PLID${urlMatch[1]}`;
+    const urlMatch = window.location.pathname.match(/(PLID|TSIN)(\d+)/i) || 
+                     window.location.href.match(/(PLID|TSIN)(\d+)/i) ||
+                     window.location.search.match(/[?&](?:plid|tsin)=(\d+)/i);
+    if (urlMatch) {
+      if (urlMatch[2]) {
+        return `${urlMatch[1].toUpperCase()}${urlMatch[2]}`;
+      } else {
+        return `PLID${urlMatch[1]}`;
+      }
+    }
 
     // 2. 从页面 Canonical 标签提取
     const canonical = document.querySelector("link[rel='canonical']");
@@ -201,7 +207,10 @@
         showToast(`✅ 采集成功！已由后端完整入库【${shortTitle}...】(变体: ${varCount}个, 售价: R${p.makro_selling_price || ''})`, true);
       } else {
         if (btn) btn.innerText = defaultText;
-        const err = response ? (response.error || response.message) : "无法连接中台服务 (请检查服务是否运行或在插件弹窗中配置服务地址)";
+        let err = response ? (response.error || response.message) : "无法连接中台服务";
+        if (typeof err === "string" && err.includes("Failed to fetch")) {
+          err = "无法连接中台服务 (若在局域网电脑，请点击右上角插件图标配置服务器 IP 如 http://192.168.110.145:8001)";
+        }
         showToast(`❌ 采集失败: ${err}`, false);
       }
       if (callback) callback(response);

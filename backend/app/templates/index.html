@@ -9,15 +9,37 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
     body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     [v-cloak] { display: none; }
+    
+    /* 精致极简细滚动条 */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 9999px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
-  <div id="app" v-cloak class="flex flex-col min-h-screen">
+<body class="bg-slate-50 text-slate-800 antialiased h-screen overflow-hidden">
+  <div id="app" v-cloak class="flex flex-col h-screen overflow-hidden bg-slate-50">
     
-    <!-- 顶部导航栏 -->
-    <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+    <!-- 顶部导航栏 (全局固定置顶) -->
+    <header class="bg-white border-b border-slate-200 shrink-0 z-40 shadow-xs">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <div class="flex items-center space-x-3">
           <div class="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-xl shadow-md shadow-blue-500/30">
@@ -76,11 +98,11 @@
       </div>
     </header>
 
-    <!-- 主界面区域 -->
-    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+    <!-- 主界面区域 (填满视口垂直空间，禁止外层滚动) -->
+    <main class="flex-1 min-h-0 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-2.5 pb-2.5 flex flex-col overflow-hidden">
 
       <!-- ================= 全局置顶后台异步任务进度条列表 (支持多任务并行独立展示互不顶掉) ================= -->
-      <div v-if="activeBgTasks.length > 0" class="mb-5 space-y-3">
+      <div v-if="activeBgTasks.length > 0" class="shrink-0 mb-2.5 space-y-2">
         <div 
           v-for="task in activeBgTasks" 
           :key="task.id"
@@ -194,8 +216,10 @@
       </div>
 
       <!-- ================= Tab 1: 选品箱 ================= -->
-      <div v-if="currentTab === 'products'" class="space-y-3">
-        <!-- 流程状态分页栏 (Tab 标签分页式无缝切换) -->
+      <div v-if="currentTab === 'products'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <!-- 顶部固定控制区 (状态标签栏 + 筛选过滤批量操作栏 + 母体聚合全选折叠控制栏) -->
+        <div class="shrink-0 space-y-2 pb-2">
+          <!-- 流程状态分页栏 (Tab 标签分页式无缝切换) -->
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-1.5 flex items-center justify-between flex-wrap gap-2">
           <div class="flex items-center space-x-1 flex-wrap gap-y-1">
             <button 
@@ -470,39 +494,42 @@
           </div>
         </div>
 
-        <!-- ================= 视图 A: 母体聚合视图 ================= -->
-        <div v-if="viewMode === 'grouped'" class="space-y-4">
-          <!-- 母体聚合顶部全选与全局折叠控制条 -->
-          <div v-if="!loadingProducts && groupedProducts.length > 0" class="flex items-center justify-between bg-white px-4 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-700 shadow-xs">
-            <div class="flex items-center space-x-3">
-              <label class="flex items-center space-x-2 cursor-pointer font-semibold select-none">
-                <input 
-                  type="checkbox" 
-                  :checked="isAllSelected" 
-                  @change="toggleSelectAll" 
-                  class="rounded text-blue-600 cursor-pointer h-4 w-4"
-                />
-                <span>全选当前页全部母体与变体 (已选 {{ selectedIds.length }} / {{ products.items ? products.items.length : 0 }} 件)</span>
-              </label>
-              <span class="text-slate-300">|</span>
-              <span class="text-slate-500 text-[11px]">共 {{ groupedProducts.length }} 个母体商品 (聚合 {{ products.items ? products.items.length : 0 }} 个独立变体)</span>
-            </div>
-            <div class="flex items-center space-x-2">
-              <button 
-                @click="expandAllGroups(true)" 
-                class="px-2.5 py-1 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 font-medium transition"
-              >
-                全部展开 ▼
-              </button>
-              <button 
-                @click="expandAllGroups(false)" 
-                class="px-2.5 py-1 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 font-medium transition"
-              >
-                全部收起 ▲
-              </button>
-            </div>
+        <!-- 母体聚合顶部全选与全局折叠控制条 (在母体视图下常驻固定在工具栏下方) -->
+        <div v-if="viewMode === 'grouped' && !loadingProducts && groupedProducts.length > 0" class="flex items-center justify-between bg-white px-4 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-700 shadow-xs">
+          <div class="flex items-center space-x-3">
+            <label class="flex items-center space-x-2 cursor-pointer font-semibold select-none">
+              <input 
+                type="checkbox" 
+                :checked="isAllSelected" 
+                @change="toggleSelectAll" 
+                class="rounded text-blue-600 cursor-pointer h-4 w-4"
+              />
+              <span>全选当前页全部母体与变体 (已选 {{ selectedIds.length }} / {{ products.items ? products.items.length : 0 }} 件)</span>
+            </label>
+            <span class="text-slate-300">|</span>
+            <span class="text-slate-500 text-[11px]">共 {{ groupedProducts.length }} 个母体商品 (聚合 {{ products.items ? products.items.length : 0 }} 个独立变体)</span>
           </div>
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="expandAllGroups(true)" 
+              class="px-2.5 py-1 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 font-medium transition cursor-pointer"
+            >
+              全部展开 ▼
+            </button>
+            <button 
+              @click="expandAllGroups(false)" 
+              class="px-2.5 py-1 text-[11px] bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-600 font-medium transition cursor-pointer"
+            >
+              全部收起 ▲
+            </button>
+          </div>
+        </div>
+      </div>
 
+      <!-- 中间独立滚动商品展示区 (母体卡片 / 平铺表格，仅商品列表滚动) -->
+      <div class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-3 custom-scrollbar">
+        <!-- ================= 视图 A: 母体聚合视图 ================= -->
+        <div v-if="viewMode === 'grouped'" class="space-y-3">
           <div v-if="loadingProducts" class="text-center py-12 bg-white rounded-xl border border-slate-200 text-slate-400">
             ⏳ 正在加载商品数据...
           </div>
@@ -683,9 +710,9 @@
         </div>
 
         <!-- ================= 视图 B: 变体平铺表格 ================= -->
-        <div v-show="viewMode === 'flat'" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div v-show="viewMode === 'flat'" class="bg-white rounded-xl border border-slate-200 shadow-sm">
           <table class="w-full text-left border-collapse text-xs">
-            <thead>
+            <thead class="sticky top-0 z-10 bg-slate-50 shadow-xs">
               <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-medium">
                 <th class="py-3 px-4 w-10">
                   <input type="checkbox" @change="toggleSelectAll" :checked="isAllSelected" class="rounded text-blue-600 cursor-pointer">
@@ -882,11 +909,13 @@
               </tr>
             </tbody>
           </table>
-
         </div>
+      </div>
 
+      <!-- 底部固定分页控制栏 (常驻视口底部，永不滚动遮挡) -->
+      <div class="shrink-0 pt-2 pb-0.5">
         <!-- 全局统一分页导航条 (母体聚合与变体平铺通用) -->
-        <div class="px-4 py-3 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+        <div class="px-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
           <div class="flex items-center space-x-2">
             <span>共 <strong class="text-slate-900 font-bold">{{ products.total || 0 }}</strong> 件变体商品</span>
             <span v-if="viewMode === 'grouped'" class="text-slate-500 font-medium">
@@ -928,9 +957,10 @@
           </div>
         </div>
       </div>
+    </div>
 
       <!-- ================= Tab 2: 审品比对与编辑 ================= -->
-      <div v-if="currentTab === 'inspector' && activeItem" class="space-y-4">
+      <div v-if="currentTab === 'inspector' && activeItem" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
         <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div class="flex items-center space-x-3">
             <button @click="currentTab = 'products'" class="text-xs text-slate-500 hover:text-slate-800 flex items-center space-x-1">
@@ -1388,7 +1418,7 @@
       </div>
 
       <!-- ================= Tab: 多店铺协同管理 ================= -->
-      <div v-if="currentTab === 'stores'" class="space-y-4">
+      <div v-if="currentTab === 'stores'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
         <!-- 头部标题与统计 -->
         <div class="flex items-center justify-between bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex-wrap gap-3">
           <div>
@@ -1523,7 +1553,7 @@
       </div>
 
       <!-- ================= Tab 3: 系统操作与任务日志 ================= -->
-      <div v-if="currentTab === 'tasks'" class="space-y-4">
+      <div v-if="currentTab === 'tasks'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
         <!-- 头部标题与统计 -->
         <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex-wrap gap-3">
           <div>
@@ -1680,7 +1710,7 @@
       </div>
 
       <!-- ================= Tab 4: 系统设置 ================= -->
-      <div v-if="currentTab === 'settings'" class="max-w-3xl space-y-6">
+      <div v-if="currentTab === 'settings'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 max-w-3xl space-y-6 custom-scrollbar">
         <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
           <h2 class="text-base font-bold text-slate-900 border-b pb-3">⚙️ 系统与自动化配置</h2>
 
@@ -1940,14 +1970,14 @@
 
           <div class="p-6 space-y-4">
             <p class="text-xs text-slate-500">
-              输入 Takealot 商品的 <strong>PLID</strong>（如 <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">PLID102204256</code>）或 <strong>商品详情页链接</strong>，系统将直接调用 Takealot 官方 API 毫秒级提取高清原图、完整规格与多变体独立图组：
+              输入 Takealot 商品的 <strong>PLID</strong>、<strong>TSIN</strong>（如 <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">PLID102204256</code> 或 <code class="bg-slate-100 px-1 py-0.5 rounded text-blue-600">103776345</code>）或 <strong>商品详情页链接</strong>，系统将直接调用 Takealot 官方 API 双模毫秒级提取全量规格与图组：
             </p>
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">Takealot PLID 或商品网址</label>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Takealot PLID / TSIN 编号或商品网址</label>
               <input 
                 v-model="quickCollectInput" 
                 type="text" 
-                placeholder="例如: PLID102204256 或 https://www.takealot.com/.../PLID93300750" 
+                placeholder="例如: PLID102204256 或 103776345 或商品网址" 
                 class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 @keyup.enter="submitQuickCollect"
               />
@@ -1956,7 +1986,7 @@
                 <div class="flex items-center space-x-1.5 font-semibold">
                   <span>{{ parsedPlidInfo.label }}</span>
                 </div>
-                <span class="px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded font-mono text-[10px] font-bold">与插件一致</span>
+                <span class="px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded font-mono text-[10px] font-bold">智能双模就绪</span>
               </div>
               <div v-else-if="parsedPlidInfo.status === 'invalid'" class="mt-2 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700">
                 {{ parsedPlidInfo.label }}
@@ -1965,13 +1995,13 @@
             <div class="p-3 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 flex items-start space-x-2">
               <span class="text-sm">💡</span>
               <div>
-                <strong>官方 API 优势</strong>：接口与浏览器插件完全统一。单品严格 1 个主变体；多变体自动为每个颜色/尺码匹配独立的专属图组。
+                <strong>官方 API 优势</strong>：支持纯数字自动双模容灾。若按母商品编号 (PLID) 未命中，系统将自动回退尝试变体/单品编号 (TSIN) 全量下钻。
               </div>
             </div>
             <div class="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-800 flex items-start space-x-2">
               <span class="text-sm">⚠️</span>
               <div>
-                <strong>提示</strong>：PLID 通常为以 PLID 开头的 8~9 位编号。若返回 404 错误，说明该商品在 Takealot 已下架或编号有误。更推荐在 Chrome 打开商品页使用插件一键采集。
+                <strong>提示</strong>：编号通常为 8~9 位数字。若依然返回 404 错误，说明该商品在 Takealot 已下架或编号有误。您也可以直接在 Chrome 打开商品页使用插件一键采集。
               </div>
             </div>
           </div>
@@ -2755,19 +2785,32 @@
               status: 'valid',
               plid: plid,
               url: isUrl ? raw : `https://www.takealot.com/x/${plid}`,
-              label: isUrl ? `🔗 已识别 Takealot 网址 -> ${plid}` : `🎯 已识别有效商品编号: ${plid}`
+              label: isUrl ? `🔗 已识别 Takealot 网址 -> ${plid}` : `🎯 已识别 PLID 商品编号: ${plid}`
             };
           }
 
-          // 2. 匹配纯数字 (7~10位数字)
-          let numMatch = raw.match(/^\d{7,10}$/);
-          if (numMatch) {
-            const plid = `PLID${numMatch[0]}`;
+          // 1.5 匹配带 TSIN 的特征 (URL query 或 纯 TSIN 字符串)
+          let tsinM = raw.match(/TSIN(\d+)/i) || raw.match(/[?&]tsin=(\d+)/i);
+          if (tsinM) {
+            const tsin = `TSIN${tsinM[1]}`;
+            const isUrl = /^https?:\/\//i.test(raw);
             return {
               status: 'valid',
-              plid: plid,
-              url: `https://www.takealot.com/x/${plid}`,
-              label: `🎯 已识别纯数字编号 -> ${plid}`
+              plid: tsin,
+              url: isUrl ? raw : `https://www.takealot.com/x/${tsin}`,
+              label: isUrl ? `🔗 已从网址参数识别 TSIN -> ${tsin}` : `🎯 已识别 TSIN 变体编号: ${tsin}`
+            };
+          }
+
+          // 2. 匹配纯数字 (7~10位数字，支持后端智能自动匹配 PLID 与 TSIN)
+          let numMatch = raw.match(/^\d{7,10}$/);
+          if (numMatch) {
+            const num = numMatch[0];
+            return {
+              status: 'valid',
+              plid: num,
+              url: `https://www.takealot.com/x/PLID${num}`,
+              label: `🎯 已识别纯数字编号 (自动兼容 PLID/TSIN) -> ${num}`
             };
           }
 
@@ -2788,7 +2831,7 @@
             status: 'invalid',
             plid: null,
             url: null,
-            label: '⚠️ 尚未识别到有效 PLID（支持粘贴 Takealot 商品链接、PLID 编号或纯数字）'
+            label: '⚠️ 尚未识别到有效编号（支持粘贴 Takealot 商品链接、PLID、TSIN 或 7-10位纯数字编号）'
           };
         }
       },

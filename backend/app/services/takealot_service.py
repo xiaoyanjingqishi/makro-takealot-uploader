@@ -147,9 +147,13 @@ class TakealotService:
         from ..schemas.product import VariantCreate
 
         plid_str = str(plid_or_url).strip()
+        is_explicit_tsin = bool(re.search(r'TSIN(\d+)|[?&]tsin=(\d+)', plid_str, re.IGNORECASE))
+
         m = re.search(r'PLID(\d+)', plid_str, re.IGNORECASE)
         if not m:
-            m = re.search(r'[?&]plid=(\d+)', plid_str, re.IGNORECASE)
+            m = re.search(r'TSIN(\d+)', plid_str, re.IGNORECASE)
+        if not m:
+            m = re.search(r'[?&](?:plid|tsin)=(\d+)', plid_str, re.IGNORECASE)
         if not m:
             m = re.search(r'takealot\.com.*?/(\d{7,10})', plid_str, re.IGNORECASE)
         if not m:
@@ -158,10 +162,10 @@ class TakealotService:
             m = re.search(r'(\d+)', plid_str)
         if not m:
             raise ValueError(f"无法识别有效的商品编号或网址: {plid_or_url}")
-        plid = m.group(1)
+        target_id = m.group(1)
 
         resolved_url = custom_url if (custom_url and custom_url.startswith("http")) else (
-            plid_str if plid_str.startswith("http") else f"https://www.takealot.com/x/PLID{plid}"
+            plid_str if plid_str.startswith("http") else f"https://www.takealot.com/x/PLID{target_id}"
         )
 
         session = requests.Session()
@@ -177,12 +181,26 @@ class TakealotService:
             'Accept': 'application/json'
         }
 
-        # 依次尝试主流接口版本与 desktop 平台标记
-        api_endpoints = [
-            f"https://api.takealot.com/rest/v-1-19-0/product-details/PLID{plid}?platform=desktop",
-            f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}?platform=desktop",
-            f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{plid}"
-        ]
+        # 智能双模接口端点支持 (PLID 与 TSIN 互为容灾与回退)
+        # 1. Takealot 的商品既有母商品编号 (PLID)，也有变体/单品唯一编号 (TSIN, 类似 ASIN)
+        # 2. 如果输入显式指明 TSIN 或在 PLID 下 404，自动无缝尝试 TSIN 模式拉取全量数据
+        if is_explicit_tsin:
+            api_endpoints = [
+                f"https://api.takealot.com/rest/v-1-19-0/product-details/TSIN{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/TSIN{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/TSIN{target_id}",
+                f"https://api.takealot.com/rest/v-1-19-0/product-details/PLID{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{target_id}?platform=desktop",
+            ]
+        else:
+            api_endpoints = [
+                f"https://api.takealot.com/rest/v-1-19-0/product-details/PLID{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/PLID{target_id}",
+                f"https://api.takealot.com/rest/v-1-19-0/product-details/TSIN{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/TSIN{target_id}?platform=desktop",
+                f"https://api.takealot.com/rest/v-1-11-0/product-details/TSIN{target_id}",
+            ]
 
         resp = None
         last_err = None
@@ -193,7 +211,6 @@ class TakealotService:
                     resp = r
                     break
                 elif r.status_code == 404:
-                    resp = r
                     last_err = "404"
                 else:
                     last_err = f"HTTP {r.status_code}"
@@ -201,11 +218,11 @@ class TakealotService:
                 last_err = str(e)
 
         if resp is None or resp.status_code != 200:
-            if resp is not None and resp.status_code == 404:
+            if last_err == "404":
                 raise ValueError(
                     f"Takealot 官方未找到该商品 (HTTP 404: 资源不存在)。\n"
-                    f"目标编号【PLID{plid}】在平台不存在或已被下架删除。\n"
-                    f"请核对输入的 PLID 或商品网址，或在 Takealot 网站上确认该商品是否仍在线售卖。\n"
+                    f"目标编号【{target_id}】（已自动尝试 PLID 与 TSIN 双模匹配）在平台不存在或已被下架删除。\n"
+                    f"请核对输入的编号或商品网址，或在 Takealot 网站上确认该商品是否仍在线售卖。\n"
                     f"(建议：在 Chrome 浏览器中打开该商品页面，点击页面右下角的一键采集或插件面板采集，可防止手输错误)"
                 )
             raise ValueError(f"Takealot 官方 API 请求失败 ({last_err})")
@@ -213,7 +230,7 @@ class TakealotService:
         data = resp.json()
 
         # 核心基础信息
-        title = data.get('title') or (data.get('core') or {}).get('title') or f"Takealot Product {plid}"
+        title = data.get('title') or (data.get('core') or {}).get('title') or f"Takealot Product {target_id}"
         brand = (data.get('brand') or {}).get('name') or "Generic"
         
         # 价格
@@ -470,9 +487,15 @@ class TakealotService:
                     images=var_images
                 ))
 
+        # 从官方响应中提取权威母商品 PLID
+        buybox = data.get('buybox') or {}
+        real_plid_num = buybox.get('plid') or (data.get('core') or {}).get('id')
+        canonical_plid = str(real_plid_num) if real_plid_num else target_id
+        canonical_url = data.get('desktop_href') or resolved_url or f"https://www.takealot.com/x/PLID{canonical_plid}"
+
         return TakealotCollectRequest(
-            takealot_id=f"PLID{plid}",
-            takealot_url=resolved_url,
+            takealot_id=f"PLID{canonical_plid}",
+            takealot_url=canonical_url,
             takealot_title=title,
             takealot_price=price,
             takealot_brand=brand,
