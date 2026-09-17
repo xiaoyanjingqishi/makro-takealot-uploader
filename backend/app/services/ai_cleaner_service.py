@@ -70,89 +70,133 @@ class AICleanerService:
         else:
             return self._fallback_rule_clean(takealot_product, target_brand)
 
+    def _decide_vertical_with_llm(
+        self,
+        raw_title: str,
+        category: str,
+        specs: Any,
+        description: str,
+        candidate_verticals: list
+    ) -> str:
+        """阶段 1: 极速分类决策 —— 让大模型从候选集精准裁定 1 个 Makro 官方类目"""
+        from .vertical_service import VerticalService
+
+        candidates_str = ", ".join(f'"{c}"' for c in candidate_verticals)
+        prompt = f"""You are a professional e-commerce category taxonomy expert for Makro (Flipkart/Walmart SaaS).
+Select the SINGLE best matching Makro official vertical code from this candidate list:
+[{candidates_str}]
+
+Product Data:
+Title: {raw_title}
+Category: {category}
+Specs: {json.dumps(specs, ensure_ascii=False) if isinstance(specs, (dict, list)) else str(specs)}
+Description: {description[:300]}
+
+Reply ONLY with a JSON object:
+{{"vertical": "<exact_code_from_candidate_list>"}}"""
+
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a professional category classifier. Reply ONLY with valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=80
+            )
+            content = resp.choices[0].message.content
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            data = json.loads(json_match.group()) if json_match else json.loads(content)
+            chosen = str(data.get("vertical", "")).strip().lower().replace("-", "_").replace(" ", "_")
+            valid_v, _ = VerticalService.resolve_vertical(chosen)
+            if valid_v in candidate_verticals or valid_v != "bath_towel":
+                return valid_v
+        except Exception as e:
+            logger.warning(f"阶段 1 AI 类目定标异常: {e}")
+
+        return VerticalService.predict_vertical(title=raw_title, category=category, specs=specs, description=description)
+
     def _clean_with_llm(self, product: Dict[str, Any], target_brand: str) -> Dict[str, Any]:
-        """通过大语言模型进行全品类自适应的信息抽取与改写"""
+        """两阶段流水线：阶段1定标官方类目 -> 阶段2注入官方元数据Schema精准抽取属性与重写标题"""
         raw_title = product.get('takealot_title', '')
         category = product.get('takealot_category', '')
         specs = product.get('takealot_specs', {})
         description = product.get('takealot_description', '')
+        preset_vertical = product.get('makro_vertical')
 
-        # 动态获取 Makro 官方支持的垂直类目候选集
         from .vertical_service import VerticalService
-        candidate_verticals = VerticalService.get_candidate_verticals(
-            title=raw_title,
-            category=category,
-            specs=specs,
-            description=description
-        )
-        candidates_str = ", ".join(f'"{c}"' for c in candidate_verticals)
+
+        # ★★★ 阶段 1: 确定唯一的 Makro 官方类目代码 ★★★
+        if preset_vertical and preset_vertical != "bath_towel":
+            valid_v, _ = VerticalService.resolve_vertical(preset_vertical)
+            chosen_vertical = valid_v
+        else:
+            candidate_verticals = VerticalService.get_candidate_verticals(
+                title=raw_title,
+                category=category,
+                specs=specs,
+                description=description
+            )
+            chosen_vertical = self._decide_vertical_with_llm(
+                raw_title=raw_title,
+                category=category,
+                specs=specs,
+                description=description,
+                candidate_verticals=candidate_verticals
+            )
+
+        # ★★★ 阶段 2: 注入该类目的官方元数据 Schema 规范并深度清洗 ★★★
+        schema_summary = VerticalService.get_vertical_schema_summary(chosen_vertical)
+        guidelines_text = schema_summary.get("guidelines_text", "")
 
         prompt = f"""
 你是一名资深的跨境电商商品刊登专家，精通南非电商平台 Takealot 与 Makro (基于沃尔玛/Flipkart 规范) 的数据对齐。
-请将下面来自 Takealot 的原始商品数据，智能识别其真实品类，并清洗转换为符合 Makro 卖家平台要求的规范 JSON 格式。
+请将下面来自 Takealot 的原始商品数据，转换为符合 Makro 卖家平台要求的规范 JSON 格式。
 
-【品牌规范】:
-- 必须使用指定的授权品牌: "{target_brand}"，无论原品牌是什么，强制替换为 "{target_brand}"。
+【基本参数规范】:
+- 授权品牌: 必须强制使用指定的授权品牌 "{target_brand}"，所有原品牌一律替换为 "{target_brand}"。
+- 目标官方类目 (Vertical): "{chosen_vertical}"。
 
-【Makro 官方类目 (Vertical) 强制选择规范 - 极其重要】:
-平台强制要求：字段 "vertical" 必须且只能从以下 Makro 官方支持的候选类目列表中挑选最贴切的 1 个英文小写代码：
-[官方候选 Vertical 列表]:
-{candidates_str}
+【Makro 官方类目 [{chosen_vertical}] 规格提取与字段规范 (极重要 - 严格遵守)】:
+{guidelines_text if guidelines_text else "请根据商品真实规格提取标准属性 (model_name, brand_colour, material, pack_of 等)。"}
 
-★★★ 核心品类官方映射铁律（严禁自行发明或杜撰列表之外的任何词汇）：
-1. 内衣 / 文胸 / 塑身衣 / 睡衣 / 泳装 / 服装 / 穿戴类 必须选择: "costume_wear" (严禁使用 brassiere, bra, underwear 等非标准词！)
-2. 眼镜 / 太阳镜 / 墨镜 / 防蓝光眼镜 / 护目镜 必须选择: "protective_glasses" (严禁使用 glasses, sunglasses 等！)
-3. 园艺剪 / 修枝剪 / 高枝剪 / 园艺工具 必须选择: "garden_tools" 或 "pruner" (严禁使用 gardening_tool 等！)
-4. 钳子 / 压线钳 / 剥线钳 / 五金手工具 必须选择: "plier" (严禁使用 crimping_tool, hand_tool 等！)
-5. 手机壳 / 平板壳 / 保护套 必须选择: "cases_covers" (严禁使用 phone_case 等！)
-6. 皂液器 / 洗手液机 / 液体分装泵 必须选择: "liquid_dispenser"
-7. 水杯 / 运动水壶 / 保温杯 必须选择: "water_bottle"
-8. 钱包 / 卡包 / 皮夹 必须选择: "card_holder"
-9. 数据线 / 充电线 必须选择: "data_cable"
-10. 充电器 / 充电头 / 电源适配器 必须选择: "battery_charger"
-11. 智能插座 / 定时器开关 必须选择: "smart_switch_plug"
-12. U盘 / 闪存盘 必须选择: "usb_flash_drive"
-13. 双肩背包 / 旅行包 必须选择: "backpack"
-14. 毛巾 / 浴巾 (仅限真实毛巾浴巾) 必须选择: "bath_towel"
-15. 床单 / 被套 / 四件套 必须选择: "bedsheet"
+★★★ 核心属性类型铁律 (违者平台直接报错拦截)：
+1. DECIMAL / NUMBER 类型属性（例如尺寸 size、件数 pack_of、重量等）：
+   - 必须提取纯数字（如 10、28、1.5）！
+   - 严禁填入任何中文字符（严禁出现“均码”或“多色”等伪词汇）！
+   - 若原商品未指定数值，请根据商品标题/规格智能推算，或回退官方示例数字！
+2. 具有可选单位 (qualifier) 的属性：
+   - 必须从上述允许的单位列表中匹配（如 size 单位必须是 inch/cm/m，长宽高为 cm，存储为 GB/TB 等）！
+3. 枚举字段 (allowedValues)：
+   - 必须从官方候选枚举列表中选择最匹配的 1 项！
+4. 布尔字段 (BOOLEAN)：
+   - 必须且只能输出 "Yes" 或 "No"！
+5. model_number 与 model_name：
+   - 严禁包含品牌名 "{target_brand}" (平台规则: Brand name should not be part of the attribute value)！
 
-【标题 (Title) 重写与品牌侵权防范要求】:
-- 必须以品牌 "{target_brand}" 开头；
-- 严禁包含 Takealot 专有促销词 (如 Deals, Sale, Warranty 等)；
-- ★★★【品牌配件防侵权铁律】:
-  如果商品是适配知名品牌 (如 Apple, iPhone, Samsung, Dyson, Sony, Huawei, GoPro, Nintendo 等) 的配件 (如手机壳/表带/充电线/滤芯/支架等)：
-  - 严禁直接写 "{target_brand} Apple iPhone Case" (此写法会被 Makro 判定为官方冒充侵权)；
-  - 必须强制采用第三方兼容声明格式：
-    "{target_brand} Third-Party [Item Type] Compatible with [Target Brand] [Device Model]"
-    或 "{target_brand} Replacement [Item Type] Suitable for [Target Brand] [Device Model]"；
-- 【Makro Model Number 参数规则】:
-  Makro 平台官方要求：model_number 与 model_name 绝不能包含品牌名（严禁含有 "{target_brand}"，否则会被平台报错拦截：Brand name should not be part of the attribute value）！
-  因此 attributes 中的 "model_number" 字段请填入去除品牌名后的规范商品型号/英文描述 (如 "Third-Party USB Flash Drive Compatible with Apple iPhone and USB-C Devices 1TB")！
+【标题 (Title) 重写与品牌配件防侵权要求】:
+- 标题必须以品牌 "{target_brand}" 开头；
+- 严禁包含 Takealot 促销词 (如 Deals, Sale, Warranty 等)；
+- 若为知名品牌配件（如 Apple/iPhone 保护套等），标题必须采用第三方兼容声明格式：
+  "{target_brand} Third-Party [Item] Compatible with [Device]"；
 
 【Takealot 原始商品数据】:
 原标题: {raw_title}
 原品牌: {product.get('takealot_brand')}
-原类目路径: {category}
-规格参数: {json.dumps(specs, ensure_ascii=False)}
+原类目: {category}
+规格参数: {json.dumps(specs, ensure_ascii=False) if isinstance(specs, (dict, list)) else str(specs)}
 原描述: {description[:1000]}
 
 【输出要求】:
 必须且仅返回纯 JSON 对象，格式如下：
 {{
-  "vertical": "必须严格从上方候选列表中挑选的最准确官方类目(如 costume_wear 或 plier 或 protective_glasses)",
+  "vertical": "{chosen_vertical}",
   "brand": "{target_brand}",
   "makro_title": "{target_brand} 规范英文商品标题",
   "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
   "attributes": {{
-    "model_name": "简明型号(绝不包含品牌名)",
-    "model_number": "去除品牌名后的规范英文名称/型号(绝不能带品牌名)",
-    "brand_colour": "颜色",
-    "colour": "标准色(如 Yellow, Black, Blue 等)",
-    "material": "材质(如 Steel, Plastic, Microfiber 等)",
-    "packaging_type": "Pack",
-    "sales_package": "包装清单",
-    "ideal_for": "适用对象",
-    "design": "no"
+    // 必须包含上述类目规范中声明的必填项与推荐项
   }}
 }}
 """
@@ -177,21 +221,7 @@ class AICleanerService:
         elif not isinstance(desc, str):
             data["description"] = str(desc)
 
-        # 严格校验与规范化 vertical 属性，确保 100% 存在于 Makro 官方类目
-        raw_v = str(data.get("vertical", "")).strip().lower().replace("-", "_").replace(" ", "_")
-        all_valid_verticals = VerticalService._load_verticals()
-        if raw_v in all_valid_verticals and all_valid_verticals[raw_v]:
-            data["vertical"] = raw_v
-        else:
-            resolved_v, _ = VerticalService.resolve_vertical(raw_v)
-            if resolved_v == "bath_towel" and "towel" not in raw_title.lower():
-                resolved_v = VerticalService.predict_vertical(
-                    title=raw_title,
-                    category=category,
-                    specs=specs,
-                    description=description
-                )
-            data["vertical"] = resolved_v
+        data["vertical"] = chosen_vertical
 
         # 代码保底：确保 Model Number 包含完整标题，并在配件命中知名品牌时兜底添加第三方兼容声明
         makro_title = data.get("makro_title") or raw_title
@@ -220,6 +250,18 @@ class AICleanerService:
             clean_mname = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', str(attrs["model_name"]), flags=re.I)
             clean_mname = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mname, flags=re.I).strip(' -_,:;')
             attrs["model_name"] = clean_mname[:40] if clean_mname else "Standard"
+
+        # 提取 clean size, colour, pack_of 供商品主字段更新
+        if "size" in attrs:
+            clean_s = str(attrs["size"]).strip()
+            if clean_s and clean_s != "均码":
+                data["size"] = clean_s
+        if "colour" in attrs or "brand_colour" in attrs:
+            c = attrs.get("colour") or attrs.get("brand_colour")
+            if c and str(c) != "多色":
+                data["colour"] = str(c)
+        if "pack_of" in attrs:
+            data["pack_of"] = str(attrs["pack_of"])
 
         data["attributes"] = attrs
             

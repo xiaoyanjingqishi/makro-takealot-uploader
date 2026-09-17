@@ -220,7 +220,13 @@ class MakroClient:
         resp = self.session.post(url, json=payload, timeout=45)
         
         if resp.status_code != 200:
-            return False, {}, f"HTTP {resp.status_code}: {resp.text}"
+            err_details = {}
+            try:
+                err_json = resp.json()
+                err_details = err_json.get("error", {}).get("errorDetails", {}) or err_json.get("errorDetails", {})
+            except Exception:
+                pass
+            return False, err_details, f"HTTP {resp.status_code}: {resp.text}"
 
         res_data = resp.json()
         error_details = res_data.get("errorDetails", {})

@@ -53,6 +53,52 @@ def _format_attribute_value_and_qualifier(
     qual_vals = [x.strip() for x in (def_item.get("qualifierAllowedValues") or "").split("||") if x.strip()]
     default_qual = def_item.get("defaultQualifier") or (qual_vals[0] if qual_vals else None)
     allowed_vals = [x.strip() for x in (def_item.get("allowedValues") or "").split("||") if x.strip()]
+    attr_type = (def_item.get("attributeType") or "TEXT").upper()
+
+    # ★★★ 通用数值类型强校验与转换 (DECIMAL / NUMBER / INTEGER / POSITIVE_INTEGER) ★★★
+    if attr_type in ["DECIMAL", "NUMBER", "INTEGER", "POSITIVE_INTEGER"]:
+        is_valid_num = False
+        try:
+            f_val = float(val_str)
+            is_valid_num = True
+            if attr_type in ["INTEGER", "POSITIVE_INTEGER", "NUMBER"] and f_val.is_integer():
+                val_str = str(int(f_val))
+            else:
+                val_str = str(int(f_val)) if f_val.is_integer() else str(f_val)
+        except (ValueError, TypeError):
+            is_valid_num = False
+
+        if not is_valid_num:
+            # 尝试正则从文本中提取第 1 个数值 (例如 "9-32mm" -> "9", "40-210Nm" -> "40", "380Mm" -> "380")
+            num_match = re.search(r'(\d+(?:\.\d+)?)', val_str)
+            if num_match:
+                extracted = float(num_match.group(1))
+                val_str = str(int(extracted)) if extracted.is_integer() else str(extracted)
+            else:
+                ex_val = def_item.get("exampleValue")
+                ex_num = re.search(r'(\d+(?:\.\d+)?)', str(ex_val or ''))
+                if ex_num:
+                    val_str = ex_num.group(1)
+                else:
+                    val_str = "1"
+
+        # 强制挂载合法单位限定符
+        if qual_vals:
+            if not qual or qual not in qual_vals:
+                qual = default_qual or qual_vals[0]
+
+        return val_str, qual
+
+    # ★★★ 通用布尔类型强校验与转换 (BOOLEAN) ★★★
+    if attr_type == "BOOLEAN":
+        val_lower = val_str.lower()
+        if val_lower in ["yes", "true", "1", "y", "是", "有"]:
+            val_str = "Yes"
+        elif val_lower in ["no", "false", "0", "n", "否", "无"]:
+            val_str = "No"
+        else:
+            val_str = "Yes" if "yes" in [v.lower() for v in allowed_vals] else (allowed_vals[0] if allowed_vals else "Yes")
+        return val_str, None
 
     # 2. 处理容量/存储相关字段 (storage_capacity, capacity, internal_storage, ram, etc.)
     if attr_name in ["storage_capacity", "capacity", "internal_storage", "ram", "memory"]:
@@ -494,6 +540,70 @@ def _record_store_listing(
     except Exception as ex:
         logger.error(f"记录 ProductStoreListing 异常: {ex}", exc_info=True)
 
+def _auto_heal_payload(payload: dict, err_details: dict, allowed_attrs: dict) -> bool:
+    """
+    自愈引擎：针对 Makro 平台返回的 412 错误详情，精准就地自动修复 Payload
+    返回 True 表示有属性被成功修复，可发起二次提交重试
+    """
+    if not err_details or not isinstance(err_details, dict):
+        return False
+
+    cat_req = payload.get("catalogRequestEntity", {})
+    catalog_attrs = cat_req.get("catalogAttributes", {})
+    healed = False
+
+    # 提取 CMS 系统属性校验错误
+    attr_errs = err_details.get("catalogErrors", {}).get("systemValidationErrors", {}).get("attributeErrors", {})
+    if not attr_errs:
+        attr_errs = err_details.get("error", {}).get("errorDetails", {}).get("catalogErrors", {}).get("systemValidationErrors", {}).get("attributeErrors", {})
+
+    for attr_name, err_list in (attr_errs or {}).items():
+        if not err_list or not isinstance(err_list, list):
+            continue
+        err_str = str(err_list[0].get("errorString", ""))
+        def_item = allowed_attrs.get(attr_name, {})
+        allowed_vals = [x.strip() for x in (def_item.get("allowedValues") or "").split("||") if x.strip()]
+        qual_vals = [x.strip() for x in (def_item.get("qualifierAllowedValues") or "").split("||") if x.strip()]
+        def_qual = def_item.get("defaultQualifier") or (qual_vals[0] if qual_vals else None)
+        ex_val = def_item.get("exampleValue")
+
+        # 错误类型 A: 数值解析失败 (Unable to parse value as a DECIMAL / NUMBER)
+        if "DECIMAL" in err_str or "NUMBER" in err_str:
+            target_num = "1"
+            if ex_val:
+                m = re.search(r'(\d+(?:\.\d+)?)', str(ex_val))
+                if m:
+                    target_num = m.group(1)
+            catalog_attrs[attr_name] = [{"value": target_num, "qualifier": def_qual}]
+            logger.info(f"412 自愈修复: 属性 [{attr_name}] 修复为数值 {target_num}, qualifier={def_qual}")
+            healed = True
+
+        # 错误类型 B: 缺失必填项 (Mandatory Attribute [...] is missing)
+        elif "missing" in err_str.lower() and "mandatory" in err_str.lower():
+            val = allowed_vals[0] if allowed_vals else (ex_val or "Standard")
+            catalog_attrs[attr_name] = [{"value": str(val), "qualifier": def_qual}]
+            logger.info(f"412 自愈修复: 补齐必填属性 [{attr_name}] -> {val}")
+            healed = True
+
+        # 错误类型 C: 枚举值不合法 / 超纲
+        elif "not allowed" in err_str.lower() or "disallowed" in err_str.lower():
+            if allowed_vals:
+                catalog_attrs[attr_name] = [{"value": allowed_vals[0], "qualifier": def_qual}]
+                logger.info(f"412 自愈修复: 纠正超纲枚举 [{attr_name}] -> {allowed_vals[0]}")
+                healed = True
+
+        # 错误类型 D: 品牌名污染 (Brand name should not be part of)
+        elif "brand name should not be part" in err_str.lower():
+            cur_list = catalog_attrs.get(attr_name, [])
+            if cur_list:
+                cur_v = cur_list[0].get("value", "")
+                clean_v = re.sub(r'^[a-zA-Z0-9_\-]+\s*', '', str(cur_v)).strip()
+                catalog_attrs[attr_name] = [{"value": clean_v or "STD-01", "qualifier": None}]
+                logger.info(f"412 自愈修复: 剔除属性 [{attr_name}] 品牌词 -> {clean_v}")
+                healed = True
+
+    return healed
+
 def _publish_single_product(
     client: MakroClient,
     db: Session,
@@ -533,6 +643,27 @@ def _publish_single_product(
         client=client, draft_resp=draft_resp, target_store=target_store
     )
     is_success, err_details, msg = client.submit_product(payload)
+
+    # ★★★ 412 错误自愈闭环重试机制 ★★★
+    if not is_success:
+        logger.warning(f"商品 {product.id} 初次提交审核未通过，尝试触发 412 自愈闭环...")
+        allowed_attrs = {}
+        try:
+            from ..services.vertical_service import VerticalService
+            v_def_list = VerticalService.get_vertical_definition(vertical, client=client, db=db)
+            for item in v_def_list:
+                name = item.get("attributeName")
+                if name:
+                    allowed_attrs[name] = item
+        except Exception as e:
+            logger.warning(f"自愈闭环获取类目元数据异常: {e}")
+
+        if _auto_heal_payload(payload, err_details, allowed_attrs):
+            logger.info(f"商品 {product.id} 成功应用 412 自愈补丁，发起二次提交重试...")
+            time.sleep(1.0)
+            is_success, err_details, msg = client.submit_product(payload)
+            if is_success:
+                logger.info(f"商品 {product.id} 二次重试提交成功！已自愈！")
 
     if is_success:
         product.status = "SUBMITTED"
@@ -608,6 +739,27 @@ def _publish_single_variant(
         client=client, draft_resp=draft_resp, variant=variant, target_store=target_store
     )
     is_success, err_details, msg = client.submit_product(payload)
+
+    # ★★★ 412 错误自愈闭环重试机制 ★★★
+    if not is_success:
+        logger.warning(f"变体 {variant.sku_id} 初次提交审核未通过，尝试触发 412 自愈闭环...")
+        allowed_attrs = {}
+        try:
+            from ..services.vertical_service import VerticalService
+            v_def_list = VerticalService.get_vertical_definition(vertical, client=client, db=db)
+            for item in v_def_list:
+                name = item.get("attributeName")
+                if name:
+                    allowed_attrs[name] = item
+        except Exception as e:
+            logger.warning(f"自愈闭环获取类目元数据异常: {e}")
+
+        if _auto_heal_payload(payload, err_details, allowed_attrs):
+            logger.info(f"变体 {variant.sku_id} 成功应用 412 自愈补丁，发起二次提交重试...")
+            time.sleep(1.0)
+            is_success, err_details, msg = client.submit_product(payload)
+            if is_success:
+                logger.info(f"变体 {variant.sku_id} 二次重试提交成功！已自愈！")
 
     if is_success:
         variant.status = "SUBMITTED"

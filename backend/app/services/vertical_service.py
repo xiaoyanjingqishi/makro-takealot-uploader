@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -429,3 +429,104 @@ class VerticalService:
                 candidates.append(core)
 
         return candidates
+
+    @classmethod
+    def get_vertical_definition(cls, vertical: str, client=None, db=None) -> list:
+        """获取并本地缓存垂直类目的官方属性定义列表 (definitionList)"""
+        valid_v, _ = cls.resolve_vertical(vertical)
+        cache_dir = Path(__file__).resolve().parent.parent / "cache" / "vertical_defs"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{valid_v}.json"
+
+        if cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"读取本地类目缓存 {valid_v} 失败: {e}")
+
+        # 尝试通过 client 或 db 获取并写缓存
+        try:
+            if not client and db:
+                from .makro_client import MakroClient
+                client = MakroClient.from_db(db)
+            if client:
+                vdef = client.get_vertical_definition(valid_v)
+                deflist = vdef.get("entityDefinitionMap", {}).get(valid_v, {}).get("definitionList", [])
+                if deflist:
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump(deflist, f, ensure_ascii=False, indent=2)
+                    return deflist
+        except Exception as e:
+            logger.warning(f"从平台获取类目 {valid_v} 元数据失败: {e}")
+
+        return []
+
+    @classmethod
+    def get_vertical_schema_summary(cls, vertical: str, client=None, db=None) -> Dict[str, Any]:
+        """
+        解析并输出供大模型与强类型契约引擎消费的高可读 Schema 描述
+        包含字段类型约束、允许枚举、限定符与官方示例
+        """
+        deflist = cls.get_vertical_definition(vertical, client=client, db=db)
+        mandatory_items = []
+        recommended_items = []
+        guidelines_lines = []
+        allowed_attr_names = set()
+
+        for d in deflist:
+            source = d.get("source")
+            if source != "CATALOG":
+                continue
+            name = d.get("attributeName")
+            if not name:
+                continue
+
+            allowed_attr_names.add(name)
+            prio = (d.get("attributePriority") or "").lower()
+            atype = (d.get("attributeType") or "TEXT").upper()
+            allowed = [x.strip() for x in (d.get("allowedValues") or "").split("||") if x.strip()]
+            quals = [x.strip() for x in (d.get("qualifierAllowedValues") or "").split("||") if x.strip()]
+            ex = d.get("exampleValue")
+            desc = d.get("attributeDescription") or ""
+
+            entry = {
+                "name": name,
+                "display_name": d.get("attributeDisplayName") or name,
+                "priority": prio,
+                "type": atype,
+                "allowedValues": allowed,
+                "qualifiers": quals,
+                "example": ex,
+                "description": desc
+            }
+
+            if prio == "mandatory":
+                mandatory_items.append(entry)
+                rule_str = f"- `{name}`: [必填] 数据类型: {atype}。"
+                if atype in ["DECIMAL", "NUMBER", "INTEGER"]:
+                    rule_str += " 【重要规则: 必须为纯数字（如 10、28），严禁填入任何中文、‘均码’或非数字字符！】"
+                if quals:
+                    rule_str += f" 必须从单位列表挑选 qualifier: {quals}。"
+                if allowed:
+                    rule_str += f" 必须从候选枚举挑选: {allowed[:10]}。"
+                if ex:
+                    rule_str += f" (官方示例: {ex})"
+                guidelines_lines.append(rule_str)
+            elif name in ["model_name", "material", "colour", "brand_colour", "warranty_summary", "description", "sales_package", "pack_of"]:
+                recommended_items.append(entry)
+                rule_str = f"- `{name}`: [推荐] 数据类型: {atype}。"
+                if allowed:
+                    rule_str += f" 候选枚举: {allowed[:8]}。"
+                if quals:
+                    rule_str += f" 候选单位: {quals}。"
+                guidelines_lines.append(rule_str)
+
+        return {
+            "vertical": vertical,
+            "mandatory": mandatory_items,
+            "recommended": recommended_items,
+            "allowed_names": list(allowed_attr_names),
+            "guidelines_text": "\n".join(guidelines_lines)
+        }
+

@@ -69,15 +69,34 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
                 qualifier = "cm"
             catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
 
-        # 变体专有属性直接覆盖/注入
-        if product.colour or var_attrs.get("colour"):
-            c_val = str(product.colour or var_attrs.get("colour"))
-            catalog_attrs["colour"] = [{"value": c_val, "qualifier": None}]
-            catalog_attrs["brand_colour"] = [{"value": str(product.brand_colour or c_val), "qualifier": None}]
-        if product.size or var_attrs.get("size"):
-            catalog_attrs["size"] = [{"value": str(product.size or var_attrs.get("size")), "qualifier": None}]
-        if product.pack_of or var_attrs.get("pack_of"):
-            catalog_attrs["pack_of"] = [{"value": str(product.pack_of or var_attrs.get("pack_of")), "qualifier": None}]
+        # 同步更新商品主属性 (排除非服装下的假数据)
+        if cleaned.get("size"):
+            product.size = str(cleaned.get("size"))
+        elif resolved_v != "costume_wear" and product.size == "均码":
+            product.size = None
+
+        if cleaned.get("colour"):
+            product.colour = str(cleaned.get("colour"))
+        elif resolved_v != "costume_wear" and product.colour == "多色":
+            product.colour = None
+
+        if cleaned.get("pack_of"):
+            product.pack_of = str(cleaned.get("pack_of"))
+
+        # 变体专有属性直接覆盖/注入 (严格排斥非服装下的“均码”与“多色”)
+        clean_c = product.colour or var_attrs.get("colour")
+        if clean_c and str(clean_c) != "多色":
+            catalog_attrs["colour"] = [{"value": str(clean_c), "qualifier": None}]
+            catalog_attrs["brand_colour"] = [{"value": str(product.brand_colour or clean_c), "qualifier": None}]
+
+        clean_s = product.size or var_attrs.get("size")
+        if clean_s and (str(clean_s) != "均码" or resolved_v == "costume_wear"):
+            catalog_attrs["size"] = [{"value": str(clean_s), "qualifier": None}]
+
+        clean_p = product.pack_of or var_attrs.get("pack_of")
+        if clean_p:
+            catalog_attrs["pack_of"] = [{"value": str(clean_p), "qualifier": None}]
+
         cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
         if cap:
             catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
@@ -166,14 +185,33 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                         qualifier = "cm"
                     catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
 
-                if prod.colour or var_attrs.get("colour"):
-                    c_val = str(prod.colour or var_attrs.get("colour"))
-                    catalog_attrs["colour"] = [{"value": c_val, "qualifier": None}]
-                    catalog_attrs["brand_colour"] = [{"value": str(prod.brand_colour or c_val), "qualifier": None}]
-                if prod.size or var_attrs.get("size"):
-                    catalog_attrs["size"] = [{"value": str(prod.size or var_attrs.get("size")), "qualifier": None}]
-                if prod.pack_of or var_attrs.get("pack_of"):
-                    catalog_attrs["pack_of"] = [{"value": str(prod.pack_of or var_attrs.get("pack_of")), "qualifier": None}]
+                # 同步更新商品主属性 (排除非服装下的假数据)
+                if cleaned.get("size"):
+                    prod.size = str(cleaned.get("size"))
+                elif resolved_batch_v != "costume_wear" and prod.size == "均码":
+                    prod.size = None
+
+                if cleaned.get("colour"):
+                    prod.colour = str(cleaned.get("colour"))
+                elif resolved_batch_v != "costume_wear" and prod.colour == "多色":
+                    prod.colour = None
+
+                if cleaned.get("pack_of"):
+                    prod.pack_of = str(cleaned.get("pack_of"))
+
+                clean_c = prod.colour or var_attrs.get("colour")
+                if clean_c and str(clean_c) != "多色":
+                    catalog_attrs["colour"] = [{"value": str(clean_c), "qualifier": None}]
+                    catalog_attrs["brand_colour"] = [{"value": str(prod.brand_colour or clean_c), "qualifier": None}]
+
+                clean_s = prod.size or var_attrs.get("size")
+                if clean_s and (str(clean_s) != "均码" or resolved_batch_v == "costume_wear"):
+                    catalog_attrs["size"] = [{"value": str(clean_s), "qualifier": None}]
+
+                clean_p = prod.pack_of or var_attrs.get("pack_of")
+                if clean_p:
+                    catalog_attrs["pack_of"] = [{"value": str(clean_p), "qualifier": None}]
+
                 cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
                 if cap:
                     catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]

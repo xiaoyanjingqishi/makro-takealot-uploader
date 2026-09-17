@@ -38,6 +38,13 @@ class TakealotService:
             db.query(Product).filter(Product.id.in_(existing_pids)).delete(synchronize_session=False)
             db.commit()
 
+        is_apparel = (
+            predicted_vertical == "costume_wear"
+            or any(x in (req.takealot_category or "").lower() for x in ["clothing", "apparel", "wear", "fashion", "bra", "underwear"])
+        )
+        def_size = "均码" if is_apparel else None
+        def_colour = "多色" if is_apparel else None
+
         if req.variants and len(req.variants) > 0:
             for idx, v in enumerate(req.variants):
                 v_price = v.takealot_price if v.takealot_price > 0 else req.takealot_price
@@ -81,9 +88,9 @@ class TakealotService:
                     sku_id=sku_id,
                     barcode=v.barcode,
                     variant_attributes=json.dumps(v.variant_attributes, ensure_ascii=False) if v.variant_attributes else "{}",
-                    size=v.size or "均码",
-                    colour=v.colour or "多色",
-                    brand_colour=v.brand_colour or v.colour or "多色",
+                    size=v.size or def_size,
+                    colour=v.colour or def_colour,
+                    brand_colour=v.brand_colour or v.colour or def_colour,
                     pack_of=v.pack_of or "1",
                     status="PENDING_CLEAN",
                     compliance_status="PENDING_CHECK",
@@ -113,9 +120,9 @@ class TakealotService:
                 sku_id=sku_id,
                 barcode=None,
                 variant_attributes="{}",
-                size="均码",
-                colour="多色",
-                brand_colour="多色",
+                size=def_size,
+                colour=def_colour,
+                brand_colour=def_colour,
                 pack_of="1",
                 status="PENDING_CLEAN",
                 compliance_status="PENDING_CHECK",
