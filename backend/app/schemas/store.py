@@ -48,6 +48,7 @@ class ProductStoreListingItem(BaseModel):
     id: int
     store_id: int
     store_name: str
+    brand: Optional[str] = None
     status: str
     makro_sku_id: Optional[str] = None
     makro_request_id: Optional[str] = None

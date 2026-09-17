@@ -138,8 +138,16 @@ def _build_makro_payload(
         or (client.seller_id if client and getattr(client, "seller_id", None) else None)
         or _get_setting_val(db, "seller_id", settings.DEFAULT_SELLER_ID)
     )
-    store_brand = target_store.default_brand if target_store and getattr(target_store, "default_brand", None) else None
-    brand = product.makro_brand or store_brand or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
+    # 确定目标店铺刊登品牌与源品牌
+    target_brand = (
+        (target_store.default_brand.strip() if target_store and getattr(target_store, "default_brand", None) and target_store.default_brand.strip() else None)
+        or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
+        or product.makro_brand
+        or "Beishi"
+    )
+    brand = target_brand
+    source_brand = (product.makro_brand or "").strip() or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND) or "Beishi"
+
     raw_vertical = product.makro_vertical or "bath_towel"
     valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
     vertical = valid_vertical
@@ -178,11 +186,28 @@ def _build_makro_payload(
         except Exception as e:
             logger.warning(f"获取类目 {vertical} 属性定义失败: {e}")
 
+    # ★★★ 动态根据目标店铺刊登品牌替换商品标题与描述 ★★★
+    raw_title = product.makro_title or product.takealot_title or ""
+    store_title = raw_title
+    if source_brand and target_brand and source_brand.lower() != target_brand.lower():
+        store_title = re.sub(rf'^\s*{re.escape(source_brand)}\b', target_brand, store_title, flags=re.I)
+        store_title = re.sub(rf'\b{re.escape(source_brand)}\b', target_brand, store_title, flags=re.I)
+
+    # 兜底：如果标题未以 target_brand 开头，且未包含 target_brand，则规范加上 target_brand 前缀
+    if target_brand and not store_title.lower().startswith(target_brand.lower()):
+        clean_prefix = re.sub(r'^(Generic|Beishi|[a-zA-Z0-9_\-]+)\s*[\'’s]*\s*[-_:]*\s*', '', store_title, flags=re.I)
+        store_title = f"{target_brand} {clean_prefix.strip()}"
+
+    raw_desc = str(product.makro_description or "")
+    store_desc = raw_desc
+    if source_brand and target_brand and source_brand.lower() != target_brand.lower():
+        store_desc = re.sub(rf'\b{re.escape(source_brand)}\b', target_brand, store_desc, flags=re.I)
+
     # Catalog 属性组装
     user_attrs = json.loads(product.makro_catalog_attributes) if product.makro_catalog_attributes else {}
     catalog_attrs = {}
 
-    # 1. 保留合法属性
+    # 1. 保留合法属性，并替换其中出现的旧品牌名
     for k, v_list in user_attrs.items():
         if allowed_attrs and k not in allowed_attrs:
             continue  # 抛弃该类目不支持的属性 (如 plier 下的 colour/size)
@@ -193,19 +218,23 @@ def _build_makro_payload(
             val = str(v_list)
             q = None
 
+        val_str = str(val) if val is not None else ""
+        if k not in ["model_name", "model_number"] and source_brand and target_brand and source_brand.lower() != target_brand.lower():
+            val_str = re.sub(rf'\b{re.escape(source_brand)}\b', target_brand, val_str, flags=re.I)
+
         if k in ["overall_length", "width", "length", "height", "depth"] and not q:
             q = "cm"
-        catalog_attrs[k] = [{"value": str(val), "qualifier": q}]
+        catalog_attrs[k] = [{"value": val_str, "qualifier": q}]
 
-    # 2. 保证 brand 存在
-    catalog_attrs["brand"] = [{"value": brand, "qualifier": None}]
+    # 2. 保证 brand 属性 100% 设为当前目标店铺刊登品牌！
+    catalog_attrs["brand"] = [{"value": target_brand, "qualifier": None}]
 
-    # 3. 保证 description 存在 (如类目支持)
-    if (not allowed_attrs or "description" in allowed_attrs) and "description" not in catalog_attrs and product.makro_description:
-        catalog_attrs["description"] = [{"value": str(product.makro_description), "qualifier": None}]
+    # 3. 保证 description 存在 (如类目支持) 并替换为目标店铺品牌
+    if (not allowed_attrs or "description" in allowed_attrs) and "description" not in catalog_attrs and store_desc:
+        catalog_attrs["description"] = [{"value": store_desc, "qualifier": None}]
 
     # 4. 全品类智能自适应必填字段抽取与补全
-    full_text = f"{product.makro_title or ''} {product.takealot_title or ''} {product.takealot_description or ''} {product.takealot_specs or ''}".lower()
+    full_text = f"{store_title} {product.takealot_title or ''} {store_desc} {product.takealot_specs or ''}".lower()
 
     # A. 针对不同类目的特定字段智能抽取
     # A1. 网络设备 (network_switch / router)
@@ -247,8 +276,13 @@ def _build_makro_payload(
         catalog_attrs["warranty_service_type"] = [{"value": "Customer Support", "qualifier": None}]
 
     # B. 通用必填项兜底
-    clean_model_title = re.sub(rf'^\s*{re.escape(brand)}\s*[-_:]*\s*', '', product.makro_title or "", flags=re.I)
-    clean_model_title = re.sub(rf'\b{re.escape(brand)}\b', '', clean_model_title, flags=re.I).strip(' -_,:;')
+    # 严格移除所有品牌名以生成合规 model_name 与 model_number (平台规则: Brand name should not be part of attribute value)
+    clean_model_title = store_title
+    brands_to_clean = {target_brand, source_brand, _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND), "Beishi"}
+    for b_to_clean in brands_to_clean:
+        if b_to_clean:
+            clean_model_title = re.sub(rf'^\s*{re.escape(b_to_clean)}\s*[\'’s]*\s*[-_:]*\s*', '', clean_model_title, flags=re.I)
+            clean_model_title = re.sub(rf'\b{re.escape(b_to_clean)}\b', '', clean_model_title, flags=re.I).strip(' -_,:;')
 
     smart_defaults = {
         "model_name": (clean_model_title or f"Standard {vertical}")[:40],
@@ -257,7 +291,7 @@ def _build_makro_payload(
         "colour": "White" if "white" in full_text else ("Black" if "black" in full_text else "Multicolor"),
         "packaging_type": "Box" if ("box" in full_text or "network" in vertical) else "Pack",
         "pack_of": "1",
-        "sales_package": (product.makro_title or f"1 x {vertical}")[:60],
+        "sales_package": (store_title or f"1 x {vertical}")[:60],
         "plier_type": "Wire Stripper",
         "overall_length": "20",
         "bath_towel_type": "Cloth",
@@ -417,7 +451,8 @@ def _record_store_listing(
     request_id: Optional[str],
     msg: Optional[str],
     selling_price: Optional[float] = None,
-    mrp: Optional[float] = None
+    mrp: Optional[float] = None,
+    brand: Optional[str] = None
 ):
     """记录或更新商品在特定店铺的上架状态与凭据"""
     if not target_store:
@@ -443,6 +478,7 @@ def _record_store_listing(
             )
             db.add(listing)
 
+        listing.brand = brand or getattr(target_store, "default_brand", None) or "Beishi"
         listing.status = "SUBMITTED" if is_success else "FAILED"
         if is_success and sku_id:
             listing.makro_sku_id = sku_id
@@ -518,7 +554,8 @@ def _publish_single_product(
         request_id=request_id,
         msg=msg,
         selling_price=product.makro_selling_price,
-        mrp=product.makro_mrp
+        mrp=product.makro_mrp,
+        brand=brand
     )
 
     return {
@@ -592,7 +629,8 @@ def _publish_single_variant(
         request_id=request_id,
         msg=msg,
         selling_price=variant.makro_selling_price or product.makro_selling_price,
-        mrp=variant.makro_mrp or product.makro_mrp
+        mrp=variant.makro_mrp or product.makro_mrp,
+        brand=brand
     )
 
     return {
@@ -658,13 +696,19 @@ def publish_product_to_makro(
         s_name = s_item.name if s_item else "默认店铺"
         s_id = s_item.id if s_item else None
         client = MakroClient.from_store(s_item) if s_item else MakroClient.from_db(db)
-        brand = (s_item.default_brand if s_item and s_item.default_brand else product.makro_brand) or "Beishi"
+        target_brand = (
+            (s_item.default_brand.strip() if s_item and getattr(s_item, "default_brand", None) and s_item.default_brand.strip() else None)
+            or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
+            or product.makro_brand
+            or "Beishi"
+        )
+        brand = target_brand
 
         task = TaskLog(
             product_id=product.id,
             task_type="SUBMIT_LISTING",
             status="RUNNING",
-            message=f"开始向店铺【{s_name}】执行 Makro 上品调用..."
+            message=f"开始向店铺【{s_name}】(刊登品牌: {brand}) 执行 Makro 上品调用..."
         )
         db.add(task)
         db.commit()
@@ -680,7 +724,8 @@ def publish_product_to_makro(
                 request_id=None,
                 msg=msg,
                 selling_price=product.makro_selling_price,
-                mrp=product.makro_mrp
+                mrp=product.makro_mrp,
+                brand=brand
             )
             task.status = "FAILED"
             task.message = msg
@@ -713,11 +758,11 @@ def publish_product_to_makro(
                 if is_store_success:
                     any_success = True
                     task.status = "SUCCESS"
-                    task.message = f"全量成功上架所有 {v_succ} 个变体至【{s_name}】！"
+                    task.message = f"全量成功上架所有 {v_succ} 个变体至【{s_name}】(刊登品牌: {brand})！"
                 elif v_succ > 0:
                     any_success = True
                     task.status = "WARNING"
-                    task.message = f"部分变体提交成功至【{s_name}】({v_succ}/{len(product.variants)})"
+                    task.message = f"部分变体提交成功至【{s_name}】({v_succ}/{len(product.variants)}, 刊登品牌: {brand})"
                 else:
                     task.status = "FAILED"
                     task.message = f"店铺【{s_name}】所有变体提交均失败"
@@ -739,7 +784,7 @@ def publish_product_to_makro(
                 if p_res["success"]:
                     any_success = True
                     task.status = "SUCCESS"
-                    task.message = f"成功上架商品至店铺【{s_name}】(已提交审核)！"
+                    task.message = f"成功上架商品至店铺【{s_name}】(刊登品牌: {brand}, 已提交审核)！"
                 else:
                     task.status = "FAILED"
                     task.message = f"店铺【{s_name}】上架失败: {p_res['message']}"
@@ -858,13 +903,19 @@ def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Se
 
                     s_name = s_item.name if s_item else "默认店铺"
                     local_client = MakroClient.from_store(s_item) if s_item else MakroClient.from_db(local_db)
-                    brand = (s_item.default_brand if s_item and s_item.default_brand else product.makro_brand) or "Beishi"
-                    disp_title = f"【{s_name}】{p_title[:20]}"
+                    target_brand = (
+                        (s_item.default_brand.strip() if s_item and getattr(s_item, "default_brand", None) and s_item.default_brand.strip() else None)
+                        or _get_setting_val(local_db, "default_brand", settings.DEFAULT_BRAND)
+                        or product.makro_brand
+                        or "Beishi"
+                    )
+                    brand = target_brand
+                    disp_title = f"【{s_name}·{brand}】{p_title[:16]}"
 
                     if not local_client.cookie:
                         completed_count += 1
                         tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=f"店铺【{s_name}】未配置 Cookie")
-                        _record_store_listing(local_db, product.id, s_item, False, None, None, f"店铺【{s_name}】未配置 Cookie", product.makro_selling_price, product.makro_mrp)
+                        _record_store_listing(local_db, product.id, s_item, False, None, None, f"店铺【{s_name}】未配置 Cookie", product.makro_selling_price, product.makro_mrp, brand=brand)
                         continue
 
                     try:
@@ -897,7 +948,12 @@ def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Se
     }
 
 @router.post("/publish-variant/{variant_id}", summary="单变体独立上品或重新上架到 Makro")
-def publish_single_variant_to_makro(variant_id: int, force: bool = False, db: Session = Depends(get_db)):
+def publish_single_variant_to_makro(
+    variant_id: int,
+    store_id: Optional[int] = None,
+    force: bool = False,
+    db: Session = Depends(get_db)
+):
     variant = db.query(ProductVariant).filter(ProductVariant.id == variant_id).first()
     if not variant:
         raise HTTPException(status_code=404, detail="变体未找到")
@@ -908,16 +964,31 @@ def publish_single_variant_to_makro(variant_id: int, force: bool = False, db: Se
     if product.compliance_status == "PROHIBITED" and not force:
         raise HTTPException(status_code=400, detail="【违禁品拦截】该商品命中平台禁售规则！")
 
-    client = MakroClient.from_db(db)
+    from ..models.store import Store
+    target_store = None
+    if store_id:
+        target_store = db.query(Store).filter(Store.id == store_id).first()
+    if not target_store:
+        target_store = db.query(Store).filter(Store.is_default == True, Store.is_active == True).first()
+    if not target_store:
+        target_store = db.query(Store).filter(Store.is_active == True).first()
+
+    client = MakroClient.from_store(target_store) if target_store else MakroClient.from_db(db)
     if not client.cookie:
-        raise HTTPException(status_code=400, detail="未检测到 Makro 登录态 Cookie！请先在插件同步登录态。")
+        raise HTTPException(status_code=400, detail="未检测到 Makro 登录态 Cookie！请先在多店铺管理中配置 Cookie。")
 
     raw_vertical = product.makro_vertical or "bath_towel"
     valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
-    brand = product.makro_brand or "Beishi"
+    target_brand = (
+        (target_store.default_brand.strip() if target_store and getattr(target_store, "default_brand", None) and target_store.default_brand.strip() else None)
+        or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND)
+        or product.makro_brand
+        or "Beishi"
+    )
+    brand = target_brand
 
     try:
-        res = _publish_single_variant(client, db, product, variant, valid_vertical, vid, brand)
+        res = _publish_single_variant(client, db, product, variant, valid_vertical, vid, brand, target_store=target_store)
         all_submitted = all(v.status == "SUBMITTED" for v in product.variants)
         any_submitted = any(v.status == "SUBMITTED" for v in product.variants)
 
@@ -948,7 +1019,12 @@ def publish_single_variant_to_makro(variant_id: int, force: bool = False, db: Se
         return {"success": False, "message": str(e), "variant_id": variant.id}
 
 @router.get("/build-payload/{product_id}", summary="预览构建的 Makro 上品请求体 (可用于调试或插件代发)")
-def get_submit_payload_preview(product_id: int, variant_id: Optional[int] = None, db: Session = Depends(get_db)):
+def get_submit_payload_preview(
+    product_id: int,
+    variant_id: Optional[int] = None,
+    store_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
@@ -962,7 +1038,14 @@ def get_submit_payload_preview(product_id: int, variant_id: Optional[int] = None
     if variant_id:
         target_variant = db.query(ProductVariant).filter(ProductVariant.id == variant_id).first()
 
-    payload = _build_makro_payload(db, product, mock_req_id, mock_txn, mock_req, images, variant=target_variant)
+    from ..models.store import Store
+    target_store = None
+    if store_id:
+        target_store = db.query(Store).filter(Store.id == store_id).first()
+    if not target_store:
+        target_store = db.query(Store).filter(Store.is_default == True, Store.is_active == True).first()
+
+    payload = _build_makro_payload(db, product, mock_req_id, mock_txn, mock_req, images, variant=target_variant, target_store=target_store)
     return payload
 
 @router.post("/sync-credentials", summary="从浏览器插件同步 Makro 登录态凭据")

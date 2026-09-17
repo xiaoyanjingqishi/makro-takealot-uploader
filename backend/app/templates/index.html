@@ -635,9 +635,9 @@
                           :key="sl.id" 
                           :class="sl.status === 'SUBMITTED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'"
                           class="px-1.5 py-0.2 rounded text-[9.5px] font-mono border"
-                          :title="(sl.store_name || '店铺') + ': ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
+                          :title="(sl.store_name || '店铺') + ' (品牌: ' + (sl.brand || '默认') + '): ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
                         >
-                          🏪 {{ sl.store_name }}: {{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }}
+                          🏪 {{ sl.store_name }} ({{ sl.brand || '默认' }}): {{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }}
                         </span>
                       </div>
                     </td>
@@ -811,9 +811,9 @@
                       :key="sl.id" 
                       :class="sl.status === 'SUBMITTED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'"
                       class="px-1.5 py-0.2 rounded text-[9.5px] font-mono border"
-                      :title="(sl.store_name || '店铺') + ': ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
+                      :title="(sl.store_name || '店铺') + ' (品牌: ' + (sl.brand || '默认') + '): ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
                     >
-                      🏪 {{ sl.store_name }}: {{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }}
+                      🏪 {{ sl.store_name }} ({{ sl.brand || '默认' }}): {{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }}
                     </span>
                   </div>
                 </td>
@@ -2366,7 +2366,7 @@
                       <span class="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded font-bold">共 {{ activeStores.length }} 家</span>
                     </div>
                     <div class="text-[11px] text-slate-500 mt-0.5">
-                      系统将同时为每家已启用的店铺创建独立刊登，商品互不干扰。
+                      系统将同时为每家已启用的店铺创建独立刊登，并自动替换为各店铺配置的刊登品牌。
                     </div>
                   </div>
                 </label>
@@ -2379,7 +2379,7 @@
                   <div class="flex-1">
                     <div class="font-bold text-slate-800">🏪 指定单一店铺</div>
                     <div class="text-[11px] text-slate-500 mt-0.5 mb-2">
-                      仅将勾选商品上传至选定的单个 Makro 店铺。
+                      仅将勾选商品上传至选定的单个 Makro 店铺（自动替换为该店铺的刊登品牌）。
                     </div>
                     <select 
                       v-if="batchPublishTarget === 'single'"
@@ -2387,7 +2387,7 @@
                       class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                     >
                       <option v-for="s in activeStores" :key="s.id" :value="s.id">
-                        {{ s.name }} ({{ s.seller_id }}) {{ s.is_default ? '⭐ 默认' : '' }}
+                        {{ s.name }} (刊登品牌: {{ s.default_brand || 'Beishi' }} · {{ s.seller_id }}) {{ s.is_default ? '⭐ 默认' : '' }}
                       </option>
                     </select>
                   </div>
@@ -2490,6 +2490,9 @@
                   <div class="font-bold text-slate-800 flex items-center space-x-1.5">
                     <span>🏪 {{ s.name }}</span>
                     <span v-if="s.is_default" class="text-[10px] px-1 py-0.2 bg-blue-100 text-blue-700 rounded font-bold">默认</span>
+                    <span class="text-[10px] px-1.5 py-0.2 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded font-semibold">
+                      刊登品牌: {{ s.default_brand || 'Beishi' }}
+                    </span>
                   </div>
                   <div class="text-[11px] text-slate-400 font-mono mt-0.5">
                     Seller ID: {{ s.seller_id }}
@@ -3731,9 +3734,11 @@
           this.showSinglePublishModal = false;
           this.publishingId = item.id;
 
+          const targetStoreObj = !publishAll ? this.stores.find(s => s.id === storeId) : null;
+          const targetBrand = targetStoreObj ? (targetStoreObj.default_brand || 'Beishi') : '各店品牌';
           const targetStoreName = publishAll 
-            ? `全部已启用店铺 (共 ${this.activeStores.length} 家)` 
-            : (this.stores.find(s => s.id === storeId)?.name || '指定店铺');
+            ? `全部已启用店铺 (共 ${this.activeStores.length} 家 · 各店品牌)` 
+            : `${targetStoreObj?.name || '指定店铺'} · 品牌: ${targetBrand}`;
           const pTitle = (item.makro_title || item.takealot_title || `商品 #${item.id}`).slice(0, 32);
           const taskId = `single_pub_${item.id}_${Date.now()}`;
 

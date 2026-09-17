@@ -62,6 +62,7 @@ def _format_product(p: Product) -> dict:
                 "id": sl.id,
                 "store_id": sl.store_id,
                 "store_name": sl.store.name if sl.store else f"店铺#{sl.store_id}",
+                "brand": getattr(sl, "brand", None) or (sl.store.default_brand if sl.store else "Beishi"),
                 "status": sl.status,
                 "makro_sku_id": sl.makro_sku_id,
                 "makro_request_id": sl.makro_request_id,

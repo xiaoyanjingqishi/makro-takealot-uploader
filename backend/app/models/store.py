@@ -28,6 +28,7 @@ class ProductStoreListing(Base):
     store_id = Column(Integer, ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
 
     status = Column(String(50), default="PENDING", index=True)  # PENDING, SUBMITTED, ACTIVE, FAILED
+    brand = Column(String(100), nullable=True)  # 实际刊登品牌
     makro_sku_id = Column(String(100), nullable=True)
     makro_request_id = Column(String(100), nullable=True)
     makro_submit_error = Column(Text, nullable=True)
