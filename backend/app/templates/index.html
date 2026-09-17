@@ -2433,6 +2433,10 @@
                 <input type="checkbox" v-model="batchPublishForce" class="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer" />
                 <span class="text-xs text-amber-800 font-medium">跳过违禁品二次确认强行上架 (仅限自审安全商品)</span>
               </label>
+              <div v-if="batchPublishForce" class="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-start space-x-1.5 animate-fadeIn">
+                <span class="text-xs">⚠️</span>
+                <span><strong>已开启强制上架模式</strong>：命中液体/蓝牙/违禁特征的商品将跳过安全拦截强行刊登，请确保商品确实合规以避免店铺风险。</span>
+              </div>
             </div>
           </div>
 
@@ -3794,7 +3798,8 @@
           this.ensureBgTasksPolling();
 
           try {
-            const res = await fetch('/api/makro/batch-publish', {
+            const queryParam = this.batchPublishForce ? '?force=true' : '';
+            const res = await fetch(`/api/makro/batch-publish${queryParam}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

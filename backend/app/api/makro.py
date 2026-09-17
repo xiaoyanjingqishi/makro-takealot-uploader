@@ -843,9 +843,11 @@ def publish_product_to_makro(
     }
 
 @router.post("/batch-publish", summary="批量上品到 Makro (支持指定店铺或全部店铺，后台异步执行)")
-def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Session = Depends(get_db)):
+def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = None, db: Session = Depends(get_db)):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "results": [], "message": "未选择商品"}
+
+    effective_force = bool(getattr(req, "force", False) or (force is True))
 
     from ..models.store import Store
     target_stores = []
@@ -866,7 +868,8 @@ def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Se
 
     total_ops = len(req.product_ids) * len(target_stores)
     store_names_str = "、".join([s.name if s else "默认店铺" for s in target_stores])
-    task_title = f"批量上品至 Makro [{store_names_str}] (共 {len(req.product_ids)} 件品 × {len(target_stores)} 店铺)"
+    force_tag = " [强制上架模式]" if effective_force else ""
+    task_title = f"批量上品至 Makro [{store_names_str}]{force_tag} (共 {len(req.product_ids)} 件品 × {len(target_stores)} 店铺)"
     task = task_manager.create_task("BATCH_PUBLISH", task_title, total_ops, req.product_ids)
     task_id = task["id"]
 
@@ -888,7 +891,7 @@ def batch_publish_products(req: BatchPublishRequest, force: bool = False, db: Se
 
                 p_title = product.takealot_title
 
-                if product.compliance_status == "PROHIBITED" and not force:
+                if product.compliance_status == "PROHIBITED" and not effective_force:
                     for _ in target_stores:
                         completed_count += 1
                         tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error="违禁品拦截，跳过发布")
