@@ -65,6 +65,7 @@ def _format_product(p: Product) -> dict:
         "takealot_category": p.takealot_category,
         "takealot_description": p.takealot_description,
         "takealot_specs": specs,
+        "raw_images": raw_images,
         "status": p.status,
         "previous_status": getattr(p, "previous_status", None),
         "makro_vertical": p.makro_vertical,

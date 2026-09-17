@@ -503,7 +503,7 @@
                 />
                 <div class="relative group cursor-pointer shrink-0" @click="openImagePreview(grp.coverImage)" title="点击放大预览主图">
                   <img 
-                    :src="grp.coverImage || 'https://via.placeholder.com/80'" 
+                    :src="grp.coverImage || placeholderImg" 
                     class="w-16 h-16 object-cover rounded-lg border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition"
                   />
                   <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -521,8 +521,8 @@
                     <span class="text-xs text-slate-300">|</span>
                     <span class="text-xs font-semibold text-slate-800">原售价: R{{ grp.minPrice }} ~ R{{ grp.maxPrice }}</span>
                     <span class="text-xs text-slate-300">|</span>
-                    <span class="text-xs text-slate-500 font-mono" :title="'最后更新: ' + formatDateTime(grp.items[0]?.updated_at)">
-                      📅 采集: {{ formatDateTime(grp.items[0]?.created_at) }}
+                    <span class="text-xs text-slate-500 font-mono" :title="'最后更新: ' + (grp.items && grp.items.length ? formatDateTime(grp.items[0].updated_at) : '-')">
+                      📅 采集: {{ grp.items && grp.items.length ? formatDateTime(grp.items[0].created_at) : '-' }}
                     </span>
                     <span class="text-xs text-slate-300">|</span>
                     <a v-if="grp.takealot_url" :href="grp.takealot_url" target="_blank" class="text-xs text-blue-600 hover:underline">前台链接 ↗</a>
@@ -578,8 +578,8 @@
                       <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600">
                     </td>
                     <td class="py-2.5 px-4">
-                      <div class="relative group cursor-pointer" @click="openImagePreview(item.raw_images[0])" title="点击放大预览主图">
-                        <img :src="item.raw_images[0] || 'https://via.placeholder.com/80'" class="w-10 h-10 object-cover rounded border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition" />
+                      <div class="relative group cursor-pointer" @click="openImagePreview(getItemImage(item))" title="点击放大预览主图">
+                        <img :src="getItemImage(item)" class="w-10 h-10 object-cover rounded border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition" />
                       </div>
                     </td>
                     <td class="py-2.5 px-4">
@@ -678,9 +678,9 @@
                   <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600 cursor-pointer">
                 </td>
                 <td class="py-3 px-4">
-                  <div class="relative group cursor-pointer" @click="openImagePreview(item.raw_images[0])" title="点击放大预览主图">
+                  <div class="relative group cursor-pointer" @click="openImagePreview(getItemImage(item))" title="点击放大预览主图">
                     <img 
-                      :src="item.raw_images[0] || 'https://via.placeholder.com/80'" 
+                      :src="getItemImage(item)" 
                       class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs bg-white group-hover:opacity-85 transition"
                     />
                     <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -950,10 +950,10 @@
 
             <!-- 图片预览 (支持点击放大预览) -->
             <div>
-              <label class="block text-xs font-semibold text-slate-600 mb-1.5">原始图片列表 ({{ activeItem.raw_images.length }}张，点击放大)</label>
+              <label class="block text-xs font-semibold text-slate-600 mb-1.5">原始图片列表 ({{ (activeItem.raw_images || []).length }}张，点击放大)</label>
               <div class="flex space-x-2 overflow-x-auto py-2">
                 <div 
-                  v-for="(img, idx) in activeItem.raw_images" 
+                  v-for="(img, idx) in (activeItem.raw_images || [])" 
                   :key="idx" 
                   class="relative group cursor-pointer shrink-0"
                   @click="openImagePreview(img)"
@@ -2091,6 +2091,7 @@
           viewMode: 'grouped', // 'grouped' | 'flat'
           expandedGroups: {},
           previewImageUrl: null,
+          placeholderImg: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><rect width='100%' height='100%' fill='%23f1f5f9'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='12' font-family='sans-serif'>暂无图片</text></svg>",
           toasts: [],
           confirmDialog: {
             show: false,
@@ -2177,7 +2178,7 @@
               map[grpKey] = {
                 group_code: grpKey,
                 title: (item.takealot_title || '').replace(/\s*-\s*[^-]+-[^-]+$/, '').replace(/\s*-\s*[^-]+$/, '').trim(),
-                coverImage: item.raw_images && item.raw_images.length ? item.raw_images[0] : '',
+                coverImage: (item.raw_images && item.raw_images.length ? item.raw_images[0] : (item.images && item.images.length ? item.images[0] : '')),
                 takealot_url: item.takealot_url,
                 items: [],
                 colors: [],
@@ -2207,8 +2208,14 @@
         this.checkActiveTasks();
       },
       methods: {
+        getItemImage(item) {
+          if (!item) return this.placeholderImg;
+          if (Array.isArray(item.raw_images) && item.raw_images.length > 0 && item.raw_images[0]) return item.raw_images[0];
+          if (Array.isArray(item.images) && item.images.length > 0 && item.images[0]) return item.images[0];
+          return this.placeholderImg;
+        },
         openImagePreview(url) {
-          if (!url) return;
+          if (!url || url.startsWith('data:image/svg')) return;
           this.previewImageUrl = url;
         },
         toggleGroupExpand(code) {
