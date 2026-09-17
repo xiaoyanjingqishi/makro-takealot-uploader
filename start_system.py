@@ -30,16 +30,20 @@ def check_port_available(port: int, host: str = "0.0.0.0") -> bool:
 def run_reverse_proxy(proxy_port: int, target_url: str = "http://127.0.0.1:8001"):
     import uvicorn
     from app.services.lan_proxy import create_reverse_proxy_app
-    proxy_app = create_reverse_proxy_app(target_url=target_url)
-    config = uvicorn.Config(
-        app=proxy_app,
-        host="0.0.0.0",
-        port=proxy_port,
-        log_level="warning",
-        access_log=False
-    )
-    server = uvicorn.Server(config)
-    server.run()
+    while True:
+        try:
+            proxy_app = create_reverse_proxy_app(target_url=target_url)
+            config = uvicorn.Config(
+                app=proxy_app,
+                host="0.0.0.0",
+                port=proxy_port,
+                log_level="warning",
+                access_log=False
+            )
+            server = uvicorn.Server(config)
+            server.run()
+        except Exception:
+            time.sleep(2)
 
 def main():
     import uvicorn
@@ -95,8 +99,16 @@ def main():
 
     threading.Thread(target=open_browser, daemon=True).start()
 
-    # 启动主后端 FastAPI 服务
-    uvicorn.run("main:app", app_dir=str(backend_dir), host="0.0.0.0", port=8001, reload=False)
+    # 启动主后端 FastAPI 服务 (具备自动恢复拉起能力)
+    while True:
+        try:
+            uvicorn.run("main:app", app_dir=str(backend_dir), host="0.0.0.0", port=8001, reload=False)
+        except (KeyboardInterrupt, SystemExit):
+            print("\n  [系统退出] 收到退出指令，服务已停止。")
+            break
+        except Exception as e:
+            print(f"\n  [异常警告] 主后端服务异常退出: {e}，正在 3 秒后自动拉起重启...")
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()
