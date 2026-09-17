@@ -63,137 +63,170 @@
 
       <!-- ================= Tab 1: 选品箱 ================= -->
       <div v-if="currentTab === 'products'" class="space-y-4">
-        <!-- 筛选与操作工具栏 -->
-        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
-          <div class="flex items-center space-x-2 flex-1 max-w-2xl flex-wrap gap-y-2">
-            <input 
-              v-model="searchQuery" 
-              @keyup.enter="loadProducts(1)"
-              type="text" 
-              placeholder="搜索商品标题、原标题、母体或条码..." 
-              class="w-48 text-xs px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-            />
-            <select 
-              v-model="statusFilter" 
-              @change="loadProducts(1)"
-              class="text-xs px-2.5 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none whitespace-nowrap"
-            >
-              <option value="">全部流程状态</option>
-              <option value="PENDING_CLEAN">待AI清洗</option>
-              <option value="CLEANED">已清洗待上</option>
-              <option value="SUBMITTED">已提交审核</option>
-              <option value="FAILED">上品失败</option>
-            </select>
-            <select 
-              v-model="complianceFilter" 
-              @change="loadProducts(1)"
-              class="text-xs px-2.5 py-2 border border-purple-300 bg-purple-50/50 text-purple-900 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none whitespace-nowrap font-medium"
-            >
-              <option value="">全部合规状态</option>
-              <option value="SAFE">🛡️ 安全合规 (SAFE)</option>
-              <option value="RISK">⚠️ 疑似风险 (RISK)</option>
-              <option value="PROHIBITED">🚫 违禁拦截 (PROHIBITED)</option>
-              <option value="PENDING_CHECK">⏳ 待检测 (PENDING)</option>
-            </select>
-            <!-- 价格区间过滤 -->
-            <div class="flex items-center space-x-1 border border-slate-300 rounded-lg px-2 py-1.5 bg-white text-xs text-slate-600 shrink-0">
-              <span class="text-slate-400 text-[10px] font-bold">R</span>
-              <input 
-                v-model.number="minPriceFilter" 
-                @keyup.enter="loadProducts(1)"
-                type="number" 
-                placeholder="最低价" 
-                class="w-14 text-xs p-0 border-none focus:outline-none focus:ring-0 text-slate-800"
-              />
-              <span class="text-slate-300">-</span>
-              <span class="text-slate-400 text-[10px] font-bold">R</span>
-              <input 
-                v-model.number="maxPriceFilter" 
-                @keyup.enter="loadProducts(1)"
-                type="number" 
-                placeholder="最高价" 
-                class="w-14 text-xs p-0 border-none focus:outline-none focus:ring-0 text-slate-800"
-              />
-              <button 
-                @click="loadProducts(1)" 
-                class="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded font-semibold transition"
+        <!-- 筛选与操作工具栏 (两层式结构化设计) -->
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm divide-y divide-slate-100 overflow-hidden">
+          <!-- Tier 1: 搜索与检索过滤栏 -->
+          <div class="p-3 sm:px-4 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+            <!-- 左侧筛选控件组合 -->
+            <div class="flex items-center space-x-2 flex-wrap gap-y-2 flex-1 min-w-[320px]">
+              <!-- 搜索框 -->
+              <div class="relative w-64 min-w-[200px]">
+                <span class="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-slate-400">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </span>
+                <input 
+                  v-model="searchQuery" 
+                  @keyup.enter="loadProducts(1)"
+                  type="text" 
+                  placeholder="搜索标题、母体或条码..." 
+                  class="w-full text-xs pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder:text-slate-400"
+                />
+              </div>
+
+              <!-- 流程状态 -->
+              <select 
+                v-model="statusFilter" 
+                @change="loadProducts(1)"
+                class="text-xs px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none font-medium text-slate-700 cursor-pointer"
               >
-                过滤
-              </button>
-              <button 
-                v-if="minPriceFilter !== null || maxPriceFilter !== null" 
-                @click="minPriceFilter = null; maxPriceFilter = null; loadProducts(1)" 
-                class="text-[10px] text-slate-400 hover:text-slate-600 px-0.5"
-                title="清除价格过滤"
+                <option value="">全部流程状态</option>
+                <option value="PENDING_CLEAN">待AI清洗</option>
+                <option value="CLEANED">已清洗待上</option>
+                <option value="SUBMITTED">已提交审核</option>
+                <option value="FAILED">上品失败</option>
+              </select>
+
+              <!-- 合规状态 -->
+              <select 
+                v-model="complianceFilter" 
+                @change="loadProducts(1)"
+                class="text-xs px-2.5 py-1.5 border border-purple-300 bg-purple-50/70 text-purple-900 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none font-medium cursor-pointer"
               >
-                ✕
+                <option value="">全部合规状态</option>
+                <option value="SAFE">🛡️ 安全合规 (SAFE)</option>
+                <option value="RISK">⚠️ 疑似风险 (RISK)</option>
+                <option value="PROHIBITED">🚫 违禁拦截 (PROHIBITED)</option>
+                <option value="PENDING_CHECK">⏳ 待检测 (PENDING)</option>
+              </select>
+
+              <!-- 价格区间过滤胶囊 -->
+              <div class="flex items-center space-x-1 border border-slate-300 rounded-lg px-2 py-1 bg-white text-xs text-slate-600 shadow-xs">
+                <span class="text-slate-400 text-[11px] font-bold">R</span>
+                <input 
+                  v-model.number="minPriceFilter" 
+                  @keyup.enter="loadProducts(1)"
+                  type="number" 
+                  placeholder="最低价" 
+                  class="w-14 text-xs p-0 border-none focus:outline-none focus:ring-0 text-slate-800 font-semibold"
+                />
+                <span class="text-slate-300 text-xs">-</span>
+                <span class="text-slate-400 text-[11px] font-bold">R</span>
+                <input 
+                  v-model.number="maxPriceFilter" 
+                  @keyup.enter="loadProducts(1)"
+                  type="number" 
+                  placeholder="最高价" 
+                  class="w-14 text-xs p-0 border-none focus:outline-none focus:ring-0 text-slate-800 font-semibold"
+                />
+                <button 
+                  @click="loadProducts(1)" 
+                  class="text-[11px] px-2 py-0.5 bg-blue-600 text-white hover:bg-blue-700 rounded font-semibold transition cursor-pointer ml-1"
+                >
+                  过滤
+                </button>
+                <button 
+                  v-if="minPriceFilter !== null || maxPriceFilter !== null" 
+                  @click="minPriceFilter = null; maxPriceFilter = null; loadProducts(1)" 
+                  class="text-xs text-slate-400 hover:text-slate-600 px-1 cursor-pointer"
+                  title="清除价格过滤"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <!-- 右侧：视图切换器与刷新 -->
+            <div class="flex items-center space-x-2 shrink-0">
+              <div class="flex items-center bg-slate-200/70 p-0.5 rounded-lg border border-slate-200">
+                <button 
+                  @click="viewMode = 'grouped'" 
+                  :class="viewMode === 'grouped' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'"
+                  class="px-3 py-1 text-xs rounded-md transition flex items-center space-x-1 cursor-pointer"
+                  title="按 Takealot 母体折叠聚合变体"
+                >
+                  <span>🗂️ 母体聚合</span>
+                </button>
+                <button 
+                  @click="viewMode = 'flat'" 
+                  :class="viewMode === 'flat' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'"
+                  class="px-3 py-1 text-xs rounded-md transition flex items-center space-x-1 cursor-pointer"
+                  title="全量平铺独立变体明细"
+                >
+                  <span>📄 变体平铺</span>
+                </button>
+              </div>
+
+              <button 
+                @click="loadProducts(currentPage)" 
+                class="px-3 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg shadow-xs flex items-center space-x-1 transition cursor-pointer"
+              >
+                <span>🔄 刷新</span>
               </button>
             </div>
           </div>
 
-          <div class="flex items-center space-x-2">
-            <button 
-              @click="batchClean" 
-              :disabled="selectedIds.length === 0"
-              class="px-3 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
-            >
-              <span>⚡ 批量AI清洗 ({{ selectedIds.length }})</span>
-            </button>
-            <button 
-              @click="batchCheckCompliance" 
-              :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
-              class="px-3 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
-            >
-              <span v-if="isBatchCheckingCompliance">⏳ 检测中...</span>
-              <span v-else>🛡️ 批量合规检测 ({{ selectedIds.length }})</span>
-            </button>
-            <button 
-              @click="batchPublish" 
-              :disabled="selectedIds.length === 0 || isBatchPublishing"
-              class="px-3 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-lg shadow-sm flex items-center space-x-1"
-            >
-              <span v-if="isBatchPublishing">⏳ 批量上品中...</span>
-              <span v-else>🚀 批量上品 ({{ selectedIds.length }})</span>
-            </button>
-            <button 
-              @click="batchDelete" 
-              :disabled="selectedIds.length === 0"
-              class="px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-40 rounded-lg border border-red-200 flex items-center space-x-1"
-            >
-              <span>🗑️ 批量删除 ({{ selectedIds.length }})</span>
-            </button>
-            <button 
-              @click="showQuickCollectModal = true" 
-              class="px-3 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm flex items-center space-x-1"
-            >
-              <span>📥 + PLID极速采集</span>
-            </button>
-            <!-- 视图切换: 聚合 vs 平铺 -->
-            <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+          <!-- Tier 2: 批量操作与极速采集操作栏 -->
+          <div class="px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 bg-white">
+            <!-- 左侧：批量操作按钮群 -->
+            <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
+              <span class="text-xs font-medium text-slate-500 mr-1 flex items-center space-x-1">
+                <span>已选择</span>
+                <strong class="text-blue-600 font-bold px-1.5 py-0.2 bg-blue-50 border border-blue-200 rounded">{{ selectedIds.length }}</strong>
+                <span>项:</span>
+              </span>
+
               <button 
-                @click="viewMode = 'grouped'" 
-                :class="viewMode === 'grouped' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-800'"
-                class="px-2.5 py-1.5 text-xs rounded-md transition flex items-center space-x-1"
-                title="按 Takealot 母体折叠聚合变体"
+                @click="batchClean" 
+                :disabled="selectedIds.length === 0 || isCleaning"
+                class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
               >
-                <span>🗂️ 母体聚合</span>
+                <span v-if="isCleaning">⏳ 清洗中...</span>
+                <span v-else>⚡ 批量AI清洗</span>
               </button>
               <button 
-                @click="viewMode = 'flat'" 
-                :class="viewMode === 'flat' ? 'bg-white text-blue-600 shadow-xs font-bold' : 'text-slate-500 hover:text-slate-800'"
-                class="px-2.5 py-1.5 text-xs rounded-md transition flex items-center space-x-1"
-                title="全量平铺独立变体明细"
+                @click="batchCheckCompliance" 
+                :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
+                class="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
               >
-                <span>📄 变体平铺</span>
+                <span v-if="isBatchCheckingCompliance">⏳ 检测中...</span>
+                <span v-else>🛡️ 批量合规检测</span>
+              </button>
+              <button 
+                @click="batchPublish" 
+                :disabled="selectedIds.length === 0 || isBatchPublishing"
+                class="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
+              >
+                <span v-if="isBatchPublishing">⏳ 上品中...</span>
+                <span v-else>🚀 批量上品</span>
+              </button>
+              <button 
+                @click="batchDelete" 
+                :disabled="selectedIds.length === 0"
+                class="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-rose-200 flex items-center space-x-1 transition"
+              >
+                <span>🗑️ 批量删除</span>
               </button>
             </div>
 
-            <button 
-              @click="loadProducts(currentPage)" 
-              class="px-3 py-2 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center space-x-1"
-            >
-              <span>🔄 刷新</span>
-            </button>
+            <!-- 右侧：突出显示的采集按钮 -->
+            <div class="flex items-center space-x-2">
+              <button 
+                @click="showQuickCollectModal = true" 
+                class="px-4 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-lg shadow-sm flex items-center space-x-1.5 transition cursor-pointer"
+              >
+                <span>📥 + PLID极速采集</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -543,43 +576,47 @@
             </tbody>
           </table>
 
-          <!-- 分页导航条 -->
-          <div class="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
-            <div class="flex items-center space-x-2">
-              <span>共 <strong class="text-slate-900 font-bold">{{ products.total || 0 }}</strong> 件商品</span>
-              <span>•</span>
-              <span v-if="products.items.length > 0">
-                当前显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, products.total || 0) }} 条
-              </span>
-              <span v-else>暂无匹配数据</span>
+        </div>
+
+        <!-- 全局统一分页导航条 (母体聚合与变体平铺通用) -->
+        <div class="px-4 py-3 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
+          <div class="flex items-center space-x-2">
+            <span>共 <strong class="text-slate-900 font-bold">{{ products.total || 0 }}</strong> 件变体商品</span>
+            <span v-if="viewMode === 'grouped'" class="text-slate-500 font-medium">
+              （当前页聚合展示 <strong class="text-blue-600 font-bold">{{ groupedProducts.length }}</strong> 个母体）
+            </span>
+            <span>•</span>
+            <span v-if="products.items && products.items.length > 0">
+              当前显示第 {{ (currentPage - 1) * pageSize + 1 }} - {{ Math.min(currentPage * pageSize, products.total || 0) }} 条
+            </span>
+            <span v-else>暂无匹配数据</span>
+          </div>
+          <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-1">
+              <span class="text-slate-500">每页:</span>
+              <select v-model.number="pageSize" @change="loadProducts(1)" class="px-2 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 font-medium cursor-pointer">
+                <option :value="20">20 条/页</option>
+                <option :value="50">50 条/页</option>
+                <option :value="100">100 条/页</option>
+                <option :value="200">200 条/页</option>
+              </select>
             </div>
-            <div class="flex items-center space-x-3">
-              <div class="flex items-center space-x-1">
-                <span class="text-slate-500">每页:</span>
-                <select v-model="pageSize" @change="loadProducts(1)" class="px-2 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500">
-                  <option :value="20">20 条/页</option>
-                  <option :value="50">50 条/页</option>
-                  <option :value="100">100 条/页</option>
-                  <option :value="200">200 条/页</option>
-                </select>
-              </div>
-              <div class="flex items-center space-x-1">
-                <button 
-                  @click="loadProducts(currentPage - 1)" 
-                  :disabled="currentPage <= 1 || loadingProducts"
-                  class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-40 font-medium"
-                >
-                  &laquo; 上一页
-                </button>
-                <span class="px-2 font-semibold text-slate-800">{{ currentPage }} / {{ totalPages }}</span>
-                <button 
-                  @click="loadProducts(currentPage + 1)" 
-                  :disabled="currentPage >= totalPages || loadingProducts"
-                  class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-40 font-medium"
-                >
-                  下一页 &raquo;
-                </button>
-              </div>
+            <div class="flex items-center space-x-1">
+              <button 
+                @click="loadProducts(currentPage - 1)" 
+                :disabled="currentPage <= 1 || loadingProducts"
+                class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-40 font-medium cursor-pointer"
+              >
+                &laquo; 上一页
+              </button>
+              <span class="px-2 font-semibold text-slate-800">{{ currentPage }} / {{ totalPages }}</span>
+              <button 
+                @click="loadProducts(currentPage + 1)" 
+                :disabled="currentPage >= totalPages || loadingProducts"
+                class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-40 font-medium cursor-pointer"
+              >
+                下一页 &raquo;
+              </button>
             </div>
           </div>
         </div>

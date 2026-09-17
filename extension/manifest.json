@@ -11,7 +11,8 @@
   "permissions": [
     "activeTab",
     "storage",
-    "cookies"
+    "cookies",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.takealot.com/*",
@@ -37,7 +38,14 @@
         "https://*.takealot.com/*"
       ],
       "js": [
-        "scripts/content_takealot.js"
+        "scripts/restricted-brands.js",
+        "scripts/content_takealot.js",
+        "scripts/takealot_plp.js",
+        "scripts/auto_collector.js"
+      ],
+      "css": [
+        "styles/takealot_plp.css",
+        "styles/auto_collector.css"
       ],
       "run_at": "document_idle"
     },

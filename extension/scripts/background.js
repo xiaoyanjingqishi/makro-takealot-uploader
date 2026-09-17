@@ -3,8 +3,8 @@ const BACKEND_URL = "http://localhost:8001";
 // 监听内容脚本与弹窗的消息
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // 1. PLID 极速采集到后端（后端直接爬取全量数据）
-  if (request.action === "COLLECT_PLID" || request.action === "COLLECT_PRODUCT") {
-    const isPlidRequest = request.action === "COLLECT_PLID" || (request.data && (request.data.plid || typeof request.data === "string"));
+  if (request.action === "COLLECT_PLID" || request.action === "COLLECT_PRODUCT" || request.action === "SCRAPE_PRODUCT") {
+    const isPlidRequest = request.action === "COLLECT_PLID" || request.action === "SCRAPE_PRODUCT" || (request.data && (request.data.plid || typeof request.data === "string"));
     const endpoint = isPlidRequest ? `${BACKEND_URL}/api/products/collect-by-plid` : `${BACKEND_URL}/api/products/collect`;
     const payload = isPlidRequest 
       ? (typeof request.data === "string" ? { plid: request.data } : request.data) 
@@ -23,11 +23,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return res.json();
       })
       .then(data => {
-        sendResponse({ success: true, data });
+        const count = data.total_variants || (Array.isArray(data.items) ? data.items.length : 1);
+        sendResponse({ success: true, ok: true, count, data });
       })
       .catch(err => {
         console.error("采集推送到后端失败:", err);
-        sendResponse({ success: false, error: err.message });
+        sendResponse({ success: false, ok: false, message: err.message, error: err.message });
       });
     return true; // 保持异步消息通道
   }

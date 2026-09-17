@@ -1,0 +1,416 @@
+/* =======================================================
+   Takealot 智能自动采集与翻页助手 - 页面内嵌样式
+   ======================================================= */
+
+/* 1. 页面右侧常驻浮动胶囊入口按钮 */
+#tk-auto-capsule {
+  position: fixed;
+  right: 20px;
+  bottom: 85px;
+  z-index: 999990;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #ff6600, #ff3300);
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 30px;
+  box-shadow: 0 4px 18px rgba(255, 102, 0, 0.38);
+  cursor: pointer;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  user-select: none;
+}
+
+#tk-auto-capsule:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 6px 22px rgba(255, 102, 0, 0.48);
+}
+
+#tk-auto-capsule .capsule-icon {
+  font-size: 16px;
+  animation: tk-pulse 2s infinite;
+}
+
+#tk-auto-capsule .capsule-badge {
+  background: #ffffff;
+  color: #ff4500;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+@keyframes tk-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+/* 2. 核心主控制悬浮面板 */
+#tk-auto-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 80px;
+  width: 360px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  border: 1px solid #e2e8f0;
+  z-index: 999995;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 12px;
+  color: #2d3748;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.25s ease;
+}
+
+#tk-auto-panel.minimized {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  background: #ff5500;
+}
+
+#tk-auto-panel.minimized .tk-auto-header {
+  height: 100%;
+  padding: 0;
+  justify-content: center;
+}
+
+#tk-auto-panel.minimized .tk-auto-title,
+#tk-auto-panel.minimized .tk-auto-body {
+  display: none !important;
+}
+
+/* 面板头部 */
+.tk-auto-header {
+  background: linear-gradient(135deg, #ff6600, #ff3300);
+  color: #ffffff;
+  padding: 11px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: move;
+  user-select: none;
+}
+
+.tk-auto-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tk-auto-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tk-auto-btn-icon {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: #ffffff;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+
+.tk-auto-btn-icon:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* 面板主体内容区 */
+.tk-auto-body {
+  padding: 12px 14px;
+  max-height: 78vh;
+  overflow-y: auto;
+  background: #f8fafc;
+}
+
+/* 模块卡片区块 */
+.tk-auto-section {
+  background: #ffffff;
+  border: 1px solid #edf2f7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.tk-auto-sec-title {
+  font-weight: 700;
+  font-size: 12px;
+  color: #1a202c;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tk-auto-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tk-auto-row:last-child {
+  margin-bottom: 0;
+}
+
+.tk-auto-label {
+  font-size: 11px;
+  color: #4a5568;
+  font-weight: 600;
+  min-width: 65px;
+  flex-shrink: 0;
+}
+
+.tk-auto-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.tk-auto-input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #2d3748;
+  transition: border-color 0.15s;
+}
+
+.tk-auto-input:focus {
+  outline: none;
+  border-color: #ff6600;
+}
+
+.tk-auto-input-short {
+  width: 75px;
+  text-align: center;
+}
+
+.tk-auto-sep {
+  color: #a0aec0;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* 复选框行 */
+.tk-auto-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #4a5568;
+  cursor: pointer;
+  user-select: none;
+  margin-top: 4px;
+}
+
+.tk-auto-checkbox-row input {
+  cursor: pointer;
+  accent-color: #ff6600;
+}
+
+/* 操作按钮区 */
+.tk-auto-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tk-auto-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.tk-auto-btn-primary {
+  background: linear-gradient(135deg, #ff6600, #ff3300);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(255, 102, 0, 0.3);
+}
+
+.tk-auto-btn-primary:hover {
+  background: linear-gradient(135deg, #ff771a, #e62e00);
+  transform: translateY(-1px);
+}
+
+.tk-auto-btn-danger {
+  background: #e53e3e;
+  color: #ffffff;
+}
+
+.tk-auto-btn-danger:hover {
+  background: #c53030;
+}
+
+.tk-auto-btn-secondary {
+  background: #edf2f7;
+  color: #4a5568;
+}
+
+.tk-auto-btn-secondary:hover {
+  background: #e2e8f0;
+}
+
+.tk-auto-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* 运行状态仪表盘 */
+.tk-auto-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.tk-auto-stat-box {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 4px;
+  text-align: center;
+}
+
+.tk-auto-stat-num {
+  font-size: 14px;
+  font-weight: 800;
+  color: #1a202c;
+  font-family: monospace;
+}
+
+.tk-auto-stat-label {
+  font-size: 10px;
+  color: #718096;
+}
+
+.tk-auto-stat-box.success .tk-auto-stat-num { color: #38a169; }
+.tk-auto-stat-box.filter .tk-auto-stat-num { color: #e53e3e; }
+.tk-auto-stat-box.page .tk-auto-stat-num { color: #3182ce; }
+
+/* 进度条 */
+.tk-auto-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: #edf2f7;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.tk-auto-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ff9900, #ff3300);
+  transition: width 0.3s ease;
+}
+
+/* 实时日志控制台 */
+.tk-auto-log-box {
+  background: #1a202c;
+  color: #a0aec0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 10.5px;
+  max-height: 110px;
+  overflow-y: auto;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tk-auto-log-line {
+  margin-bottom: 3px;
+}
+
+.tk-auto-log-line.success { color: #48bb78; }
+.tk-auto-log-line.warn { color: #ed8936; }
+.tk-auto-log-line.error { color: #f56565; }
+.tk-auto-log-line.info { color: #63b3ed; }
+
+/* 3. 商品卡片视觉高亮反馈 */
+.tk-card-matched {
+  outline: 2px solid #38a169 !important;
+  outline-offset: -2px;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.tk-card-skipped {
+  opacity: 0.55 !important;
+  filter: grayscale(20%);
+  position: relative;
+  transition: all 0.2s;
+}
+
+.tk-card-restricted {
+  outline: 2px dashed #e53e3e !important;
+  outline-offset: -2px;
+  position: relative;
+  opacity: 0.55 !important;
+}
+
+/* 卡片角标反馈 */
+.tk-card-status-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 100;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  pointer-events: none;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.tk-card-status-badge.ok {
+  background: #2e7d32;
+  color: #ffffff;
+}
+
+.tk-card-status-badge.skip {
+  background: #546e7a;
+  color: #ffffff;
+}
+
+.tk-card-status-badge.danger {
+  background: #c62828;
+  color: #ffffff;
+}

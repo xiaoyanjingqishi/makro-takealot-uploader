@@ -5,6 +5,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const statCount = document.getElementById("stat-count");
   const statMarkup = document.getElementById("stat-markup");
 
+  const autoCollectorBtn = document.getElementById("auto-collector-btn");
+
   const BACKEND_URL = "http://localhost:8001";
 
   // 1. 检查后端连接与拉取基础数据
@@ -35,10 +37,28 @@ document.addEventListener("DOMContentLoaded", () => {
     const url = currentTab.url || "";
 
     if (url.includes("takealot.com")) {
-      pageInfo.innerText = currentTab.title || "Takealot 商品页面";
-      actionBtn.innerText = "📦 立即采集当前商品";
-      actionBtn.disabled = false;
-      actionBtn.onclick = () => {
+      const isPlp = !/PLID\d+/i.test(url);
+      pageInfo.innerText = currentTab.title || (isPlp ? "Takealot 列表搜索页" : "Takealot 商品详情页");
+      
+      if (autoCollectorBtn) {
+        autoCollectorBtn.style.display = "block";
+        autoCollectorBtn.onclick = () => {
+          chrome.tabs.sendMessage(currentTab.id, { action: "OPEN_AUTO_COLLECTOR" });
+          window.close();
+        };
+      }
+
+      if (isPlp) {
+        actionBtn.innerText = "🤖 启动自动筛选采集面板";
+        actionBtn.disabled = false;
+        actionBtn.onclick = () => {
+          chrome.tabs.sendMessage(currentTab.id, { action: "OPEN_AUTO_COLLECTOR" });
+          window.close();
+        };
+      } else {
+        actionBtn.innerText = "📦 立即采集当前商品";
+        actionBtn.disabled = false;
+        actionBtn.onclick = () => {
         actionBtn.innerText = "⏳ 采集处理中...";
         actionBtn.disabled = true;
 

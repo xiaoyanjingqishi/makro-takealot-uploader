@@ -93,6 +93,14 @@
     }
 
     const btn = document.getElementById("makro-collect-btn");
+    
+    // 品牌侵权风控与二次确认守卫
+    if (btn && window.TkBrandChecker && window.TkBrandChecker.guard(btn, document, "📦 一键采集到 Makro")) {
+      return;
+    }
+
+    const hitBrand = window.TkBrandChecker ? window.TkBrandChecker.detectInScope(document) : null;
+
     if (btn) {
       btn.innerText = `⏳ 后端正在采集 (${plid})...`;
       btn.disabled = true;
@@ -103,7 +111,9 @@
       action: "COLLECT_PLID",
       data: {
         plid: plid,
-        url: window.location.href
+        url: window.location.href,
+        is_restricted: hitBrand ? 1 : 0,
+        restricted_brand: hitBrand || ''
       }
     }, (response) => {
       if (btn) {
