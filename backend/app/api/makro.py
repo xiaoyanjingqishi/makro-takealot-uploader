@@ -842,12 +842,24 @@ def publish_product_to_makro(
         "product": _format_product(product)
     }
 
-@router.post("/batch-publish", summary="批量上品到 Makro (支持指定店铺或全部店铺，后台异步执行)")
+@router.post("/batch-publish", summary="批量上品到 Makro (支持受控多线程并发与店铺间并行，后台异步执行)")
 def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = None, db: Session = Depends(get_db)):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "results": [], "message": "未选择商品"}
 
     effective_force = bool(getattr(req, "force", False) or (force is True))
+
+    # 读取批量上品并发度配置 (支持请求显式指定，默认取系统配置 publish_concurrency，限制 1~5 线程)
+    from ..models.setting import SystemSetting
+    setting_concurrency = db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
+    try:
+        cfg_concurrency = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else getattr(settings, "DEFAULT_PUBLISH_CONCURRENCY", 2)
+    except Exception:
+        cfg_concurrency = getattr(settings, "DEFAULT_PUBLISH_CONCURRENCY", 2)
+
+    req_concurrency = getattr(req, "concurrency", None)
+    raw_concurrency = req_concurrency if (req_concurrency is not None and req_concurrency > 0) else cfg_concurrency
+    concurrency = max(1, min(5, raw_concurrency))
 
     from ..models.store import Store
     target_stores = []
@@ -869,38 +881,52 @@ def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = Non
     total_ops = len(req.product_ids) * len(target_stores)
     store_names_str = "、".join([s.name if s else "默认店铺" for s in target_stores])
     force_tag = " [强制上架模式]" if effective_force else ""
-    task_title = f"批量上品至 Makro [{store_names_str}]{force_tag} (共 {len(req.product_ids)} 件品 × {len(target_stores)} 店铺)"
+    multi_store_tag = f" · {len(target_stores)}店并行" if len(target_stores) > 1 else ""
+    concurrency_tag = f" [{concurrency}线程受控并发{multi_store_tag}]"
+    task_title = f"批量上品至 Makro [{store_names_str}]{force_tag}{concurrency_tag} (共 {len(req.product_ids)} 件品 × {len(target_stores)} 店铺)"
     task = task_manager.create_task("BATCH_PUBLISH", task_title, total_ops, req.product_ids)
     task_id = task["id"]
 
     def _worker(tm: TaskManager, tid: str):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         from ..database import SessionLocal
-        local_db = SessionLocal()
-        try:
-            completed_count = 0
-            for pid in req.product_ids:
-                if tm.is_cancelled(tid):
-                    break
+        import threading
 
+        completed_lock = threading.Lock()
+        completed_count = 0
+
+        def _do_one_product(p_idx: int, pid: int):
+            nonlocal completed_count
+            if tm.is_cancelled(tid):
+                return
+
+            local_db = SessionLocal()
+            try:
                 product = local_db.query(Product).filter(Product.id == pid).first()
                 if not product:
-                    for _ in target_stores:
-                        completed_count += 1
-                        tm.update_progress(tid, current=completed_count, fail_inc=1, error=f"商品 {pid} 不存在")
-                    continue
+                    with completed_lock:
+                        for _ in target_stores:
+                            completed_count += 1
+                            tm.update_progress(tid, current=completed_count, fail_inc=1, error=f"商品 {pid} 不存在")
+                    return
 
                 p_title = product.takealot_title
 
                 if product.compliance_status == "PROHIBITED" and not effective_force:
-                    for _ in target_stores:
-                        completed_count += 1
-                        tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error="违禁品拦截，跳过发布")
-                    continue
+                    with completed_lock:
+                        for _ in target_stores:
+                            completed_count += 1
+                            tm.update_progress(tid, current=completed_count, current_title=p_title, fail_inc=1, error="违禁品拦截，跳过发布")
+                    return
 
                 raw_vertical = product.makro_vertical or "bath_towel"
                 valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
 
-                for s_item in target_stores:
+                # 店铺间交替轮询调度：不同商品由不同店铺优先启动，实现多店铺天然并行
+                n_stores = len(target_stores)
+                ordered_stores = [target_stores[(p_idx + s_offset) % n_stores] for s_offset in range(n_stores)]
+
+                for s_item in ordered_stores:
                     if tm.is_cancelled(tid):
                         break
 
@@ -916,30 +942,47 @@ def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = Non
                     disp_title = f"【{s_name}·{brand}】{p_title[:16]}"
 
                     if not local_client.cookie:
-                        completed_count += 1
-                        tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=f"店铺【{s_name}】未配置 Cookie")
+                        with completed_lock:
+                            completed_count += 1
+                            cur_c = completed_count
+                        tm.update_progress(tid, current=cur_c, current_title=disp_title, fail_inc=1, error=f"店铺【{s_name}】未配置 Cookie")
                         _record_store_listing(local_db, product.id, s_item, False, None, None, f"店铺【{s_name}】未配置 Cookie", product.makro_selling_price, product.makro_mrp, brand=brand)
                         continue
 
                     try:
                         res = _publish_single_product(local_client, local_db, product, valid_vertical, vid, brand, target_store=s_item)
-                        completed_count += 1
+                        with completed_lock:
+                            completed_count += 1
+                            cur_c = completed_count
                         if res["success"]:
-                            tm.update_progress(tid, current=completed_count, current_title=disp_title, success_inc=1)
+                            tm.update_progress(tid, current=cur_c, current_title=disp_title, success_inc=1)
                         else:
-                            tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=res.get("message"))
+                            tm.update_progress(tid, current=cur_c, current_title=disp_title, fail_inc=1, error=res.get("message"))
                     except Exception as ex:
                         logger.error(f"商品 {pid} 在店铺 {s_name} 批量上架异常: {ex}", exc_info=True)
-                        completed_count += 1
-                        tm.update_progress(tid, current=completed_count, current_title=disp_title, fail_inc=1, error=str(ex))
+                        with completed_lock:
+                            completed_count += 1
+                            cur_c = completed_count
+                        tm.update_progress(tid, current=cur_c, current_title=disp_title, fail_inc=1, error=str(ex))
+            finally:
+                local_db.close()
 
-            t_now = tm.get_task(tid)
-            succ = t_now["success_count"] if t_now else 0
-            fail = t_now["fail_count"] if t_now else 0
-            status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
-            tm.finish_task(tid, status=status, message=f"批量上品完成: 成功 {succ} 次, 失败 {fail} 次")
-        finally:
-            local_db.close()
+        actual_workers = min(concurrency, max(1, len(req.product_ids)))
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            futures = [executor.submit(_do_one_product, idx, pid) for idx, pid in enumerate(req.product_ids)]
+            for fut in as_completed(futures):
+                if tm.is_cancelled(tid):
+                    break
+                try:
+                    fut.result()
+                except Exception as e:
+                    logger.error(f"批量上品子任务执行异常: {e}", exc_info=True)
+
+        t_now = tm.get_task(tid)
+        succ = t_now["success_count"] if t_now else 0
+        fail = t_now["fail_count"] if t_now else 0
+        status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
+        tm.finish_task(tid, status=status, message=f"批量上品完成 (受控并发度: {actual_workers} 线程): 成功 {succ} 次, 失败 {fail} 次")
 
     task_manager.start_task(task_id, _worker)
 
@@ -947,7 +990,8 @@ def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = Non
         "task_id": task_id,
         "status": "RUNNING",
         "total": total_ops,
-        "message": f"已在后台启动多店铺批量上品至 Makro (共 {total_ops} 次任务分发)"
+        "concurrency": concurrency,
+        "message": f"已在后台启动多店铺批量上品至 Makro (共 {total_ops} 次任务分发 · {concurrency} 线程并发)"
     }
 
 @router.post("/publish-variant/{variant_id}", summary="单变体独立上品或重新上架到 Makro")

@@ -18,6 +18,12 @@ def get_settings(db: Session = Depends(get_db)):
         except (ValueError, TypeError):
             return default
 
+    def _get_int(key: str, default: int) -> int:
+        try:
+            return int(setting_dict.get(key, default))
+        except (ValueError, TypeError):
+            return default
+
     def _get_str(key: str, default: str) -> str:
         val = setting_dict.get(key)
         return val if val is not None else default
@@ -26,6 +32,7 @@ def get_settings(db: Session = Depends(get_db)):
         markup_ratio=_get_float("markup_ratio", settings.DEFAULT_MARKUP_RATIO),
         fixed_markup=_get_float("fixed_markup", settings.DEFAULT_FIXED_MARKUP),
         mrp_ratio=_get_float("mrp_ratio", settings.DEFAULT_MRP_RATIO),
+        publish_concurrency=_get_int("publish_concurrency", getattr(settings, "DEFAULT_PUBLISH_CONCURRENCY", 2)),
         seller_id=_get_str("seller_id", settings.DEFAULT_SELLER_ID),
         fk_csrf_token=_get_str("fk_csrf_token", settings.DEFAULT_FK_CSRF_TOKEN),
         cookie=_get_str("cookie", ""),

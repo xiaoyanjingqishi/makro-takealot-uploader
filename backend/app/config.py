@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # 上品执行模式: 'backend' (后端发包) 或 'extension' (插件在浏览器上下文代发)
     UPLOAD_MODE: str = "backend"
 
+    # 默认批量上品并发线程数 (推荐 2~3，支持店铺间并发)
+    DEFAULT_PUBLISH_CONCURRENCY: int = 2
+
     class Config:
         env_file = ".env"
         extra = "ignore"

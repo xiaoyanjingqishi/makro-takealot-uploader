@@ -127,6 +127,7 @@ class BatchPublishRequest(BaseModel):
     publish_all_stores: Optional[bool] = False
     store_ids: Optional[List[int]] = None
     force: Optional[bool] = False
+    concurrency: Optional[int] = None
 
 class BatchDeleteRequest(BaseModel):
     product_ids: List[int]

@@ -511,9 +511,8 @@ def batch_update_price(payload: dict, db: Session = Depends(get_db)):
                 continue
             new_selling = float(fixed_price)
         else:
-            curr = float(p.makro_selling_price or p.takealot_price or 0.0)
-            mult = float(multiplier) if multiplier is not None else 1.0
-            offset = float(fixed_offset) if fixed_offset is not None else 0.0
+            mult = float(multiplier) if (multiplier is not None and str(multiplier).strip() != "") else 1.0
+            offset = float(fixed_offset) if (fixed_offset is not None and str(fixed_offset).strip() != "") else 0.0
             new_selling = curr * mult + offset
 
         new_selling = max(1, round(new_selling))

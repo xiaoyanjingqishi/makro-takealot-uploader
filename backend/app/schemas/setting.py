@@ -7,6 +7,9 @@ class SystemSettingsSchema(BaseModel):
     fixed_markup: float = 20.0
     mrp_ratio: float = 1.5
 
+    # 并发与性能调度
+    publish_concurrency: int = 2  # 批量上品并发线程数 (推荐 2~3，支持店铺间并发)
+
     # Makro 凭据与店铺配置
     seller_id: str = "cb80491bf0a34dc5"
     fk_csrf_token: str = "FbvXzXEP-45o5eUtkeX8Wo6LCq9GBWDg9Rcg"
