@@ -17,8 +17,9 @@ class Product(Base):
     takealot_specs = Column(Text, nullable=True)  # JSON 字符串
     raw_images = Column(Text, nullable=True)      # JSON 字符串 (URL 列表)
 
-    # 状态: PENDING_CLEAN, CLEANED, SUBMITTED, QC_PENDING, ACTIVE, FAILED
+    # 状态: PENDING_CLEAN, CLEANED, SUBMITTED, QC_PENDING, ACTIVE, FAILED, ABANDONED (弃用)
     status = Column(String(50), default="PENDING_CLEAN", index=True)
+    previous_status = Column(String(50), nullable=True)  # 记录移入弃用箱前的原始状态，供恢复使用
 
     # AI 清洗与规范化后的 Makro 属性
     makro_vertical = Column(String(100), default="bath_towel", index=True)

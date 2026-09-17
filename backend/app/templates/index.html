@@ -244,6 +244,20 @@
                 {{ statusCounts.FAILED || 0 }}
               </span>
             </button>
+
+            <button 
+              @click="changeStatusTab('ABANDONED')" 
+              :class="statusFilter === 'ABANDONED' ? 'bg-slate-700 text-white shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium'"
+              class="px-3.5 py-2 text-xs rounded-lg transition flex items-center space-x-2 cursor-pointer"
+            >
+              <span>🗑️ 弃用商品</span>
+              <span 
+                :class="statusFilter === 'ABANDONED' ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-700'" 
+                class="px-1.5 py-0.5 text-[10px] rounded-full font-bold"
+              >
+                {{ statusCounts.ABANDONED || 0 }}
+              </span>
+            </button>
           </div>
         </div>
 
@@ -356,45 +370,69 @@
                 <span>项:</span>
               </span>
 
-              <button 
-                @click="batchClean" 
-                :disabled="selectedIds.length === 0 || isCleaning"
-                class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
-              >
-                <span v-if="isCleaning">⏳ 清洗中...</span>
-                <span v-else>⚡ 批量AI清洗</span>
-              </button>
-              <button 
-                @click="batchCheckCompliance" 
-                :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
-                class="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
-              >
-                <span v-if="isBatchCheckingCompliance">⏳ 检测中...</span>
-                <span v-else>🛡️ 批量合规检测</span>
-              </button>
-              <button 
-                @click="batchPublish" 
-                :disabled="selectedIds.length === 0 || isBatchPublishing"
-                class="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
-              >
-                <span v-if="isBatchPublishing">⏳ 上品中...</span>
-                <span v-else>🚀 批量上品</span>
-              </button>
-              <button 
-                @click="openBatchPriceModal" 
-                :disabled="selectedIds.length === 0"
-                class="px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-blue-200 flex items-center space-x-1 transition cursor-pointer"
-                title="批量修改所选商品的售价与MRP划线价"
-              >
-                <span>💰 批量改价</span>
-              </button>
-              <button 
-                @click="batchDelete" 
-                :disabled="selectedIds.length === 0"
-                class="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-rose-200 flex items-center space-x-1 transition"
-              >
-                <span>🗑️ 批量删除</span>
-              </button>
+              <!-- 弃用箱专属批量操作 -->
+              <template v-if="statusFilter === 'ABANDONED'">
+                <button 
+                  @click="batchRestore" 
+                  :disabled="selectedIds.length === 0"
+                  class="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition cursor-pointer"
+                  title="将选中的商品从弃用箱恢复至原状态"
+                >
+                  <span>♻️ 批量恢复商品</span>
+                </button>
+                <button 
+                  @click="batchDelete" 
+                  :disabled="selectedIds.length === 0"
+                  class="px-3 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition cursor-pointer"
+                  title="彻底从数据库中永久抹除选中的弃用商品，不可逆"
+                >
+                  <span>💥 批量彻底删除</span>
+                </button>
+              </template>
+
+              <!-- 普通选品箱常规批量操作 -->
+              <template v-else>
+                <button 
+                  @click="batchClean" 
+                  :disabled="selectedIds.length === 0 || isCleaning"
+                  class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
+                >
+                  <span v-if="isCleaning">⏳ 清洗中...</span>
+                  <span v-else>⚡ 批量AI清洗</span>
+                </button>
+                <button 
+                  @click="batchCheckCompliance" 
+                  :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
+                  class="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
+                >
+                  <span v-if="isBatchCheckingCompliance">⏳ 检测中...</span>
+                  <span v-else>🛡️ 批量合规检测</span>
+                </button>
+                <button 
+                  @click="batchPublish" 
+                  :disabled="selectedIds.length === 0 || isBatchPublishing"
+                  class="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
+                >
+                  <span v-if="isBatchPublishing">⏳ 上品中...</span>
+                  <span v-else>🚀 批量上品</span>
+                </button>
+                <button 
+                  @click="openBatchPriceModal" 
+                  :disabled="selectedIds.length === 0"
+                  class="px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-blue-200 flex items-center space-x-1 transition cursor-pointer"
+                  title="批量修改所选商品的售价与MRP划线价"
+                >
+                  <span>💰 批量改价</span>
+                </button>
+                <button 
+                  @click="batchDelete" 
+                  :disabled="selectedIds.length === 0"
+                  class="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg border border-rose-200 flex items-center space-x-1 transition cursor-pointer"
+                  title="移入弃用箱，可在弃用箱中恢复或彻底删除"
+                >
+                  <span>🗑️ 批量移入弃用</span>
+                </button>
+              </template>
             </div>
 
             <!-- 右侧：突出显示的采集按钮 -->
@@ -592,9 +630,15 @@
                       </div>
                     </td>
                     <td class="py-2.5 px-4 text-right space-x-1 whitespace-nowrap">
-                      <button @click="openInspector(item)" class="px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 rounded border border-blue-200">审品</button>
-                      <button @click="publishItem(item)" :disabled="publishingId === item.id" class="px-2 py-0.5 text-[11px] text-white bg-emerald-600 hover:bg-emerald-700 rounded font-semibold">上品</button>
-                      <button @click="deleteItem(item)" class="px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 rounded border border-red-200">删除</button>
+                      <template v-if="item.status === 'ABANDONED'">
+                        <button @click="restoreItem(item)" class="px-2 py-0.5 text-[11px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded border border-emerald-300 font-semibold cursor-pointer">♻️ 恢复</button>
+                        <button @click="deleteItem(item)" class="px-2 py-0.5 text-[11px] text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-300 font-semibold cursor-pointer" title="永久从数据库彻底删除">彻底删除</button>
+                      </template>
+                      <template v-else>
+                        <button @click="openInspector(item)" class="px-2 py-0.5 text-[11px] text-blue-600 hover:bg-blue-50 rounded border border-blue-200 cursor-pointer">审品</button>
+                        <button @click="publishItem(item)" :disabled="publishingId === item.id" class="px-2 py-0.5 text-[11px] text-white bg-emerald-600 hover:bg-emerald-700 rounded font-semibold cursor-pointer">上品</button>
+                        <button @click="deleteItem(item)" class="px-2 py-0.5 text-[11px] text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded border border-slate-200 cursor-pointer" title="移入弃用箱">弃用</button>
+                      </template>
                     </td>
                   </tr>
                 </tbody>
@@ -749,26 +793,44 @@
                     更新: {{ formatDateTime(item.updated_at) }}
                   </div>
                 </td>
-                <td class="py-3 px-4 text-right space-x-2 whitespace-nowrap">
-                  <button 
-                    @click="openInspector(item)" 
-                    class="px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded border border-blue-200"
-                  >
-                    审品比对
-                  </button>
-                  <button 
-                    @click="publishItem(item)" 
-                    :disabled="publishingId === item.id"
-                    class="px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded"
-                  >
-                    {{ publishingId === item.id ? '上品中...' : '上品' }}
-                  </button>
-                  <button 
-                    @click="deleteItem(item)" 
-                    class="px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 rounded border border-red-200"
-                  >
-                    删除
-                  </button>
+                <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                  <template v-if="item.status === 'ABANDONED'">
+                    <button 
+                      @click="restoreItem(item)" 
+                      class="px-2.5 py-1 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded border border-emerald-300 cursor-pointer"
+                    >
+                      ♻️ 恢复
+                    </button>
+                    <button 
+                      @click="deleteItem(item)" 
+                      class="px-2.5 py-1 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded border border-rose-300 cursor-pointer"
+                      title="从数据库永久彻底删除"
+                    >
+                      彻底删除
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button 
+                      @click="openInspector(item)" 
+                      class="px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded border border-blue-200 cursor-pointer"
+                    >
+                      审品比对
+                    </button>
+                    <button 
+                      @click="publishItem(item)" 
+                      :disabled="publishingId === item.id"
+                      class="px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded cursor-pointer"
+                    >
+                      {{ publishingId === item.id ? '上品中...' : '上品' }}
+                    </button>
+                    <button 
+                      @click="deleteItem(item)" 
+                      class="px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded border border-slate-200 cursor-pointer"
+                      title="移入弃用箱"
+                    >
+                      弃用
+                    </button>
+                  </template>
                 </td>
               </tr>
             </tbody>
@@ -850,12 +912,29 @@
             >
               <span>{{ publishingId === activeItem.id ? '上品中...' : (activeItem.variants && activeItem.variants.length > 0 ? `🚀 立即上品到 Makro (共 ${activeItem.variants.length} 个子变体)` : '🚀 立即独立上品到 Makro') }}</span>
             </button>
-            <button 
-              @click="deleteItem(activeItem)" 
-              class="px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200"
-            >
-              🗑️ 删除
-            </button>
+            <template v-if="activeItem.status === 'ABANDONED'">
+              <button 
+                @click="restoreItem(activeItem)" 
+                class="px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-300 cursor-pointer"
+              >
+                ♻️ 恢复至选品箱
+              </button>
+              <button 
+                @click="deleteItem(activeItem)" 
+                class="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-300 cursor-pointer"
+              >
+                💥 彻底删除
+              </button>
+            </template>
+            <template v-else>
+              <button 
+                @click="deleteItem(activeItem)" 
+                class="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-50 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-slate-300 cursor-pointer"
+                title="移入弃用箱"
+              >
+                🗑️ 弃用
+              </button>
+            </template>
           </div>
         </div>
 
@@ -2059,7 +2138,7 @@
           currentPage: 1,
           pageSize: 50,
           selectedIds: [],
-          statusCounts: { ALL: 0, PENDING_CLEAN: 0, CLEANED: 0, SUBMITTED: 0, FAILED: 0 },
+          statusCounts: { ALL: 0, PENDING_CLEAN: 0, CLEANED: 0, SUBMITTED: 0, FAILED: 0, ABANDONED: 0 },
           showBatchPriceModal: false,
           isUpdatingBatchPrice: false,
           batchPriceForm: {
@@ -2474,6 +2553,9 @@
             'UPDATE': { text: '✏️ 属性修改', bg: 'bg-slate-100 text-slate-700 border-slate-200' },
             'SUBMIT_LISTING': { text: '🚀 单品上品', bg: 'bg-purple-50 text-purple-700 border-purple-200' },
             'BATCH_PUBLISH': { text: '🚀 批量上品', bg: 'bg-purple-100 text-purple-800 border-purple-300' },
+            'ABANDON': { text: '🗑️ 移入弃用', bg: 'bg-slate-100 text-slate-700 border-slate-300' },
+            'RESTORE': { text: '♻️ 恢复单品', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+            'BATCH_RESTORE': { text: '♻️ 批量恢复', bg: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
             'SETTINGS_UPDATE': { text: '⚙️ 配置更新', bg: 'bg-slate-100 text-slate-600 border-slate-300' },
           };
           return map[type] || { text: type, bg: 'bg-slate-100 text-slate-700 border-slate-200' };
@@ -2792,25 +2874,44 @@
           }
         },
         async deleteItem(item) {
-          if (!confirm(`确定要删除商品【${item.makro_title || item.takealot_title}】吗？删除后不可恢复。`)) return;
+          const isAbandoned = item.status === 'ABANDONED';
+          const title = item.makro_title || item.takealot_title;
+          const confirmMsg = isAbandoned
+            ? `【⚠️ 彻底删除警告】\n确定要永久彻底删除商品【${title}】吗？\n删除后将从数据库彻底抹除，不可恢复！`
+            : `确定要将商品【${title}】移入弃用箱吗？\n移入后可在【🗑️ 弃用商品】分页中随时恢复或彻底删除。`;
+
+          if (!confirm(confirmMsg)) return;
+
           try {
             const res = await fetch(`/api/products/${item.id}`, { method: 'DELETE' });
             if (res.ok) {
+              const data = await res.json();
+              if (isAbandoned) {
+                this.showToast('💥 商品已永久彻底删除！', 'info');
+              } else {
+                this.showToast('🗑️ 商品已移入弃用箱！', 'warning');
+              }
               if (this.activeItem && this.activeItem.id === item.id) {
                 this.currentTab = 'products';
                 this.activeItem = null;
               }
               this.loadProducts();
             } else {
-              alert('删除失败');
+              alert('操作失败: ' + res.statusText);
             }
           } catch (e) {
-            alert('删除出错: ' + e);
+            alert('操作出错: ' + e);
           }
         },
         async batchDelete() {
           if (this.selectedIds.length === 0) return;
-          if (!confirm(`确定要批量删除选中的 ${this.selectedIds.length} 件商品吗？删除后不可恢复。`)) return;
+          const isAbandonedTab = this.statusFilter === 'ABANDONED';
+          const confirmMsg = isAbandonedTab
+            ? `【⚠️ 批量彻底删除警告】\n确定要永久彻底删除选中的 ${this.selectedIds.length} 件弃用商品吗？\n删除后数据不可恢复！`
+            : `确定要将选中的 ${this.selectedIds.length} 件商品移入弃用箱吗？\n移入后可在【🗑️ 弃用商品】分页中随时恢复或彻底删除。`;
+
+          if (!confirm(confirmMsg)) return;
+
           try {
             const res = await fetch('/api/products/batch-delete', {
               method: 'POST',
@@ -2818,11 +2919,48 @@
               body: JSON.stringify({ product_ids: this.selectedIds })
             });
             const data = await res.json();
-            alert(data.message || '删除成功');
+            this.showToast(`✅ ${data.message || '操作成功'}`, isAbandonedTab ? 'info' : 'warning');
             this.selectedIds = [];
             this.loadProducts();
           } catch (e) {
             alert('批量删除出错: ' + e);
+          }
+        },
+        async restoreItem(item) {
+          try {
+            const res = await fetch(`/api/products/${item.id}/restore`, { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+              this.showToast('✅ 商品已成功恢复至选品箱！', 'success');
+              if (this.activeItem && this.activeItem.id === item.id) {
+                this.activeItem.status = data.status;
+              }
+              this.loadProducts();
+            } else {
+              alert('恢复失败: ' + (data.detail || data.message));
+            }
+          } catch (e) {
+            alert('恢复网络异常: ' + e);
+          }
+        },
+        async batchRestore() {
+          if (this.selectedIds.length === 0) return;
+          try {
+            const res = await fetch('/api/products/batch-restore', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ product_ids: this.selectedIds })
+            });
+            const data = await res.json();
+            if (res.ok) {
+              this.showToast(`✅ ${data.message || '批量恢复成功！'}`, 'success');
+              this.selectedIds = [];
+              this.loadProducts();
+            } else {
+              alert('批量恢复失败: ' + (data.detail || data.message));
+            }
+          } catch (e) {
+            alert('批量恢复网络异常: ' + e);
           }
         },
         toggleSelectAll(e) {
@@ -2839,7 +2977,8 @@
             'SUBMITTED': '已提交审核',
             'QC_PENDING': '平台质检中',
             'ACTIVE': '销售中',
-            'FAILED': '上品失败'
+            'FAILED': '上品失败',
+            'ABANDONED': '已弃用'
           };
           return map[st] || st;
         },
@@ -2848,6 +2987,7 @@
           if (st === 'SUBMITTED' || st === 'QC_PENDING' || st === 'SUCCESS') return 'bg-emerald-100 text-emerald-800';
           if (st === 'ACTIVE') return 'bg-green-100 text-green-900 font-bold';
           if (st === 'FAILED') return 'bg-red-100 text-red-800';
+          if (st === 'ABANDONED') return 'bg-slate-200 text-slate-700 font-medium';
           return 'bg-slate-100 text-slate-700';
         }
       }

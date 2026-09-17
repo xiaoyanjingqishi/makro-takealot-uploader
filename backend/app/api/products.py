@@ -65,8 +65,8 @@ def _format_product(p: Product) -> dict:
         "takealot_category": p.takealot_category,
         "takealot_description": p.takealot_description,
         "takealot_specs": specs,
-        "raw_images": raw_images,
         "status": p.status,
+        "previous_status": getattr(p, "previous_status", None),
         "makro_vertical": p.makro_vertical,
         "makro_title": p.makro_title,
         "makro_description": p.makro_description,
@@ -224,6 +224,10 @@ def list_products(
     query = db.query(Product)
     if status:
         query = query.filter(Product.status == status)
+    else:
+        # 默认“全部商品”不展示已弃用的商品 (弃用商品展示在专门的弃用箱中)
+        query = query.filter(Product.status != "ABANDONED")
+
     if compliance_status:
         query = query.filter(Product.compliance_status == compliance_status)
     if min_price is not None:
@@ -247,13 +251,14 @@ def list_products(
 
     # 统计各流程状态商品数量
     counts_raw = db.query(Product.status, func.count(Product.id)).group_by(Product.status).all()
-    status_counts = {k: 0 for k in ["PENDING_CLEAN", "CLEANED", "SUBMITTED", "FAILED"]}
-    total_all = 0
+    status_counts = {k: 0 for k in ["PENDING_CLEAN", "CLEANED", "SUBMITTED", "FAILED", "ABANDONED"]}
+    total_valid = 0
     for st, cnt in counts_raw:
         if st in status_counts:
             status_counts[st] = cnt
-        total_all += cnt
-    status_counts["ALL"] = total_all
+        if st != "ABANDONED":
+            total_valid += cnt
+    status_counts["ALL"] = total_valid
 
     return {
         "total": total,
@@ -308,47 +313,144 @@ def update_product(product_id: int, req: ProductUpdateRequest, db: Session = Dep
     )
     return _format_product(product)
 
-@router.delete("/{product_id}", summary="删除商品")
+@router.delete("/{product_id}", summary="删除商品 (普通状态移入弃用箱，弃用箱中执行则彻底删除)")
 def delete_product(product_id: int, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
     p_title = product.takealot_title or f"ID {product_id}"
     p_plid = product.takealot_id or ""
-    # 显式清理关联的变体记录与任务日志，防止 SQLite 孤儿残留
-    db.query(ProductVariant).filter(ProductVariant.product_id == product_id).delete(synchronize_session=False)
-    db.query(TaskLog).filter(TaskLog.product_id == product_id).delete(synchronize_session=False)
-    db.delete(product)
-    db.commit()
 
-    record_audit_log(
-        task_type="DELETE",
-        status="SUCCESS",
-        message=f"删除单品: ID {product_id} (PLID: {p_plid}, 标题: {p_title[:35]})",
-        product_id=product_id,
-        db=db
-    )
-    return {"message": "删除成功", "id": product_id}
+    if product.status != "ABANDONED":
+        # 移入弃用箱 (软删除/弃用)
+        product.previous_status = product.status
+        product.status = "ABANDONED"
+        db.commit()
 
-@router.post("/batch-delete", summary="批量删除商品")
+        record_audit_log(
+            task_type="ABANDON",
+            status="SUCCESS",
+            message=f"移入弃用箱: ID {product_id} (原状态: {product.previous_status}, 标题: {p_title[:35]})",
+            product_id=product_id,
+            db=db
+        )
+        return {"action": "abandoned", "message": "商品已移入弃用箱，可在弃用箱中恢复或彻底删除", "id": product_id}
+    else:
+        # 已经在弃用箱中，彻底删除 (Permanent Delete)
+        db.query(ProductVariant).filter(ProductVariant.product_id == product_id).delete(synchronize_session=False)
+        db.query(TaskLog).filter(TaskLog.product_id == product_id).delete(synchronize_session=False)
+        db.delete(product)
+        db.commit()
+
+        record_audit_log(
+            task_type="DELETE",
+            status="SUCCESS",
+            message=f"彻底删除商品: ID {product_id} (PLID: {p_plid}, 标题: {p_title[:35]})",
+            product_id=None,
+            db=db
+        )
+        return {"action": "deleted", "message": "商品已从数据库永久彻底删除", "id": product_id}
+
+@router.post("/batch-delete", summary="批量删除商品 (普通状态移入弃用箱，弃用箱中执行则彻底删除)")
 def batch_delete_products(req: dict, db: Session = Depends(get_db)):
     product_ids = req.get("product_ids", [])
     if not product_ids:
-        return {"deleted_count": 0}
-    # 显式清理关联的变体记录与任务日志，彻底防止孤儿记录残留
-    db.query(ProductVariant).filter(ProductVariant.product_id.in_(product_ids)).delete(synchronize_session=False)
-    db.query(TaskLog).filter(TaskLog.product_id.in_(product_ids)).delete(synchronize_session=False)
-    deleted = db.query(Product).filter(Product.id.in_(product_ids)).delete(synchronize_session=False)
+        return {"deleted_count": 0, "abandoned_count": 0, "message": "未选择商品"}
+
+    products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+    to_abandon = [p for p in products if p.status != "ABANDONED"]
+    to_hard_delete = [p for p in products if p.status == "ABANDONED"]
+
+    abandoned_count = 0
+    if to_abandon:
+        for p in to_abandon:
+            p.previous_status = p.status
+            p.status = "ABANDONED"
+        abandoned_count = len(to_abandon)
+        record_audit_log(
+            task_type="ABANDON",
+            status="SUCCESS",
+            message=f"批量移入弃用箱: 成功将 {abandoned_count} 件商品移入弃用箱",
+            detail_logs={"abandoned_ids": [p.id for p in to_abandon][:50]},
+            db=db
+        )
+
+    deleted_count = 0
+    if to_hard_delete:
+        hard_ids = [p.id for p in to_hard_delete]
+        db.query(ProductVariant).filter(ProductVariant.product_id.in_(hard_ids)).delete(synchronize_session=False)
+        db.query(TaskLog).filter(TaskLog.product_id.in_(hard_ids)).delete(synchronize_session=False)
+        deleted_count = db.query(Product).filter(Product.id.in_(hard_ids)).delete(synchronize_session=False)
+        record_audit_log(
+            task_type="BATCH_DELETE",
+            status="SUCCESS",
+            message=f"批量彻底删除: 永久删除 {deleted_count} 件弃用商品",
+            detail_logs={"deleted_ids": hard_ids[:50]},
+            db=db
+        )
+
+    db.commit()
+
+    msg_parts = []
+    if abandoned_count > 0:
+        msg_parts.append(f"成功将 {abandoned_count} 件商品移入弃用箱")
+    if deleted_count > 0:
+        msg_parts.append(f"成功彻底删除 {deleted_count} 件商品")
+    message = "，".join(msg_parts) if msg_parts else "操作成功"
+
+    return {
+        "message": message,
+        "abandoned_count": abandoned_count,
+        "deleted_count": deleted_count
+    }
+
+@router.post("/{product_id}/restore", summary="从弃用箱恢复商品")
+def restore_product(product_id: int, db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="商品未找到")
+    if product.status != "ABANDONED":
+        return {"message": "商品未处于弃用状态", "status": product.status}
+
+    restore_target = product.previous_status or ("CLEANED" if product.makro_title else "PENDING_CLEAN")
+    product.status = restore_target
+    product.previous_status = None
+    db.commit()
+
+    p_title = product.takealot_title or f"ID {product_id}"
+    record_audit_log(
+        task_type="RESTORE",
+        status="SUCCESS",
+        message=f"从弃用箱恢复商品: ID {product_id}「{p_title[:35]}」恢复至【{restore_target}】",
+        product_id=product_id,
+        db=db
+    )
+    return {"message": "商品已成功恢复至选品箱", "status": restore_target, "id": product_id}
+
+@router.post("/batch-restore", summary="批量从弃用箱恢复商品")
+def batch_restore_products(req: dict, db: Session = Depends(get_db)):
+    product_ids = req.get("product_ids", [])
+    if not product_ids:
+        return {"restored_count": 0, "message": "未选择商品"}
+
+    products = db.query(Product).filter(Product.id.in_(product_ids), Product.status == "ABANDONED").all()
+    restored_count = 0
+    for p in products:
+        target = p.previous_status or ("CLEANED" if p.makro_title else "PENDING_CLEAN")
+        p.status = target
+        p.previous_status = None
+        restored_count += 1
+
     db.commit()
 
     record_audit_log(
-        task_type="BATCH_DELETE",
+        task_type="BATCH_RESTORE",
         status="SUCCESS",
-        message=f"批量删除商品: 成功删除 {deleted} 件商品",
-        detail_logs={"deleted_ids": product_ids[:50]},
+        message=f"批量恢复商品: 成功从弃用箱恢复 {restored_count} 件商品至选品箱",
+        detail_logs={"restored_ids": [p.id for p in products][:50]},
         db=db
     )
-    return {"message": f"成功删除 {deleted} 件商品", "deleted_count": deleted}
+    return {"message": f"成功从弃用箱恢复 {restored_count} 件商品至选品箱", "restored_count": restored_count}
 
 @router.post("/batch-update-price", summary="批量修改商品售价与MRP")
 def batch_update_price(payload: dict, db: Session = Depends(get_db)):

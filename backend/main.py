@@ -8,6 +8,15 @@ import app.models  # 确保所有模型都被导入以便创建数据表
 # 初始化数据库表结构
 Base.metadata.create_all(bind=engine)
 
+# 确保 products 表具备 previous_status 字段 (支持弃用与恢复)
+try:
+    from sqlalchemy import text
+    with engine.connect() as _conn:
+        _conn.execute(text("ALTER TABLE products ADD COLUMN previous_status VARCHAR(50)"))
+        _conn.commit()
+except Exception:
+    pass
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",

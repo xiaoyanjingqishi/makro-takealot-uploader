@@ -56,11 +56,31 @@ def record_audit_log(
         db.refresh(log_entry)
         return log_entry
     except Exception as e:
-        logger.error(f"记录操作日志失败: {e}", exc_info=True)
         try:
             db.rollback()
-        except Exception:
-            pass
+            if product_id is not None:
+                # 若因关联商品已从数据表永久删除导致外键失败，自动降级为 product_id=None 写入日志
+                log_entry_retry = TaskLog(
+                    product_id=None,
+                    task_type=task_type,
+                    status=status,
+                    request_id=request_id,
+                    message=(message or "")[:500],
+                    detail_logs=detail_str,
+                    created_at=now,
+                    finished_at=now if status in ["SUCCESS", "FAILED"] else None
+                )
+                db.add(log_entry_retry)
+                db.commit()
+                db.refresh(log_entry_retry)
+                return log_entry_retry
+        except Exception as retry_err:
+            logger.error(f"记录操作日志重试失败: {retry_err}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        logger.error(f"记录操作日志失败: {e}")
         return None
     finally:
         if close_session:
