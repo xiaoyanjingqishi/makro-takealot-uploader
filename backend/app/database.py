@@ -1,9 +1,11 @@
 from sqlalchemy import create_engine, event
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, sessionmaker
 from .config import settings
 
 engine = create_engine(
     settings.DATABASE_URL,
+    poolclass=NullPool if "sqlite" in settings.DATABASE_URL else None,
     connect_args={"check_same_thread": False, "timeout": 30.0} if "sqlite" in settings.DATABASE_URL else {}
 )
 

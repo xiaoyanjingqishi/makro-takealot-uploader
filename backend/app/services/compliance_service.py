@@ -50,7 +50,7 @@ class ComplianceService:
         self.client = None
         if self.api_key:
             try:
-                self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+                self.client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=35.0)
             except Exception as e:
                 logger.warning(f"初始化 ComplianceService OpenAI 客户端失败: {e}")
 

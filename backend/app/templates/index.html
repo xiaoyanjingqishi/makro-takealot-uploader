@@ -1246,8 +1246,16 @@
                   <input v-model="settings.qwen_api_key" type="password" placeholder="sk-..." class="w-full text-xs p-2 border rounded-lg bg-white">
                 </div>
                 <div>
-                  <label class="block text-xs font-semibold text-slate-600 mb-1">模型代码</label>
-                  <input v-model="settings.qwen_model" type="text" class="w-full text-xs p-2 border rounded-lg bg-white">
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="text-xs font-semibold text-slate-600">模型代码</label>
+                    <span class="text-[10px] text-blue-500 font-medium">推荐使用 qwen-plus (响应极速且规范化质量高)</span>
+                  </div>
+                  <input v-model="settings.qwen_model" list="qwen-models-list" type="text" placeholder="qwen-plus" class="w-full text-xs p-2 border rounded-lg bg-white">
+                  <datalist id="qwen-models-list">
+                    <option value="qwen-plus">qwen-plus (官方推荐，平均响应5-8秒)</option>
+                    <option value="qwen-max">qwen-max (高精度大模型)</option>
+                    <option value="qwen-turbo">qwen-turbo (极速轻量模型)</option>
+                  </datalist>
                 </div>
               </div>
 
@@ -2071,7 +2079,8 @@
           }
         },
         async batchClean() {
-          if (this.selectedIds.length === 0) return;
+          if (this.selectedIds.length === 0 || this.isCleaning) return;
+          this.isCleaning = true;
           try {
             const res = await fetch('/api/cleaner/batch-clean', {
               method: 'POST',
@@ -2079,14 +2088,21 @@
               body: JSON.stringify({ product_ids: this.selectedIds })
             });
             const resData = await res.json();
-            alert(`批量清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件`);
+            if (resData.failed > 0 && resData.errors && resData.errors.length) {
+              alert(`批量清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件\n首个失败原因: ${resData.errors[0]}`);
+            } else {
+              alert(`🎉 批量AI清洗完成: 成功 ${resData.success} 件, 失败 ${resData.failed} 件`);
+            }
+            this.selectedIds = [];
             await this.loadProducts();
             if (this.activeItem) {
               const updated = this.products.items.find(x => x.id === this.activeItem.id);
               if (updated) this.activeItem = updated;
             }
           } catch (e) {
-            alert('操作失败: ' + e);
+            alert('批量清洗操作失败: ' + e);
+          } finally {
+            this.isCleaning = false;
           }
         },
         async batchPublish() {
