@@ -74,21 +74,47 @@ class AICleanerService:
         """通过大语言模型进行全品类自适应的信息抽取与改写"""
         raw_title = product.get('takealot_title', '')
         category = product.get('takealot_category', '')
+        specs = product.get('takealot_specs', {})
+        description = product.get('takealot_description', '')
+
+        # 动态获取 Makro 官方支持的垂直类目候选集
+        from .vertical_service import VerticalService
+        candidate_verticals = VerticalService.get_candidate_verticals(
+            title=raw_title,
+            category=category,
+            specs=specs,
+            description=description
+        )
+        candidates_str = ", ".join(f'"{c}"' for c in candidate_verticals)
 
         prompt = f"""
 你是一名资深的跨境电商商品刊登专家，精通南非电商平台 Takealot 与 Makro (基于沃尔玛/Flipkart 规范) 的数据对齐。
-请将下面来自 Takealot 的原始商品数据，智能识别其真实的品类，并清洗转换为符合 Makro 卖家平台要求的规范 JSON 格式。
+请将下面来自 Takealot 的原始商品数据，智能识别其真实品类，并清洗转换为符合 Makro 卖家平台要求的规范 JSON 格式。
 
 【品牌规范】:
 - 必须使用指定的授权品牌: "{target_brand}"，无论原品牌是什么，强制替换为 "{target_brand}"。
 
-【品类 (Vertical) 映射】:
-- 必须根据商品实际属性分析输出最匹配的 Makro 标准 vertical 英文小写下划线代码。
-  例如:
-  - 网络工具/五金工具/钳子: "crimping_tool", "hand_tool", "hardware_tool", "network_accessory" 等
-  - 毛巾/浴巾: "bath_towel"
-  - 数据线/充电头: "data_cable", "battery_charger"
-  - 家居/日用: "storage_box", "kitchen_tool", "bed_sheet" 等
+【Makro 官方类目 (Vertical) 强制选择规范 - 极其重要】:
+平台强制要求：字段 "vertical" 必须且只能从以下 Makro 官方支持的候选类目列表中挑选最贴切的 1 个英文小写代码：
+[官方候选 Vertical 列表]:
+{candidates_str}
+
+★★★ 核心品类官方映射铁律（严禁自行发明或杜撰列表之外的任何词汇）：
+1. 内衣 / 文胸 / 塑身衣 / 睡衣 / 泳装 / 服装 / 穿戴类 必须选择: "costume_wear" (严禁使用 brassiere, bra, underwear 等非标准词！)
+2. 眼镜 / 太阳镜 / 墨镜 / 防蓝光眼镜 / 护目镜 必须选择: "protective_glasses" (严禁使用 glasses, sunglasses 等！)
+3. 园艺剪 / 修枝剪 / 高枝剪 / 园艺工具 必须选择: "garden_tools" 或 "pruner" (严禁使用 gardening_tool 等！)
+4. 钳子 / 压线钳 / 剥线钳 / 五金手工具 必须选择: "plier" (严禁使用 crimping_tool, hand_tool 等！)
+5. 手机壳 / 平板壳 / 保护套 必须选择: "cases_covers" (严禁使用 phone_case 等！)
+6. 皂液器 / 洗手液机 / 液体分装泵 必须选择: "liquid_dispenser"
+7. 水杯 / 运动水壶 / 保温杯 必须选择: "water_bottle"
+8. 钱包 / 卡包 / 皮夹 必须选择: "card_holder"
+9. 数据线 / 充电线 必须选择: "data_cable"
+10. 充电器 / 充电头 / 电源适配器 必须选择: "battery_charger"
+11. 智能插座 / 定时器开关 必须选择: "smart_switch_plug"
+12. U盘 / 闪存盘 必须选择: "usb_flash_drive"
+13. 双肩背包 / 旅行包 必须选择: "backpack"
+14. 毛巾 / 浴巾 (仅限真实毛巾浴巾) 必须选择: "bath_towel"
+15. 床单 / 被套 / 四件套 必须选择: "bedsheet"
 
 【标题 (Title) 重写与品牌侵权防范要求】:
 - 必须以品牌 "{target_brand}" 开头；
@@ -107,13 +133,13 @@ class AICleanerService:
 原标题: {raw_title}
 原品牌: {product.get('takealot_brand')}
 原类目路径: {category}
-规格参数: {json.dumps(product.get('takealot_specs', {}), ensure_ascii=False)}
-原描述: {product.get('takealot_description', '')[:1000]}
+规格参数: {json.dumps(specs, ensure_ascii=False)}
+原描述: {description[:1000]}
 
 【输出要求】:
 必须且仅返回纯 JSON 对象，格式如下：
 {{
-  "vertical": "识别出的最准垂直类目(如 crimping_tool 或 hand_tool 或 bath_towel)",
+  "vertical": "必须严格从上方候选列表中挑选的最准确官方类目(如 costume_wear 或 plier 或 protective_glasses)",
   "brand": "{target_brand}",
   "makro_title": "{target_brand} 规范英文商品标题",
   "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
@@ -150,6 +176,22 @@ class AICleanerService:
             data["description"] = "\n".join(str(x) for x in desc)
         elif not isinstance(desc, str):
             data["description"] = str(desc)
+
+        # 严格校验与规范化 vertical 属性，确保 100% 存在于 Makro 官方类目
+        raw_v = str(data.get("vertical", "")).strip().lower().replace("-", "_").replace(" ", "_")
+        all_valid_verticals = VerticalService._load_verticals()
+        if raw_v in all_valid_verticals and all_valid_verticals[raw_v]:
+            data["vertical"] = raw_v
+        else:
+            resolved_v, _ = VerticalService.resolve_vertical(raw_v)
+            if resolved_v == "bath_towel" and "towel" not in raw_title.lower():
+                resolved_v = VerticalService.predict_vertical(
+                    title=raw_title,
+                    category=category,
+                    specs=specs,
+                    description=description
+                )
+            data["vertical"] = resolved_v
 
         # 代码保底：确保 Model Number 包含完整标题，并在配件命中知名品牌时兜底添加第三方兼容声明
         makro_title = data.get("makro_title") or raw_title
@@ -292,8 +334,37 @@ class AICleanerService:
                 "ideal_for": "Professional & DIY",
                 "design": "Ergonomic"
             }
+        elif any(k in title_lower or k in cat_lower for k in ["glasses", "sunglasses", "eyewear", "spectacles"]):
+            vertical = "protective_glasses"
+            makro_title = f"{target_brand} Classic UV400 Protective Sunglasses ({colour})"
+            attrs = {
+                "model_name": "Vision Pro",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Polycarbonate",
+                "packaging_type": "Box",
+                "sales_package": "1 Sunglasses with Case",
+                "ideal_for": "Men & Women",
+                "design": "Classic"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["garden", "prun", "shear"]):
+            vertical = "garden_tools"
+            makro_title = f"{target_brand} Heavy Duty Bypass Pruning Shears Garden Tool ({colour})"
+            attrs = {
+                "model_name": "Garden Master",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Carbon Steel",
+                "packaging_type": "Blister Pack",
+                "sales_package": "1 Pruning Shear",
+                "ideal_for": "Garden & Yard Work",
+                "design": "Ergonomic"
+            }
         else:
-            vertical = "bath_towel"
+            from .vertical_service import VerticalService
+            vertical = VerticalService.predict_vertical(title=raw_title, category=raw_cat, description=product.get("takealot_description", ""))
             clean_t = re.sub(r'[^\w\s-]', '', raw_title)[:60]
             makro_title = f"{target_brand} Premium Quality {clean_t} ({colour})"
             attrs = {

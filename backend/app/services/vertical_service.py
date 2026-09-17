@@ -341,3 +341,91 @@ class VerticalService:
 
         # 默认通用服饰配件
         return "costume_wear"
+
+    @classmethod
+    def get_candidate_verticals(cls, title: str = "", category: str = "", specs: any = None, description: str = "", max_candidates: int = 35) -> list:
+        """
+        基于商品标题、类目路径、规格与描述，动态检索并组装最相关的 Makro 官方垂直类目候选集。
+        所有候选代码严格来自于 makro_verticals.json。
+        """
+        verticals = cls._load_verticals()
+        candidates = []
+
+        # 1. 核心高频通用官方类目（确保主流品类均有明确选项）
+        CORE_CANONICAL = [
+            "costume_wear",        # 服饰 / 内衣 / 文胸 / 塑身衣 / 睡衣 / 穿戴类
+            "protective_glasses",  # 眼镜 / 太阳镜 / 防蓝光眼镜 / 护目镜
+            "garden_tools",        # 园艺工具 / 修枝剪 / 高枝剪 / 铲
+            "pruner",              # 修枝剪
+            "plier",               # 五金钳子 / 压线钳 / 剥线钳 / 工具
+            "screwdriver_set",     # 螺丝刀 / 批头套装
+            "wrench_set",          # 扳手 / 套筒
+            "knife_tool",          # 工具刀 / 美工刀
+            "cases_covers",        # 手机壳 / 平板保护套
+            "liquid_dispenser",    # 洗手液机 / 皂液器 / 液体分装泵
+            "water_bottle",        # 水杯 / 运动水壶 / 保温杯
+            "bottle",              # 瓶子 / 分装瓶
+            "container",           # 储物盒 / 收纳盒
+            "card_holder",         # 钱包 / 卡包 / 证件夹
+            "backpack",            # 双肩背包 / 旅行包
+            "clutch",              # 手包 / 手拿包
+            "bath_towel",          # 毛巾 / 浴巾
+            "pillow",              # 枕头 / 靠垫
+            "bedsheet",            # 床单 / 被套 / 床品
+            "data_cable",          # 数据线 / 充电线
+            "battery_charger",     # 充电器 / 适配器
+            "smart_switch_plug",   # 智能开关 / 定时插座
+            "usb_flash_drive",     # U盘 / 闪存盘
+            "headphone",           # 耳机 / 耳麦
+            "mouse",               # 鼠标
+            "keyboard",            # 键盘
+            "glove",               # 手套
+            "cap",                 # 帽子
+            "raincoat",            # 雨衣
+            "watch",               # 手表
+        ]
+
+        # 2. 预测的首选类目优先加入
+        pred = cls.predict_vertical(title, category, specs, description)
+        if pred and pred in verticals and pred not in candidates:
+            candidates.append(pred)
+
+        # 3. 提取商品核心业务名词关键词（跳过通用修饰词与停用词）
+        full_text = f"{title} {category}".lower()
+        if isinstance(specs, dict):
+            full_text += " " + " ".join(f"{k} {v}" for k, v in specs.items()).lower()
+        elif isinstance(specs, str):
+            full_text += " " + specs.lower()
+        if description:
+            full_text += " " + description[:300].lower()
+
+        stop_words = {
+            "the", "and", "for", "with", "this", "that", "from", "pack", "size", "color",
+            "black", "white", "blue", "red", "free", "best", "high", "quality", "home",
+            "shop", "online", "full", "back", "side", "wide", "heavy", "duty", "light",
+            "anti", "tree", "accessories", "compatible", "standard", "wireless", "portable",
+            "multi", "piece", "mini", "type", "universal", "ultra", "pro", "plus", "set",
+            "new", "easy", "design", "cover", "safe", "fast", "speed", "power", "steel"
+        }
+        words = set(re.findall(r'[a-z]{4,}', full_text))
+        filtered_words = [w for w in words if w not in stop_words]
+
+        # 匹配库中包含这些核心名词的 vertical 代码
+        matched_from_db = []
+        for word in filtered_words:
+            for v_name in verticals.keys():
+                if word in v_name:
+                    if v_name not in candidates and v_name not in matched_from_db:
+                        matched_from_db.append(v_name)
+
+        # 4. 组合结果：预测首选 -> 动态关键词匹配项 -> 核心高频兜底项
+        for m in matched_from_db:
+            if len(candidates) >= max_candidates:
+                break
+            candidates.append(m)
+
+        for core in CORE_CANONICAL:
+            if core in verticals and core not in candidates:
+                candidates.append(core)
+
+        return candidates

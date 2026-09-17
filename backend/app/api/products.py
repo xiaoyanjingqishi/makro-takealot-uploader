@@ -138,11 +138,13 @@ def collect_product(req: TakealotCollectRequest, db: Session = Depends(get_db)):
 
 @router.post("/collect-by-plid", summary="通过 Takealot PLID 或 URL 直接请求官方 API 极速采集")
 def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
-    plid_or_url = payload.get("plid") or payload.get("url")
+    raw_plid = payload.get("plid")
+    raw_url = payload.get("url")
+    plid_or_url = raw_plid or raw_url
     if not plid_or_url:
         raise HTTPException(status_code=400, detail="请提供 plid 或 url 参数")
     try:
-        products = TakealotService.fetch_and_save_by_plid(plid_or_url, db)
+        products = TakealotService.fetch_and_save_by_plid(plid_or_url, db, custom_url=raw_url)
         v_count = len(products) if isinstance(products, list) else 1
         p_obj = products[0] if isinstance(products, list) else products
         record_audit_log(

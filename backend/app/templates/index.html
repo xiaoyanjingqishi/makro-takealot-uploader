@@ -1951,11 +1951,21 @@
                 class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 @keyup.enter="submitQuickCollect"
               />
+              <!-- 实时智能识别状态指示卡 (与插件完全对齐) -->
+              <div v-if="parsedPlidInfo.status === 'valid'" class="mt-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-800">
+                <div class="flex items-center space-x-1.5 font-semibold">
+                  <span>{{ parsedPlidInfo.label }}</span>
+                </div>
+                <span class="px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded font-mono text-[10px] font-bold">与插件一致</span>
+              </div>
+              <div v-else-if="parsedPlidInfo.status === 'invalid'" class="mt-2 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700">
+                {{ parsedPlidInfo.label }}
+              </div>
             </div>
             <div class="p-3 bg-blue-50 rounded-xl border border-blue-100 text-[11px] text-blue-700 flex items-start space-x-2">
               <span class="text-sm">💡</span>
               <div>
-                <strong>官方 API 优势</strong>：单品严格 1 个主变体（绝不多出错误变体）；多变体自动为每个颜色/尺码匹配独立的专属图组。
+                <strong>官方 API 优势</strong>：接口与浏览器插件完全统一。单品严格 1 个主变体；多变体自动为每个颜色/尺码匹配独立的专属图组。
               </div>
             </div>
             <div class="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-800 flex items-start space-x-2">
@@ -1975,7 +1985,7 @@
             </button>
             <button 
               @click="submitQuickCollect" 
-              :disabled="!quickCollectInput.trim() || isQuickCollecting"
+              :disabled="parsedPlidInfo.status !== 'valid' || isQuickCollecting"
               class="px-4 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg flex items-center space-x-1"
             >
               <span v-if="isQuickCollecting">⏳ 正在读取 API...</span>
@@ -2725,9 +2735,57 @@
               g.sizes.push(item.size);
             }
             if (item.makro_selling_price < g.minPrice) g.minPrice = item.makro_selling_price;
-            if (item.makro_selling_price > g.maxPrice) g.maxPrice = item.makro_selling_price;
           }
           return Object.values(map);
+        },
+        parsedPlidInfo() {
+          const raw = (this.quickCollectInput || '').trim();
+          if (!raw) return { status: 'empty', plid: null, url: null, label: '' };
+
+          // 1. 匹配带 PLID 的特征 (URL 或 纯 PLID 字符串)
+          let m = raw.match(/PLID(\d+)/i);
+          if (m) {
+            const plid = `PLID${m[1]}`;
+            const isUrl = /^https?:\/\//i.test(raw);
+            return {
+              status: 'valid',
+              plid: plid,
+              url: isUrl ? raw : `https://www.takealot.com/x/${plid}`,
+              label: isUrl ? `🔗 已识别 Takealot 网址 -> ${plid}` : `🎯 已识别有效商品编号: ${plid}`
+            };
+          }
+
+          // 2. 匹配纯数字 (7~10位数字)
+          let numMatch = raw.match(/^\d{7,10}$/);
+          if (numMatch) {
+            const plid = `PLID${numMatch[0]}`;
+            return {
+              status: 'valid',
+              plid: plid,
+              url: `https://www.takealot.com/x/${plid}`,
+              label: `🎯 已识别纯数字编号 -> ${plid}`
+            };
+          }
+
+          // 3. 匹配从网址 query 中包含 plid=
+          let queryMatch = raw.match(/[?&]plid=(\d+)/i);
+          if (queryMatch) {
+            const plid = `PLID${queryMatch[1]}`;
+            return {
+              status: 'valid',
+              plid: plid,
+              url: raw,
+              label: `🔗 已从网址参数提取 -> ${plid}`
+            };
+          }
+
+          // 4. 输入尚未构成有效编号
+          return {
+            status: 'invalid',
+            plid: null,
+            url: null,
+            label: '⚠️ 尚未识别到有效 PLID（支持粘贴 Takealot 商品链接、PLID 编号或纯数字）'
+          };
         }
       },
       mounted() {
@@ -3252,23 +3310,30 @@
           }
         },
         async submitQuickCollect() {
-          if (!this.quickCollectInput.trim() || this.isQuickCollecting) return;
+          const info = this.parsedPlidInfo;
+          if (!info || info.status !== 'valid' || this.isQuickCollecting) return;
           this.isQuickCollecting = true;
           try {
+            // 与浏览器插件传递完全相同的规范化 payload: { plid, url }
             const res = await fetch('/api/products/collect-by-plid', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ plid: this.quickCollectInput.trim() })
+              body: JSON.stringify({
+                plid: info.plid,
+                url: info.url
+              })
             });
             if (res.ok) {
               const p = await res.json();
-              const varCount = p.variants ? p.variants.length : 1;
-              alert(`✅ 采集成功！已通过官方 API 采集【${p.takealot_title}】\n售价: R${p.makro_selling_price}, 变体: ${varCount}个`);
+              const varCount = p.total_variants || (p.variants ? p.variants.length : 1);
+              const title = p.takealot_title || info.plid;
+              const price = p.makro_selling_price ? `售价: R${p.makro_selling_price}, ` : '';
+              alert(`✅ 采集成功！已通过官方 API 采集【${title}】\n${price}变体数: ${varCount}个`);
               this.showQuickCollectModal = false;
               this.quickCollectInput = '';
               await this.loadProducts();
             } else {
-              const err = await res.json();
+              const err = await res.json().catch(() => ({}));
               alert(`❌ 采集失败: ${err.detail || res.statusText}`);
             }
           } catch (e) {

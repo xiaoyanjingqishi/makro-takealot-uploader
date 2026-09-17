@@ -135,7 +135,7 @@ class TakealotService:
         return created_products
 
     @classmethod
-    def fetch_product_by_plid(cls, plid_or_url: str) -> TakealotCollectRequest:
+    def fetch_product_by_plid(cls, plid_or_url: str, custom_url: Optional[str] = None) -> TakealotCollectRequest:
         """
         通过 Takealot 官方原生 REST API 接口获取商品全量数据（支持单/多维变体如 颜色+尺码 笛卡尔积全量解析与专属图组隔离）
         """
@@ -146,12 +146,23 @@ class TakealotService:
         from concurrent.futures import ThreadPoolExecutor
         from ..schemas.product import VariantCreate
 
-        m = re.search(r'PLID(\d+)', str(plid_or_url), re.IGNORECASE)
+        plid_str = str(plid_or_url).strip()
+        m = re.search(r'PLID(\d+)', plid_str, re.IGNORECASE)
         if not m:
-            m = re.search(r'(\d+)', str(plid_or_url))
+            m = re.search(r'[?&]plid=(\d+)', plid_str, re.IGNORECASE)
         if not m:
-            raise ValueError(f"无法识别有效的 PLID: {plid_or_url}")
+            m = re.search(r'takealot\.com.*?/(\d{7,10})', plid_str, re.IGNORECASE)
+        if not m:
+            m = re.search(r'(\d{7,10})', plid_str)
+        if not m:
+            m = re.search(r'(\d+)', plid_str)
+        if not m:
+            raise ValueError(f"无法识别有效的商品编号或网址: {plid_or_url}")
         plid = m.group(1)
+
+        resolved_url = custom_url if (custom_url and custom_url.startswith("http")) else (
+            plid_str if plid_str.startswith("http") else f"https://www.takealot.com/x/PLID{plid}"
+        )
 
         session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
@@ -461,7 +472,7 @@ class TakealotService:
 
         return TakealotCollectRequest(
             takealot_id=f"PLID{plid}",
-            takealot_url=f"https://www.takealot.com/x/PLID{plid}",
+            takealot_url=resolved_url,
             takealot_title=title,
             takealot_price=price,
             takealot_brand=brand,
@@ -473,6 +484,6 @@ class TakealotService:
         )
 
     @classmethod
-    def fetch_and_save_by_plid(cls, plid_or_url: str, db: Session) -> List[Product]:
-        req = cls.fetch_product_by_plid(plid_or_url)
+    def fetch_and_save_by_plid(cls, plid_or_url: str, db: Session, custom_url: Optional[str] = None) -> List[Product]:
+        req = cls.fetch_product_by_plid(plid_or_url, custom_url=custom_url)
         return cls.save_collected_product(db, req)
