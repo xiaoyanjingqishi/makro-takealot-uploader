@@ -21,6 +21,15 @@ FAMOUS_BRANDS = [
     "nike", "adidas", "lego", "stanley", "rolex", "crocs"
 ]
 
+# 知名受保护影视/动漫/游戏IP与角色库 (侵权高危，严禁未经授权销售周边或标题蹭词)
+PROTECTED_ENTERTAINMENT_IPS = [
+    "spider man", "spiderman", "spider-man", "batman", "superman", "iron man", "ironman",
+    "captain america", "thor", "hulk", "avengers", "marvel", "disney", "mickey mouse",
+    "frozen", "elsa", "barbie", "star wars", "harry potter", "pokemon", "pikachu",
+    "hello kitty", "naruto", "dragon ball", "one piece", "peppa pig", "paw patrol",
+    "transformers", "jurassic park", "jurassic world"
+]
+
 # 配件指示词
 ACCESSORY_KEYWORDS = [
     "case", "cover", "strap", "band", "charger", "cable", "adapter",
@@ -221,7 +230,28 @@ class ComplianceService:
             "recommended_title": title_infringement["recommended_title"]
         }
 
-        # 3. 首图 AI 多模态视觉检测
+        # 3. 知名影视/动漫/游戏IP侵权排查 (Spider Man, Marvel, Disney, Barbie, Batman 等)
+        detected_ips = []
+        for ip in PROTECTED_ENTERTAINMENT_IPS:
+            if re.search(rf'\b{re.escape(ip)}\b', full_text) or re.search(rf'\b{re.escape(ip)}\b', eval_title_lower):
+                detected_ips.append(ip.title())
+        detected_ips = list(dict.fromkeys(detected_ips))
+
+        if detected_ips:
+            first_ip = detected_ips[0]
+            prohibited_items_found.append(f"影视/动漫IP商标侵权 ({first_ip})")
+            risk_reasons.append(f"【知名IP侵权拦截】检测到受严格版权与商标保护的影视/动漫IP [{', '.join(detected_ips)}]！严禁未经官方授权销售此类周边商品或在标题属性中蹭词！")
+            suggestions.append(f"立即清除商品中包含的受保护IP名称 [{first_ip}]，若无官方正版授权请停止刊登。")
+
+        # 4. 变装类目 (costume_wear) 误挂排查 (严防普通服饰/日用品误选导致平台强制拼接 Spider Man 标题)
+        target_vertical = (product_data.get("makro_vertical") or "").lower()
+        if target_vertical == "costume_wear":
+            daily_apparel_keywords = ["bra", "bras", "push-up", "brassiere", "underwear", "lingerie", "panties", "boxer", "briefs", "headlamp", "socks", "neuropathy"]
+            if any(re.search(rf'\b{kw}\b', full_text) for kw in daily_apparel_keywords):
+                risk_reasons.append("【类目错挂与标题侵权隐患】当前选择类目为变装服饰 (costume_wear)，但商品实为普通内衣/日用品！Makro 平台的 costume_wear 类目具有强制标题公式（会强行拼接 Spider Man 等角色名称），将导致严重侵权拦截！请务必更换为正确垂直类目。")
+                suggestions.append("请将类目从 costume_wear 更改为正确的官方类目（例如头灯选 torch，足垫选 foot_pad，文胸暂不建议上架）。")
+
+        # 5. 首图 AI 多模态视觉检测
         image_inspection = {
             "tested": False,
             "image_url": None,

@@ -554,6 +554,8 @@
                 <div class="relative group cursor-pointer shrink-0" @click="openImagePreview(grp.coverImage)" title="点击放大预览主图">
                   <img 
                     :src="grp.coverImage || placeholderImg" 
+                    @error="handleImageError($event, grp.coverImage)"
+                    loading="lazy"
                     class="w-16 h-16 object-cover rounded-lg border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition"
                   />
                   <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -629,7 +631,12 @@
                     </td>
                     <td class="py-2.5 px-4">
                       <div class="relative group cursor-pointer" @click="openImagePreview(getItemImage(item))" title="点击放大预览主图">
-                        <img :src="getItemImage(item)" class="w-10 h-10 object-cover rounded border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition" />
+                        <img 
+                          :src="getItemImage(item)" 
+                          @error="handleImageError($event, getItemImage(item))"
+                          loading="lazy"
+                          class="w-10 h-10 object-cover rounded border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition" 
+                        />
                       </div>
                     </td>
                     <td class="py-2.5 px-4">
@@ -642,7 +649,20 @@
                       <div class="text-[10px] text-slate-400 mt-0.5">原条码: {{ item.barcode || '无' }}</div>
                     </td>
                     <td class="py-2.5 px-4">
-                      <div class="font-medium text-slate-700 line-clamp-1">{{ item.makro_title || '待AI规范化' }}</div>
+                      <div class="flex items-start justify-between space-x-1.5">
+                        <div class="font-medium text-slate-700 line-clamp-1 flex-1" :title="item.makro_title">{{ item.makro_title || '待AI规范化' }}</div>
+                        <span v-if="item.makro_title" :class="[
+                          'text-[9.5px] px-1.5 py-0.2 rounded font-mono font-bold shrink-0',
+                          item.makro_title.length >= 80 && item.makro_title.length <= (settings.seo_title_max_len || 120) ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        ]" :title="'标题长度: ' + item.makro_title.length + ' 字符'">
+                          {{ item.makro_title.length }}字
+                        </span>
+                      </div>
+                      <div v-if="item.seo_keywords && item.seo_keywords.length" class="flex flex-wrap gap-1 mt-1">
+                        <span v-for="kw in item.seo_keywords.slice(0, 3)" :key="kw" class="text-[9.5px] px-1.5 py-0.2 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded font-medium">
+                          🔍 {{ kw }}
+                        </span>
+                      </div>
                       <div class="flex items-center space-x-1.5 mt-0.5 text-[10px]">
                         <span class="text-slate-400">类目: {{ item.makro_vertical }}</span>
                         <span class="text-blue-600 font-semibold">品牌: {{ item.makro_brand }}</span>
@@ -743,6 +763,8 @@
                   <div class="relative group cursor-pointer" @click="openImagePreview(getItemImage(item))" title="点击放大预览主图">
                     <img 
                       :src="getItemImage(item)" 
+                      @error="handleImageError($event, getItemImage(item))"
+                      loading="lazy"
                       class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs bg-white group-hover:opacity-85 transition"
                     />
                     <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -1037,7 +1059,9 @@
                   title="点击放大预览"
                 >
                   <img 
-                    :src="img" 
+                    :src="cleanImageUrl(img)" 
+                    @error="handleImageError($event, img)"
+                    loading="lazy"
                     class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0 bg-white group-hover:opacity-85 transition"
                   />
                   <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -1095,12 +1119,26 @@
             </div>
 
             <div>
-              <label class="block text-xs font-semibold text-slate-700 mb-1">Makro SEO 标准标题 (自动按公式生成)</label>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold text-slate-700">Makro SEO 标准标题 (已融入高权重搜索词)</label>
+                <span v-if="activeItem.makro_title" :class="[
+                  'text-[10px] font-mono px-1.5 py-0.2 rounded font-bold',
+                  activeItem.makro_title.length >= 80 && activeItem.makro_title.length <= (settings.seo_title_max_len || 120) ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                ]" :title="'标题字符数: ' + activeItem.makro_title.length">
+                  {{ activeItem.makro_title.length }}/{{ settings.seo_title_max_len || 120 }} 字符
+                </span>
+              </div>
               <textarea 
                 v-model="activeItem.makro_title" 
                 rows="2"
                 class="w-full text-xs p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
               ></textarea>
+              <div v-if="activeItem.seo_keywords && activeItem.seo_keywords.length" class="flex flex-wrap gap-1 mt-1.5 items-center">
+                <span class="text-[10px] text-slate-400 font-medium">搜索词:</span>
+                <span v-for="kw in activeItem.seo_keywords" :key="kw" class="text-[10px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded font-medium">
+                  🔍 {{ kw }}
+                </span>
+              </div>
             </div>
 
             <div class="grid grid-cols-2 gap-3">
@@ -1327,9 +1365,11 @@
                     <div class="flex items-start space-x-2.5">
                       <img 
                         v-if="v.images && v.images.length > 0" 
-                        :src="v.images[0]" 
-                        class="w-12 h-12 object-cover rounded-lg border border-slate-300 shrink-0 bg-white"
-                        :title="'变体首图: ' + (v.colour || '默认')"
+                        :src="cleanImageUrl(v.images[0])" 
+                        @error="handleImageError($event, v.images[0])"
+                        @click="openImagePreview(v.images[0])"
+                        class="w-12 h-12 object-cover rounded-lg border border-slate-300 shrink-0 bg-white cursor-pointer hover:opacity-85 transition shadow-2xs"
+                        :title="'变体首图 (点击放大): ' + (v.colour || '默认')"
                       />
                       <div v-else class="w-12 h-12 rounded-lg border border-dashed border-slate-300 flex items-center justify-center text-[10px] text-slate-400">
                         无图
@@ -1402,9 +1442,11 @@
                     <img 
                       v-for="(imgUrl, imgIdx) in v.images.slice(0, 6)" 
                       :key="imgIdx" 
-                      :src="imgUrl" 
-                      class="w-8 h-8 object-cover rounded border border-slate-200 shrink-0" 
-                      :title="'变体图 ' + (imgIdx + 1)"
+                      :src="cleanImageUrl(imgUrl)" 
+                      @error="handleImageError($event, imgUrl)"
+                      @click="openImagePreview(imgUrl)"
+                      class="w-8 h-8 object-cover rounded border border-slate-200 shrink-0 cursor-pointer hover:opacity-85 transition shadow-2xs" 
+                      :title="'变体图 ' + (imgIdx + 1) + ' (点击放大预览)'"
                     />
                     <span v-if="v.images.length > 6" class="text-[10px] text-slate-400 self-center px-1">
                       +{{ v.images.length - 6 }}
@@ -1788,6 +1830,34 @@
                   <input v-model="settings.deepseek_model" type="text" class="w-full text-xs p-2 border rounded-lg bg-white">
                 </div>
               </div>
+
+              <!-- 标题 SEO 关键词拓展增强配置 -->
+              <div class="p-3.5 bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-blue-50/70 rounded-xl border border-blue-200 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                      <span>🎯</span>
+                      <span>商品标题 SEO 搜索意图拓展 (高权重搜索词挖掘)</span>
+                      <span class="text-[10px] px-1.5 py-0.2 bg-blue-100 text-blue-700 font-bold rounded">推荐开启</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">AI 清洗时自动挖掘买家搜索长尾词与场景同义词，构建高曝光电商标题。</p>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="settings.seo_title_enabled" class="sr-only peer">
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                <div v-if="settings.seo_title_enabled" class="grid grid-cols-2 gap-3 pt-2 border-t border-blue-100/80">
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">标题最大字符数上限 (建议 80~120)</label>
+                    <input v-model.number="settings.seo_title_max_len" type="number" min="60" max="180" class="w-full text-xs p-2 border rounded-lg bg-white">
+                  </div>
+                  <div class="text-[11px] text-slate-500 flex items-center">
+                    <span>💡 结构范式：<code class="text-blue-700 font-bold font-mono text-[10px]">[品牌] + [核心品名] + [高频长尾词] + [使用场景] + [规格]</code></span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1952,7 +2022,13 @@
                 </div>
                 <div v-if="complianceModalItem.compliance_details.image_inspection?.tested" class="mt-2 text-[11px] text-slate-700 space-y-1">
                   <div class="flex space-x-3 items-center">
-                    <img :src="complianceModalItem.compliance_details.image_inspection.image_url" class="w-12 h-12 rounded object-cover border" />
+                    <img 
+                      :src="cleanImageUrl(complianceModalItem.compliance_details.image_inspection.image_url)" 
+                      @error="handleImageError($event, complianceModalItem.compliance_details.image_inspection.image_url)"
+                      @click="openImagePreview(complianceModalItem.compliance_details.image_inspection.image_url)"
+                      class="w-12 h-12 rounded object-cover border cursor-pointer hover:opacity-85 transition shadow-2xs" 
+                      title="点击放大预览"
+                    />
                     <div>
                       <div>诊断结论: <strong>{{ complianceModalItem.compliance_details.image_inspection.summary }}</strong></div>
                       <div v-if="complianceModalItem.compliance_details.image_inspection.has_brand_logo" class="text-amber-700 font-bold mt-0.5">
@@ -2195,23 +2271,75 @@
       <!-- ================= 全屏图片放大预览模态框 (Lightbox) ================= -->
       <div 
         v-if="previewImageUrl" 
-        @click.self="previewImageUrl = null"
-        class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 transition-all duration-200"
+        @click.self="closeImagePreview"
+        class="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 z-[9999] transition-all duration-200"
       >
-        <div class="relative max-w-4xl w-full flex flex-col items-center">
+        <div class="relative max-w-5xl w-full flex flex-col items-center">
+          <!-- 关闭按钮 -->
           <button 
-            @click="previewImageUrl = null" 
-            class="absolute -top-12 right-0 bg-white/20 hover:bg-white/40 text-white rounded-full w-9 h-9 flex items-center justify-center text-lg transition font-bold"
+            @click="closeImagePreview" 
+            class="absolute -top-12 right-0 bg-white/20 hover:bg-white/40 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl transition font-bold cursor-pointer shadow-lg"
+            title="关闭预览 (ESC)"
           >
             ✕
           </button>
-          <div class="bg-white p-2 rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex items-center justify-center">
-            <img :src="previewImageUrl" class="max-h-[80vh] max-w-full object-contain rounded-xl" />
+
+          <!-- 图片展示容器 -->
+          <div class="bg-white p-3 rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] max-w-full flex items-center justify-center min-w-[280px] min-h-[280px] relative">
+            <!-- 加载状态指示器 -->
+            <div v-if="previewLoading && !previewImageFailed" class="absolute inset-0 flex flex-col items-center justify-center bg-white/90 z-10 space-y-2">
+              <div class="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-xs text-slate-500 font-medium">正在加载高清大图...</span>
+            </div>
+
+            <!-- 加载失败友好提示 -->
+            <div v-if="previewImageFailed" class="flex flex-col items-center justify-center p-8 text-center space-y-3">
+              <span class="text-3xl">🖼️</span>
+              <div class="text-sm font-bold text-slate-700">图片加载受限或超时</div>
+              <p class="text-xs text-slate-400 max-w-xs">Takealot 远程图片服务器响应较慢，或受国内网络限制</p>
+              <div class="flex items-center space-x-2 pt-2">
+                <button 
+                  @click="retryPreviewWithProxy" 
+                  class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-xs"
+                >
+                  🔄 强制本地代理中转重试
+                </button>
+                <a 
+                  :href="previewImageUrl" 
+                  target="_blank" 
+                  class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold"
+                >
+                  新标签页打开 ↗
+                </a>
+              </div>
+            </div>
+
+            <!-- 核心大图 -->
+            <img 
+              v-show="!previewImageFailed"
+              :src="previewImageUrl" 
+              @load="onPreviewImageLoad"
+              @error="handlePreviewImageError"
+              class="max-h-[80vh] max-w-full object-contain rounded-xl select-none" 
+            />
           </div>
-          <div class="mt-3 flex items-center space-x-4 text-xs text-white/90">
-            <a :href="previewImageUrl" target="_blank" class="hover:text-white underline flex items-center space-x-1">
-              <span>在新标签页中打开原图 ↗</span>
-            </a>
+
+          <!-- 底部工具栏与操作提示 -->
+          <div class="mt-3 flex items-center justify-between w-full max-w-xl px-2 text-xs text-white/90">
+            <span class="text-white/60 text-[11px]">按 ESC 键或点击外部退出</span>
+            <div class="flex items-center space-x-4">
+              <button 
+                v-if="!previewImageUrl.includes('/api/products/image-proxy')"
+                @click="previewImageUrl = getImageProxyUrl(previewImageUrl)" 
+                class="text-[11px] text-blue-300 hover:text-white underline cursor-pointer"
+                title="若直连加载慢，切换通过系统本地服务加速"
+              >
+                🔄 切换本地代理加载
+              </button>
+              <a :href="previewImageUrl" target="_blank" class="hover:text-white underline flex items-center space-x-1">
+                <span>在新标签页中打开原图 ↗</span>
+              </a>
+            </div>
           </div>
         </div>
       </div>
@@ -2545,7 +2673,13 @@
           <div class="p-6 overflow-y-auto space-y-4 text-xs">
             <!-- 商品概览卡片 -->
             <div class="flex items-start space-x-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <img :src="getItemImage(singlePublishItem)" class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0 bg-white" />
+              <img 
+                :src="getItemImage(singlePublishItem)" 
+                @error="handleImageError($event, getItemImage(singlePublishItem))"
+                @click="openImagePreview(getItemImage(singlePublishItem))"
+                class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0 bg-white cursor-pointer hover:opacity-85 transition shadow-2xs" 
+                title="点击放大预览主图"
+              />
               <div class="flex-1 min-w-0">
                 <div class="font-bold text-slate-800 truncate">{{ singlePublishItem.makro_title || singlePublishItem.takealot_title }}</div>
                 <div class="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center space-x-2">
@@ -2678,6 +2812,8 @@
           viewMode: 'grouped', // 'grouped' | 'flat'
           expandedGroups: {},
           previewImageUrl: null,
+          previewLoading: false,
+          previewImageFailed: false,
           placeholderImg: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><rect width='100%' height='100%' fill='%23f1f5f9'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%2394a3b8' font-size='12' font-family='sans-serif'>暂无图片</text></svg>",
           toasts: [],
           confirmDialog: {
@@ -2741,7 +2877,9 @@
             seller_id: 'cb80491bf0a34dc5',
             fk_csrf_token: 'FbvXzXEP-45o5eUtkeX8Wo6LCq9GBWDg9Rcg',
             cookie: '',
-            default_brand: 'Beishi'
+            default_brand: 'Beishi',
+            seo_title_enabled: true,
+            seo_title_max_len: 120
           },
           searchQuery: '',
           statusFilter: '',
@@ -2790,10 +2928,18 @@
           for (const item of this.products.items) {
             const grpKey = item.group_code || item.takealot_id || `GRP_${item.id}`;
             if (!map[grpKey]) {
+              let cover = '';
+              if (Array.isArray(item.raw_images) && item.raw_images.length && item.raw_images[0]) {
+                cover = item.raw_images[0];
+              } else if (Array.isArray(item.images) && item.images.length && item.images[0]) {
+                cover = item.images[0];
+              } else if (item.variants && item.variants.length && item.variants[0].images && item.variants[0].images.length) {
+                cover = item.variants[0].images[0];
+              }
               map[grpKey] = {
                 group_code: grpKey,
                 title: (item.takealot_title || '').replace(/\s*-\s*[^-]+-[^-]+$/, '').replace(/\s*-\s*[^-]+$/, '').trim(),
-                coverImage: (item.raw_images && item.raw_images.length ? item.raw_images[0] : (item.images && item.images.length ? item.images[0] : '')),
+                coverImage: this.cleanImageUrl(cover),
                 takealot_url: item.takealot_url,
                 items: [],
                 colors: [],
@@ -2811,6 +2957,7 @@
               g.sizes.push(item.size);
             }
             if (item.makro_selling_price < g.minPrice) g.minPrice = item.makro_selling_price;
+            if (item.makro_selling_price > g.maxPrice) g.maxPrice = item.makro_selling_price;
           }
           return Object.values(map);
         },
@@ -2884,6 +3031,11 @@
         this.loadTasks();
         this.checkActiveTasks();
         this.loadNetworkInfo();
+        window.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && this.previewImageUrl) {
+            this.closeImagePreview();
+          }
+        });
       },
       methods: {
         async loadNetworkInfo() {
@@ -2910,15 +3062,74 @@
             prompt('请手动复制局域网访问地址:', urlToCopy);
           }
         },
+        cleanImageUrl(url) {
+          if (!url || typeof url !== 'string') return '';
+          let u = url.trim();
+          if (u.includes('{size}')) {
+            u = u.replace(/\{size\}/g, 'pdpxl');
+          }
+          return u;
+        },
+        getImageProxyUrl(url) {
+          const clean = this.cleanImageUrl(url);
+          if (!clean || clean.startsWith('data:') || clean.startsWith('/api/products/image-proxy')) return clean;
+          return `/api/products/image-proxy?url=${encodeURIComponent(clean)}`;
+        },
         getItemImage(item) {
           if (!item) return this.placeholderImg;
-          if (Array.isArray(item.raw_images) && item.raw_images.length > 0 && item.raw_images[0]) return item.raw_images[0];
-          if (Array.isArray(item.images) && item.images.length > 0 && item.images[0]) return item.images[0];
-          return this.placeholderImg;
+          let url = null;
+          if (Array.isArray(item.raw_images) && item.raw_images.length > 0 && item.raw_images[0]) {
+            url = item.raw_images[0];
+          } else if (Array.isArray(item.images) && item.images.length > 0 && item.images[0]) {
+            url = item.images[0];
+          } else if (item.variants && item.variants.length > 0 && item.variants[0].images && item.variants[0].images.length > 0) {
+            url = item.variants[0].images[0];
+          }
+          if (!url) return this.placeholderImg;
+          return this.cleanImageUrl(url);
+        },
+        handleImageError(event, fallbackUrl) {
+          const img = event.target;
+          if (!img) return;
+          const currentSrc = img.getAttribute('src') || img.src || '';
+          if (currentSrc && !currentSrc.includes('/api/products/image-proxy') && !currentSrc.startsWith('data:image/svg')) {
+            const targetUrl = fallbackUrl || currentSrc;
+            img.src = this.getImageProxyUrl(targetUrl);
+          } else {
+            img.src = this.placeholderImg;
+          }
         },
         openImagePreview(url) {
-          if (!url || url.startsWith('data:image/svg')) return;
-          this.previewImageUrl = url;
+          if (!url || (typeof url === 'string' && url.startsWith('data:image/svg'))) return;
+          const clean = this.cleanImageUrl(url);
+          this.previewLoading = true;
+          this.previewImageFailed = false;
+          this.previewImageUrl = clean;
+        },
+        handlePreviewImageError() {
+          if (!this.previewImageUrl) return;
+          if (!this.previewImageUrl.includes('/api/products/image-proxy')) {
+            // 自动重试：切换为本地反向代理加速拉取
+            this.previewImageUrl = this.getImageProxyUrl(this.previewImageUrl);
+          } else {
+            this.previewLoading = false;
+            this.previewImageFailed = true;
+          }
+        },
+        retryPreviewWithProxy() {
+          if (!this.previewImageUrl) return;
+          this.previewLoading = true;
+          this.previewImageFailed = false;
+          this.previewImageUrl = this.getImageProxyUrl(this.previewImageUrl);
+        },
+        onPreviewImageLoad() {
+          this.previewLoading = false;
+          this.previewImageFailed = false;
+        },
+        closeImagePreview() {
+          this.previewImageUrl = null;
+          this.previewLoading = false;
+          this.previewImageFailed = false;
         },
         toggleGroupExpand(code) {
           this.expandedGroups[code] = !this.expandedGroups[code];
@@ -3046,13 +3257,19 @@
                 mrp_ratio: this.settings.mrp_ratio || 1.5
               })
             });
-            const data = await res.json();
+            let data = {};
+            try {
+              data = await res.json();
+            } catch (_) {
+              const text = await res.text();
+              data = { detail: text || res.statusText || '服务器响应异常' };
+            }
             if (res.ok) {
               this.showToast(`✅ ${data.message || '批量改价成功！'}`, 'success');
               this.showBatchPriceModal = false;
               this.loadProducts(this.currentPage);
             } else {
-              alert('批量改价失败: ' + (data.detail || data.message));
+              alert('批量改价失败: ' + (data.detail || data.message || '未知错误'));
             }
           } catch (e) {
             alert('批量改价网络异常: ' + e);

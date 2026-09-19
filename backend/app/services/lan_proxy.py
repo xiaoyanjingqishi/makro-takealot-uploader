@@ -1,9 +1,11 @@
 import socket
 import logging
+import asyncio
 from typing import List, Dict, Any, Tuple
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, Response
+import app.utils.asyncio_patch
 
 logger = logging.getLogger("lan_proxy")
 
@@ -50,9 +52,11 @@ def create_reverse_proxy_app(target_url: str = "http://127.0.0.1:8001") -> FastA
     构建流式 ASGI 反向代理应用
     """
     app = FastAPI(title="Makro LAN Reverse Proxy", docs_url=None, redoc_url=None)
+    limits = httpx.Limits(max_keepalive_connections=50, max_connections=200, keepalive_expiry=60.0)
     client = httpx.AsyncClient(
         base_url=target_url,
         timeout=httpx.Timeout(120.0, connect=10.0),
+        limits=limits,
         follow_redirects=True
     )
 
@@ -103,11 +107,22 @@ def create_reverse_proxy_app(target_url: str = "http://127.0.0.1:8001") -> FastA
                 if k.lower() not in excluded_headers
             }
 
+            async def safe_body_iterator():
+                try:
+                    async for chunk in rp_resp.aiter_raw():
+                        yield chunk
+                except (ConnectionResetError, asyncio.CancelledError, OSError):
+                    pass
+                finally:
+                    try:
+                        await rp_resp.aclose()
+                    except Exception:
+                        pass
+
             return StreamingResponse(
-                rp_resp.aiter_raw(),
+                safe_body_iterator(),
                 status_code=rp_resp.status_code,
-                headers=resp_headers,
-                background=rp_resp.aclose
+                headers=resp_headers
             )
         except httpx.ConnectError:
             return Response(

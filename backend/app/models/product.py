@@ -24,6 +24,7 @@ class Product(Base):
     # AI 清洗与规范化后的 Makro 属性
     makro_vertical = Column(String(100), default="bath_towel", index=True)
     makro_title = Column(String(500), nullable=True)
+    seo_keywords = Column(Text, nullable=True)  # JSON: 搜索意图长尾词列表 ["garden hose nozzle", "car wash gun"]
     makro_description = Column(Text, nullable=True)
     makro_brand = Column(String(100), default="Beishi")
     makro_selling_price = Column(Float, default=0.0)

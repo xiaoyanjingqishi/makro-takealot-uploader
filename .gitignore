@@ -64,3 +64,5 @@ Thumbs.db
 scratch/
 scratch_test_app.js
 .tempmediaStorage/
+.image_cache/
+backend/.image_cache/

@@ -46,6 +46,10 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
         }, target_brand=product.makro_brand or "Beishi")
 
         product.makro_title = cleaned.get("makro_title", product.takealot_title)
+        raw_seo_kw = cleaned.get("seo_keywords") or []
+        if isinstance(raw_seo_kw, list) and raw_seo_kw:
+            product.seo_keywords = json.dumps([str(x).strip() for x in raw_seo_kw if str(x).strip()][:6], ensure_ascii=False)
+
         raw_desc = cleaned.get("description", product.takealot_description)
         product.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
         
@@ -162,6 +166,10 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                 }, target_brand=prod.makro_brand or "Beishi")
 
                 prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
+                raw_seo_kw = cleaned.get("seo_keywords") or []
+                if isinstance(raw_seo_kw, list) and raw_seo_kw:
+                    prod.seo_keywords = json.dumps([str(x).strip() for x in raw_seo_kw if str(x).strip()][:6], ensure_ascii=False)
+
                 raw_desc = cleaned.get("description", prod.takealot_description)
                 prod.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
                 

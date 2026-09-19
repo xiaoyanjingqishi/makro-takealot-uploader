@@ -28,6 +28,12 @@ def get_settings(db: Session = Depends(get_db)):
         val = setting_dict.get(key)
         return val if val is not None else default
 
+    def _get_bool(key: str, default: bool) -> bool:
+        val = setting_dict.get(key)
+        if val is None:
+            return default
+        return str(val).lower() in ["true", "1", "yes", "y"]
+
     return SystemSettingsSchema(
         markup_ratio=_get_float("markup_ratio", settings.DEFAULT_MARKUP_RATIO),
         fixed_markup=_get_float("fixed_markup", settings.DEFAULT_FIXED_MARKUP),
@@ -52,6 +58,8 @@ def get_settings(db: Session = Depends(get_db)):
         deepseek_api_key=_get_str("deepseek_api_key", settings.DEEPSEEK_API_KEY),
         deepseek_base_url=_get_str("deepseek_base_url", settings.DEEPSEEK_BASE_URL),
         deepseek_model=_get_str("deepseek_model", settings.DEEPSEEK_MODEL),
+        seo_title_enabled=_get_bool("seo_title_enabled", getattr(settings, "DEFAULT_SEO_TITLE_ENABLED", True)),
+        seo_title_max_len=_get_int("seo_title_max_len", getattr(settings, "DEFAULT_SEO_TITLE_MAX_LEN", 120)),
     )
 
 @router.post("", summary="保存或更新系统配置")

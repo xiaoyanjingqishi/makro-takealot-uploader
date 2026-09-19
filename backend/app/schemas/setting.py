@@ -36,6 +36,10 @@ class SystemSettingsSchema(BaseModel):
     deepseek_base_url: Optional[str] = "https://api.deepseek.com/v1"
     deepseek_model: Optional[str] = "deepseek-chat"
 
+    # 标题 SEO 关键词扩展增强
+    seo_title_enabled: bool = True
+    seo_title_max_len: int = 120
+
 class SyncCredentialsRequest(BaseModel):
     seller_id: Optional[str] = None
     fk_csrf_token: Optional[str] = None

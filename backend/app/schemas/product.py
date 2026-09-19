@@ -67,6 +67,7 @@ class ProductResponse(BaseModel):
     status: str
     makro_vertical: Optional[str] = "bath_towel"
     makro_title: Optional[str] = None
+    seo_keywords: Optional[List[str]] = []
     makro_description: Optional[str] = None
     makro_brand: Optional[str] = "Beishi"
     makro_selling_price: float

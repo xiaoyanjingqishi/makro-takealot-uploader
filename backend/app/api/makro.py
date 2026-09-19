@@ -17,6 +17,7 @@ from ..services.makro_client import MakroClient
 from ..services.vertical_service import VerticalService
 from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
+from ..services.compliance_service import PROTECTED_ENTERTAINMENT_IPS
 from ..config import settings
 from .products import _format_product
 
@@ -244,6 +245,10 @@ def _build_makro_payload(
         clean_prefix = re.sub(r'^(Generic|Beishi|[a-zA-Z0-9_\-]+)\s*[\'’s]*\s*[-_:]*\s*', '', store_title, flags=re.I)
         store_title = f"{target_brand} {clean_prefix.strip()}"
 
+    # 严格移除/替换受保护IP角色词，杜绝 Spider Man 等侵权词在标题中出现
+    for ip in PROTECTED_ENTERTAINMENT_IPS:
+        store_title = re.sub(rf'\b{re.escape(ip)}\b', 'Party', store_title, flags=re.I)
+
     raw_desc = str(product.makro_description or "")
     store_desc = raw_desc
     if source_brand and target_brand and source_brand.lower() != target_brand.lower():
@@ -315,6 +320,31 @@ def _build_makro_payload(
         if "compatible_devices" in allowed_attrs and "compatible_devices" not in catalog_attrs:
             catalog_attrs["compatible_devices"] = [{"value": "Geyser, Water Heater, Home Appliances", "qualifier": None}]
 
+    # A3. 派对戏服与道具穿戴 (costume_wear) 标题生成属性防御注入
+    if vertical == "costume_wear":
+        # Makro 会强制以 [Brand] + [Character] + Costume Wear + ([Colour]) 生成标题
+        # 若 character 为空，Makro 默认使用第 0 个枚举值 Spider Man 导致漫威/迪士尼侵权！
+        # 必须强制填充通用中性角色 "Party" 或 "Cosplay"
+        char_val = "Party"
+        if "character" in catalog_attrs and catalog_attrs["character"]:
+            raw_c = str(catalog_attrs["character"][0].get("value") or "").strip()
+            if raw_c and not any(ip in raw_c.lower() for ip in PROTECTED_ENTERTAINMENT_IPS):
+                char_val = raw_c
+        catalog_attrs["character"] = [{"value": char_val, "qualifier": None}]
+
+        if not allowed_attrs or "theme" in allowed_attrs:
+            if "theme" not in catalog_attrs:
+                catalog_attrs["theme"] = [{"value": "Party & Celebration", "qualifier": None}]
+        if not allowed_attrs or "type" in allowed_attrs:
+            if "type" not in catalog_attrs:
+                catalog_attrs["type"] = [{"value": "Costume", "qualifier": None}]
+        if not allowed_attrs or "occasion" in allowed_attrs:
+            if "occasion" not in catalog_attrs:
+                catalog_attrs["occasion"] = [{"value": "Party", "qualifier": None}]
+        if not allowed_attrs or "ideal_for" in allowed_attrs:
+            if "ideal_for" not in catalog_attrs:
+                catalog_attrs["ideal_for"] = [{"value": "Men & Women", "qualifier": None}]
+
     # 通用质保与售后
     if "warranty_summary" in allowed_attrs and "warranty_summary" not in catalog_attrs:
         catalog_attrs["warranty_summary"] = [{"value": "1 Year Manufacturer Warranty", "qualifier": None}]
@@ -322,13 +352,15 @@ def _build_makro_payload(
         catalog_attrs["warranty_service_type"] = [{"value": "Customer Support", "qualifier": None}]
 
     # B. 通用必填项兜底
-    # 严格移除所有品牌名以生成合规 model_name 与 model_number (平台规则: Brand name should not be part of attribute value)
+    # 严格移除所有品牌名与受限IP以生成合规 model_name 与 model_number (平台规则: Brand name should not be part of attribute value)
     clean_model_title = store_title
     brands_to_clean = {target_brand, source_brand, _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND), "Beishi"}
     for b_to_clean in brands_to_clean:
         if b_to_clean:
             clean_model_title = re.sub(rf'^\s*{re.escape(b_to_clean)}\s*[\'’s]*\s*[-_:]*\s*', '', clean_model_title, flags=re.I)
             clean_model_title = re.sub(rf'\b{re.escape(b_to_clean)}\b', '', clean_model_title, flags=re.I).strip(' -_,:;')
+    for ip in PROTECTED_ENTERTAINMENT_IPS:
+        clean_model_title = re.sub(rf'\b{re.escape(ip)}\b', 'Party', clean_model_title, flags=re.I).strip(' -_,:;')
 
     smart_defaults = {
         "model_name": (clean_model_title or f"Standard {vertical}")[:40],
@@ -425,6 +457,16 @@ def _build_makro_payload(
                 cur_qual = attr_v_list[0].get("qualifier")
                 norm_val, norm_qual = _format_attribute_value_and_qualifier(attr_k, cur_val, cur_qual, def_item, brand=brand)
                 catalog_attrs[attr_k] = [{"value": norm_val, "qualifier": norm_qual}]
+
+    # E. 全量属性文本清洗：杜绝任何属性值中残留受保护的知名影视动漫IP角色词 (如 Spider Man, Batman 等)
+    for attr_k, attr_v_list in catalog_attrs.items():
+        if attr_v_list and isinstance(attr_v_list, list):
+            for item in attr_v_list:
+                v = item.get("value")
+                if isinstance(v, str):
+                    for ip in PROTECTED_ENTERTAINMENT_IPS:
+                        if re.search(rf'\b{re.escape(ip)}\b', v, flags=re.I):
+                            item["value"] = re.sub(rf'\b{re.escape(ip)}\b', 'Party', v, flags=re.I).strip()
 
     now_ms = int(time.time() * 1000)
 

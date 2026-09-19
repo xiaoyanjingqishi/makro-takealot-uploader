@@ -17,6 +17,9 @@ if hasattr(sys.stdout, "reconfigure"):
 backend_dir = Path(__file__).resolve().parent / "backend"
 sys.path.insert(0, str(backend_dir))
 
+# 应用 Windows asyncio 连接重置 WinError 10054 补丁
+import app.utils.asyncio_patch
+
 def check_port_available(port: int, host: str = "0.0.0.0") -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -103,9 +106,16 @@ def main():
     while True:
         try:
             uvicorn.run("main:app", app_dir=str(backend_dir), host="0.0.0.0", port=8001, reload=False)
-        except (KeyboardInterrupt, SystemExit):
-            print("\n  [系统退出] 收到退出指令，服务已停止。")
+        except KeyboardInterrupt:
+            print("\n  [系统退出] 收到退出指令 (Ctrl+C)，服务已停止。")
             break
+        except SystemExit as se:
+            if se.code == 0:
+                print("\n  [系统退出] 服务正常退出。")
+                break
+            else:
+                print(f"\n  [异常警告] 主后端服务非正常退出 (退出码: {se.code})，正在 3 秒后自动拉起重启...")
+                time.sleep(3)
         except Exception as e:
             print(f"\n  [异常警告] 主后端服务异常退出: {e}，正在 3 秒后自动拉起重启...")
             time.sleep(3)

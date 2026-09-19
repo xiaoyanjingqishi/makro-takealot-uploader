@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # 默认批量上品并发线程数 (推荐 2~3，支持店铺间并发)
     DEFAULT_PUBLISH_CONCURRENCY: int = 2
 
+    # 标题 SEO 关键词搜索意图拓展配置
+    DEFAULT_SEO_TITLE_ENABLED: bool = True
+    DEFAULT_SEO_TITLE_MAX_LEN: int = 120
+
     class Config:
         env_file = ".env"
         extra = "ignore"

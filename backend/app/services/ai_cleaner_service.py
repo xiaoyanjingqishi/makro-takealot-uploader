@@ -9,14 +9,37 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+def truncate_title_safely(title: str, max_len: int = 120) -> str:
+    """
+    智能截断标题：总字符数不超过 max_len，并在单词边界 (空格/破折号/逗号) 友好截断，绝不在单词中间生硬腰斩
+    """
+    title = re.sub(r'\s+', ' ', str(title or "")).strip()
+    if len(title) <= max_len:
+        return title
+    truncated = title[:max_len]
+    last_sep = max(truncated.rfind(' '), truncated.rfind(','), truncated.rfind('-'), truncated.rfind('/'))
+    if last_sep > int(max_len * 0.65):
+        truncated = truncated[:last_sep].rstrip(' -_,;:/')
+    return truncated
+
 class AICleanerService:
     """
     AI 数据清洗与属性规范化服务 (支持通义千问 Qwen 与 DeepSeek)
     全品类自适应：智能识别类目，不再局限于毛巾浴巾，支持工具、3C数码、家居百货等所有品类
     """
 
-    def __init__(self, provider: str = None, api_key: str = None, base_url: str = None, model: str = None):
+    def __init__(
+        self,
+        provider: str = None,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = None,
+        seo_title_enabled: bool = True,
+        seo_title_max_len: int = 120
+    ):
         self.provider = provider or settings.AI_PROVIDER
+        self.seo_title_enabled = seo_title_enabled
+        self.seo_title_max_len = max(60, min(180, seo_title_max_len or 120))
         
         if self.provider == "deepseek":
             self.api_key = api_key or settings.DEEPSEEK_API_KEY
@@ -55,7 +78,23 @@ class AICleanerService:
             base_url = s_url.value if s_url else settings.QWEN_BASE_URL
             model = s_model.value if s_model else settings.QWEN_MODEL
 
-        return cls(provider=provider, api_key=api_key, base_url=base_url, model=model)
+        s_seo_en = db.query(SystemSetting).filter(SystemSetting.key == "seo_title_enabled").first()
+        seo_title_enabled = (s_seo_en.value.lower() in ["true", "1", "yes"]) if s_seo_en and s_seo_en.value else getattr(settings, "DEFAULT_SEO_TITLE_ENABLED", True)
+
+        s_seo_len = db.query(SystemSetting).filter(SystemSetting.key == "seo_title_max_len").first()
+        try:
+            seo_title_max_len = int(s_seo_len.value) if s_seo_len and s_seo_len.value else getattr(settings, "DEFAULT_SEO_TITLE_MAX_LEN", 120)
+        except Exception:
+            seo_title_max_len = getattr(settings, "DEFAULT_SEO_TITLE_MAX_LEN", 120)
+
+        return cls(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            seo_title_enabled=seo_title_enabled,
+            seo_title_max_len=seo_title_max_len
+        )
 
     def clean_product_data(self, takealot_product: Dict[str, Any], target_brand: str = "Beishi") -> Dict[str, Any]:
         """
@@ -86,6 +125,12 @@ class AICleanerService:
 Select the SINGLE best matching Makro official vertical code from this candidate list:
 [{candidates_str}]
 
+Category Selection Rules:
+- NEVER select "costume_wear" for normal daily bras, underwear, lingerie, everyday clothes, headlamps, or foot sleeves! "costume_wear" is strictly for cosplay and fancy dress party costumes.
+- For headlamps, flashlights, or portable lights, choose "torch".
+- For foot socks, neuropathy socks, heel protectors, or plantar fasciitis pads, choose "foot_pad".
+- For neck warmers, gaiters, beanies, or scarves, choose "cap".
+
 Product Data:
 Title: {raw_title}
 Category: {category}
@@ -109,8 +154,15 @@ Reply ONLY with a JSON object:
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             data = json.loads(json_match.group()) if json_match else json.loads(content)
             chosen = str(data.get("vertical", "")).strip().lower().replace("-", "_").replace(" ", "_")
+            
+            # 防御：普通服饰/头灯/足垫绝不能选 costume_wear
+            if chosen == "costume_wear":
+                txt_check = f"{raw_title} {category}".lower()
+                if any(w in txt_check for w in ["bra", "underwear", "lingerie", "panties", "socks", "headlamp", "lamp", "torch", "foot", "heel", "fasciitis"]):
+                    return VerticalService.predict_vertical(title=raw_title, category=category, specs=specs, description=description)
+
             valid_v, _ = VerticalService.resolve_vertical(chosen)
-            if valid_v in candidate_verticals or valid_v != "bath_towel":
+            if valid_v in candidate_verticals or valid_v != "cases_covers":
                 return valid_v
         except Exception as e:
             logger.warning(f"阶段 1 AI 类目定标异常: {e}")
@@ -150,6 +202,59 @@ Reply ONLY with a JSON object:
         schema_summary = VerticalService.get_vertical_schema_summary(chosen_vertical)
         guidelines_text = schema_summary.get("guidelines_text", "")
 
+        if self.seo_title_enabled:
+            title_instructions = f"""
+【★★★ 核心要求：商品标题 SEO 搜索意图拓展与高转化重构 (极重要)】:
+1. 买家搜索意图挖掘 (Search Intent & Keyword Mining):
+   - 深入分析该商品在南非电商平台 (Makro/Takealot) 买家最常使用的核心搜索词群、品类同义词、高意向长尾词与具体使用场景；
+   - 挖掘 2~4 个精准的高相关性搜索关键词 (例如: "High Pressure", "Waterproof", "Garden Hose Sprayer", "Heavy Duty", "Car Wash", "Breathable Hooded" 等)。
+2. 结构化电商标题构建范式:
+   - 严禁生硬逗号堆砌关键词！必须遵循成熟规范的电商高转化标题结构：
+     【{target_brand}】 + 【核心品名 Core Product Name】 + 【高频搜索长尾词/同义词】 + 【使用场景/目标对象 for ... / with ...】 + 【关键材质/颜色/规格】
+   - 示例参考:
+     * 工具类: "{target_brand} Multi-Function Spray Nozzle Cleaning Tool - High Pressure Water Sprayer Gun for Garden Hose & Car Wash"
+     * 雨具类: "{target_brand} Lightweight Waterproof Raincoat - Breathable Hooded Rain Poncho for Outdoor Hiking & Camping"
+     * 耗材类: "{target_brand} 12-Piece HSS Twist Drill Bit Set - High-Speed Steel Metal & Wood Hole Drilling Bits for Power Drills"
+3. 字符长度控制:
+   - 标题总字符数 (包含品牌与空格) 请严格控制在 80 ~ {self.seo_title_max_len} 字符以内！
+   - 既要充分拓展搜索关键词增加曝光，又严禁超出 {self.seo_title_max_len} 字符以防平台截断！
+4. 品牌与侵权防护:
+   - 标题必须且只能以授权品牌 "{target_brand}" 开头；
+   - 严禁为了蹭流量在标题中捏造第三方大牌商标 (如 Samsung, Bosch, Nike 等)；若为知名品牌配件，必须保持第三方兼容声明格式:
+     "{target_brand} Third-Party [Item] Compatible with [Device]"；
+5. 严禁平台违规促销词:
+   - 严禁出现 "Best", "Cheap", "Hot Sale", "Free Shipping", "100% Quality", "Deals", "Warranty" 等平台明令禁止的词汇。
+"""
+            output_schema = f"""{{
+  "vertical": "{chosen_vertical}",
+  "brand": "{target_brand}",
+  "makro_title": "{target_brand} 规范高权重英文商品标题 (自然融入搜索关键词, 长度80~{self.seo_title_max_len}字符)",
+  "seo_keywords": ["高频搜索词1", "使用场景词2", "品类同义词3"],
+  "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
+  "attributes": {{
+    // 必须包含上述类目规范中声明的必填项与推荐项
+  }}
+}}"""
+        else:
+            title_instructions = f"""
+【标题 (Title) 重写与品牌配件防侵权要求】:
+- 标题必须以品牌 "{target_brand}" 开头；
+- 严禁包含 Takealot 促销词 (如 Deals, Sale, Warranty 等)；
+- 若为知名品牌配件（如 Apple/iPhone 保护套等），标题必须采用第三方兼容声明格式：
+  "{target_brand} Third-Party [Item] Compatible with [Device]"；
+- 标题长度控制在 60 ~ {self.seo_title_max_len} 字符。
+"""
+            output_schema = f"""{{
+  "vertical": "{chosen_vertical}",
+  "brand": "{target_brand}",
+  "makro_title": "{target_brand} 规范英文商品标题",
+  "seo_keywords": [],
+  "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
+  "attributes": {{
+    // 必须包含上述类目规范中声明的必填项与推荐项
+  }}
+}}"""
+
         prompt = f"""
 你是一名资深的跨境电商商品刊登专家，精通南非电商平台 Takealot 与 Makro (基于沃尔玛/Flipkart 规范) 的数据对齐。
 请将下面来自 Takealot 的原始商品数据，转换为符合 Makro 卖家平台要求的规范 JSON 格式。
@@ -174,12 +279,11 @@ Reply ONLY with a JSON object:
    - 必须且只能输出 "Yes" 或 "No"！
 5. model_number 与 model_name：
    - 严禁包含品牌名 "{target_brand}" (平台规则: Brand name should not be part of the attribute value)！
+6. 严禁影视/动漫/游戏受保护IP侵权 (极度严格):
+   - 严禁在标题、描述、属性中输出任何未经授权的受保护IP或角色名称（如 Spider Man, Batman, Superman, Marvel, Disney, Barbie, Transformers 等）；
+   - 若类目为 costume_wear，character 属性必须且只能输出 "Party" 或 "Cosplay" 等通用中性词，绝不可填入 "Spider Man" 等具体IP角色名！
 
-【标题 (Title) 重写与品牌配件防侵权要求】:
-- 标题必须以品牌 "{target_brand}" 开头；
-- 严禁包含 Takealot 促销词 (如 Deals, Sale, Warranty 等)；
-- 若为知名品牌配件（如 Apple/iPhone 保护套等），标题必须采用第三方兼容声明格式：
-  "{target_brand} Third-Party [Item] Compatible with [Device]"；
+{title_instructions}
 
 【Takealot 原始商品数据】:
 原标题: {raw_title}
@@ -190,15 +294,7 @@ Reply ONLY with a JSON object:
 
 【输出要求】:
 必须且仅返回纯 JSON 对象，格式如下：
-{{
-  "vertical": "{chosen_vertical}",
-  "brand": "{target_brand}",
-  "makro_title": "{target_brand} 规范英文商品标题",
-  "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
-  "attributes": {{
-    // 必须包含上述类目规范中声明的必填项与推荐项
-  }}
-}}
+{output_schema}
 """
         response = self.client.chat.completions.create(
             model=self.model,
@@ -240,6 +336,17 @@ Reply ONLY with a JSON object:
             clean_t = re.sub(r'\s+', ' ', clean_t)
             makro_title = f"{target_brand} Third-Party {clean_t[:60]} Compatible with {brand_display}"
             data["makro_title"] = makro_title
+
+        # 安全截断标题至最大字符限制
+        makro_title = truncate_title_safely(makro_title, self.seo_title_max_len)
+        data["makro_title"] = makro_title
+
+        # 提取与规整搜索关键词
+        raw_seo_kw = data.get("seo_keywords") or []
+        if isinstance(raw_seo_kw, list):
+            data["seo_keywords"] = [str(x).strip() for x in raw_seo_kw if str(x).strip()][:6]
+        else:
+            data["seo_keywords"] = []
 
         # 将去除品牌名后的规范标题注入 model_number 参数 (规避 Brand name should not be part of attribute value)
         clean_mn = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', makro_title, flags=re.I)
@@ -320,9 +427,65 @@ Reply ONLY with a JSON object:
                 "ideal_for": "Everyday Use",
                 "design": "Shockproof"
             }
-        elif any(k in title_lower or k in cat_lower for k in ["bra", "underwear", "sculpting", "lingerie", "corset"]):
+        elif any(k in title_lower or k in cat_lower for k in ["headlamp", "flashlight", "torch", "lantern", "headlight", "lumens"]):
+            vertical = "torch"
+            makro_title = f"{target_brand} Rechargeable Waterproof LED Headlamp Flashlight ({colour})"
+            attrs = {
+                "model_name": "LED Spotlight",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "ABS & Aluminum",
+                "packaging_type": "Box",
+                "sales_package": "1 LED Headlamp",
+                "ideal_for": "Outdoor, Camping, Hiking",
+                "power_source": "Rechargeable Battery"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["foot", "heel", "fasciitis", "neuropathy", "insole", "foot sock"]):
+            vertical = "foot_pad"
+            makro_title = f"{target_brand} Compression Foot Sleeve & Plantar Fasciitis Support Pad ({colour})"
+            attrs = {
+                "model_name": "Foot Care Sleeve",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Silicone & Elastic Fabric",
+                "packaging_type": "Pack",
+                "sales_package": "1 Pair Foot Sleeves",
+                "ideal_for": "Men & Women"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["neck warmer", "neck gaiter", "scarf", "snood", "beanie"]):
+            vertical = "cap"
+            makro_title = f"{target_brand} Winter Warm Fleece Neck Warmer Gaiter Scarf ({colour})"
+            attrs = {
+                "model_name": "Winter Neck Warmer",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Fleece & Cotton",
+                "packaging_type": "Pack",
+                "sales_package": "1 Neck Warmer",
+                "ideal_for": "Unisex"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["costume", "cosplay", "fancy dress"]):
             vertical = "costume_wear"
-            makro_title = f"{target_brand} Wire-Free Push-Up Full Coverage Comfort Bra ({colour})"
+            makro_title = f"{target_brand} Party Cosplay Costume Wear ({colour})"
+            attrs = {
+                "model_name": "Party Wear",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "character": "Party",
+                "theme": "Party & Celebration",
+                "material": "Polyester",
+                "packaging_type": "Pack",
+                "sales_package": "1 Costume Set",
+                "ideal_for": "Unisex"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["bra", "underwear", "sculpting", "lingerie", "corset"]):
+            # Makro 平台无成人日常内衣专属类目，严防错挂为 costume_wear 导致平台强拼接 Spider Man 标题
+            vertical = "cases_covers"
+            makro_title = f"{target_brand} Comfort Fit Seamless Wire-Free Bra Underwear Accessory ({colour})"
             attrs = {
                 "model_name": "Comfort Fit",
                 "model_number": model_number,
@@ -330,7 +493,7 @@ Reply ONLY with a JSON object:
                 "colour": colour,
                 "material": "Spandex & Nylon",
                 "packaging_type": "Pack",
-                "sales_package": "1 Bra",
+                "sales_package": "1 Bra Accessory",
                 "ideal_for": "Women",
                 "design": "Full Coverage"
             }
@@ -433,6 +596,9 @@ Reply ONLY with a JSON object:
             clean_t = re.sub(r'\s+', ' ', clean_t)
             makro_title = f"{target_brand} Third-Party {clean_t[:60]} Compatible with {brand_display}"
 
+        # 截断与安全长度保护
+        makro_title = truncate_title_safely(makro_title, self.seo_title_max_len)
+
         # 确保 model_number 绝不包含目标品牌名
         clean_mn = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', makro_title, flags=re.I)
         clean_mn = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
@@ -442,6 +608,7 @@ Reply ONLY with a JSON object:
             "vertical": vertical,
             "brand": target_brand,
             "makro_title": makro_title,
+            "seo_keywords": [],
             "description": product.get("takealot_description") or f"{raw_title}. Premium quality provided by {target_brand}.",
             "attributes": attrs
         }

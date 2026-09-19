@@ -1,3 +1,4 @@
+import app.utils.asyncio_patch
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
@@ -13,6 +14,15 @@ try:
     from sqlalchemy import text
     with engine.connect() as _conn:
         _conn.execute(text("ALTER TABLE products ADD COLUMN previous_status VARCHAR(50)"))
+        _conn.commit()
+except Exception:
+    pass
+
+# 确保 products 表具备 seo_keywords 字段 (支持搜索意图关键词持久化)
+try:
+    from sqlalchemy import text
+    with engine.connect() as _conn:
+        _conn.execute(text("ALTER TABLE products ADD COLUMN seo_keywords TEXT"))
         _conn.commit()
 except Exception:
     pass
@@ -66,12 +76,29 @@ try:
 except Exception as _e:
     print(f"[INIT] 店铺初始迁移跳过或异常: {_e}")
 
+# 确保核心高频复合索引存在，彻底消除全表扫描慢查询
+try:
+    from sqlalchemy import text
+    with engine.connect() as _conn:
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_product_variants_product_id ON product_variants (product_id)"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_status_id ON products (status, id DESC)"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_compliance_status_id ON products (compliance_status, id DESC)"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_logs_product_id ON task_logs (product_id, id DESC)"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_logs_created_at ON task_logs (created_at DESC)"))
+        _conn.commit()
+except Exception as _ie:
+    print(f"[INIT] 复合索引初始化跳过或异常: {_ie}")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc"
 )
+
+# 挂载 GZip 响应压缩 (对大于 1KB 的 API 响应与前端 HTML 自动压缩 80%~85% 网络传输体积)
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # 配置 CORS 跨域 (允许浏览器插件和前端控制台无阻通信)
 app.add_middleware(
@@ -86,6 +113,7 @@ from fastapi.responses import HTMLResponse, Response
 from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "app" / "templates" / "index.html"
+_template_cache = {"content": "", "mtime": 0}
 
 # 挂载 API 路由
 app.include_router(api_router, prefix=settings.API_V1_STR)
@@ -98,8 +126,16 @@ def favicon():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
     if TEMPLATE_PATH.exists():
-        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            return f.read()
+        try:
+            cur_mtime = TEMPLATE_PATH.stat().st_mtime
+            if cur_mtime != _template_cache["mtime"] or not _template_cache["content"]:
+                with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+                    _template_cache["content"] = f.read()
+                _template_cache["mtime"] = cur_mtime
+            return _template_cache["content"]
+        except Exception:
+            with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+                return f.read()
     return "<h1>Makro-Takealot System Backend Online</h1><p><a href='/api/docs'>API Docs</a></p>"
 
 if __name__ == "__main__":

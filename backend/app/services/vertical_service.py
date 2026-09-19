@@ -54,57 +54,62 @@ class VerticalService:
 
         # 2. 常见别名映射表 (Takealot/AI 常见预测 -> Makro 官方垂直类目)
         ALIASES = {
-            # === 内衣 / 文胸 / 服装 / 配饰 ===
-            "brassiere": "costume_wear",
-            "brassieres": "costume_wear",
-            "bra": "costume_wear",
-            "bras": "costume_wear",
-            "women_bra": "costume_wear",
-            "sculpting_bra": "costume_wear",
-            "push_up_bra": "costume_wear",
-            "underwear": "costume_wear",
-            "underwears": "costume_wear",
-            "undergarment": "costume_wear",
-            "lingerie": "costume_wear",
-            "panties": "costume_wear",
-            "panty": "costume_wear",
-            "briefs": "costume_wear",
-            "boxer": "costume_wear",
-            "boxers": "costume_wear",
-            "corset": "costume_wear",
-            "shapewear": "costume_wear",
-            "swimwear": "costume_wear",
-            "swimsuit": "costume_wear",
-            "bikini": "costume_wear",
+            # === 派对变装 / 戏服 (仅限明确 Cosplay/Party 变装，严禁普通日常服饰错挂) ===
             "costume": "costume_wear",
             "costumes": "costume_wear",
             "costume_wear": "costume_wear",
-            "clothing": "costume_wear",
-            "apparel": "costume_wear",
-            "dress": "costume_wear",
-            "dresses": "costume_wear",
-            "skirt": "costume_wear",
-            "shirt": "costume_wear",
-            "t_shirt": "costume_wear",
-            "tshirt": "costume_wear",
-            "hoodie": "costume_wear",
-            "jacket": "costume_wear",
-            "pants": "costume_wear",
-            "trousers": "costume_wear",
-            "shorts": "costume_wear",
-            "leggings": "costume_wear",
-            "socks": "costume_wear",
-            "sock": "costume_wear",
-            "scarf": "costume_wear",
-            "belt": "costume_wear",
-            "glove": "glove",
-            "gloves": "glove",
+            "cosplay": "costume_wear",
+            "fancy_dress": "costume_wear",
+
+            # === 帽子 / 围巾 / 护颈 / 冬季穿戴 ===
             "cap": "cap",
             "caps": "cap",
             "hat": "cap",
             "hats": "cap",
             "beanie": "cap",
+            "scarf": "cap",
+            "scarves": "cap",
+            "neck_warmer": "cap",
+            "neck_gaiter": "cap",
+            "snood": "cap",
+            "balaclava": "cap",
+
+            # === 手套 / 雨衣 ===
+            "glove": "glove",
+            "gloves": "glove",
             "raincoat": "raincoat",
+
+            # === 照明 / 手电筒 / 头灯 ===
+            "torch": "torch",
+            "headlamp": "torch",
+            "head_lamp": "torch",
+            "headlight": "torch",
+            "flashlight": "torch",
+            "lantern": "torch",
+            "work_light": "torch",
+
+            # === 足部护理 / 矫形足垫 / 足套 ===
+            "foot_pad": "foot_pad",
+            "foot_sock": "foot_pad",
+            "foot_socks": "foot_pad",
+            "heel_sock": "foot_pad",
+            "heel_socks": "foot_pad",
+            "heel_protector": "foot_pad",
+            "foot_sleeve": "foot_pad",
+            "plantar_fasciitis": "foot_pad",
+            "neuropathy_socks": "foot_pad",
+            "insole": "foot_pad",
+            "arch_support": "foot_pad",
+
+            # === 手表 / 计时器 ===
+            "watch": "watch",
+            "smart_watch": "watch",
+            "wrist_watch": "watch",
+
+            # === 工具刀 / 美工刀 ===
+            "knife": "knife_tool",
+            "utility_knife": "knife_tool",
+            "knife_tool": "knife_tool",
 
             # === 眼镜 / 护目镜 ===
             "glasses": "protective_glasses",
@@ -213,19 +218,27 @@ class VerticalService:
             if target in verticals and verticals[target]:
                 return target, str(verticals[target][0]["id"])
 
-        # 3. 遍历垂直字典查找包含关键字的垂直类目
-        keywords = v_clean.split("_")
+        # 3. 遍历垂直字典查找分词完全匹配的垂直类目 (下划线分词精准比对，防止 "bra" 误中 "brake")
+        keywords = [k for k in v_clean.split("_") if len(k) >= 3]
         for kw in keywords:
-            if len(kw) < 3:
-                continue
             for name, items in verticals.items():
-                if kw in name and items:
+                name_tokens = name.split("_")
+                if kw in name_tokens and items:
                     return name, str(items[0]["id"])
 
-        # 4. 语义智能识别兜底 (彻底根除所有品类无脑默认变成 bath_towel 浴巾的隐患)
-        # 服饰/内衣/文胸/穿戴
-        if any(k in v_clean for k in ["cloth", "wear", "apparel", "bra", "under", "pant", "dress", "skirt", "shirt", "garment", "lingerie"]):
-            return "costume_wear", "7682"
+        # 4. 语义智能识别兜底 (规避特殊受限类目)
+        # 手电筒/头灯/户外照明
+        if any(k in v_clean for k in ["torch", "headlamp", "flashlight", "lantern", "lighting"]):
+            return "torch", "2287"
+        # 足部护理/足垫/足套/筋膜炎
+        if any(k in v_clean for k in ["foot", "heel", "fasciitis", "insole"]):
+            return "foot_pad", "7808"
+        # 帽子/围巾/护颈
+        if any(k in v_clean for k in ["cap", "hat", "beanie", "scarf", "warmer", "gaiter"]):
+            return "cap", "1209"
+        # 手套
+        if any(k in v_clean for k in ["glove", "mitten"]):
+            return "glove", "4244"
         # 眼镜
         if any(k in v_clean for k in ["glass", "spectacle", "eyewear"]):
             return "protective_glasses", "7787"
@@ -235,9 +248,15 @@ class VerticalService:
         # 五金工具
         if any(k in v_clean for k in ["tool", "plier", "wrench", "screw"]):
             return "plier", "2109"
+        # 手表
+        if any(k in v_clean for k in ["watch", "timepiece"]):
+            return "watch", "5009"
+        # 工具刀
+        if any(k in v_clean for k in ["knife", "blade", "cutter"]):
+            return "knife_tool", "865"
         # 保护套/数码壳
         if any(k in v_clean for k in ["case", "cover", "protector"]):
-            return "cases_covers", "7488"
+            return "cases_covers", "1148"
         # 分装/瓶罐
         if any(k in v_clean for k in ["dispens", "pump"]):
             return "liquid_dispenser", "2539"
@@ -246,9 +265,12 @@ class VerticalService:
         # 毛巾真实匹配
         if any(k in v_clean for k in ["towel", "bath"]):
             return "bath_towel", "407"
+        # 仅限真正的派对戏服变装道具
+        if any(k in v_clean for k in ["costume", "cosplay", "fancy_dress"]):
+            return "costume_wear", "7682"
 
-        # 终极兜底：日用服饰通用件
-        return "costume_wear", "7682"
+        # 终极安全兜底：数码与日用保护类目 (允许自定义标题，杜绝 Spider Man 戏服标题生成)
+        return "cases_covers", "1148"
 
     @classmethod
     def get_all_vertical_names(cls) -> list:
@@ -283,64 +305,92 @@ class VerticalService:
         if has_any(["glasses", "sunglasses", "spectacles", "anti-blue", "anti blue", "eyewear", "reading glasses", "protective glasses", "lens", "frames", "blue light"]):
             return "protective_glasses"
 
-        # 2. 内衣/文胸/服饰 (整词匹配，彻底规避 brand)
-        if has_any(["bra", "bras", "push-up", "wire-free", "brassiere", "lingerie", "underwear", "panties", "boxer", "briefs", "costume_wear", "sculpting bra"]):
-            return "costume_wear"
+        # 2. 照明 / 手电筒 / 头灯 / 露营灯
+        if has_any(["headlamp", "head lamp", "headlight", "torch", "flashlight", "lantern", "spotlight", "led light", "work light", "lumens"]):
+            return "torch"
 
-        # 3. 园艺修剪工具
+        # 3. 足部护理 / 矫形足垫 / 足套 / 筋膜炎套
+        if has_any(["foot pad", "foot socks", "heel sock", "heel protector", "plantar fasciitis", "neuropathy", "foot sleeve", "compression foot", "insole", "gel pad", "foot support", "arch support", "silicone foot"]):
+            return "foot_pad"
+
+        # 4. 帽子 / 围巾 / 护颈套 / 户外头巾
+        if has_any(["cap", "caps", "hat", "hats", "beanie", "scarf", "scarves", "neck warmer", "neck gaiter", "balaclava", "snood"]):
+            return "cap"
+
+        # 5. 手套
+        if has_any(["glove", "gloves", "mitten", "mittens"]):
+            return "glove"
+
+        # 6. 雨衣
+        if has_any(["raincoat", "rain coat", "rain poncho", "poncho"]):
+            return "raincoat"
+
+        # 7. 手表 / 腕表
+        if has_any(["watch", "watches", "wrist watch", "smart watch", "digital watch"]):
+            return "watch"
+
+        # 8. 工具刀 / 美工刀
+        if has_any(["utility knife", "pocket knife", "folding knife", "box cutter", "blade knife", "fixed blade"]):
+            return "knife_tool"
+
+        # 9. 园艺修剪工具
         if has_any(["gardening tool", "gardening tools", "garden tool", "pruner", "pruners", "pruning", "shear", "shears", "hedge", "lopper", "trowel", "secateurs"]):
             return "garden_tools"
 
-        # 4. 分装器 / 液体瓶
+        # 10. 分装器 / 液体瓶
         if has_any(["fluid dispenser", "liquid dispenser", "soap dispenser", "dispenser bottle", "pump dispenser", "reusable fluid"]):
             return "liquid_dispenser"
 
-        # 5. 水杯 / 水壶
+        # 11. 水杯 / 水壶
         if has_any(["water bottle", "drink bottle", "flask", "tumbler"]):
             return "water_bottle"
 
-        # 6. 手机壳与保护套
+        # 12. 手机壳与保护套
         if has_any(["phone case", "clear case", "silicone case", "cover case", "protective cover", "phone cover", "cases & covers", "cases_covers"]):
             return "cases_covers"
 
-        # 7. 钱包/卡包
+        # 13. 钱包/卡包
         if has_any(["wallet", "wallets", "purse", "card holder", "leather wallet", "bifold", "money clip", "card_holder"]):
             return "card_holder"
 
-        # 8. U盘/闪存
+        # 14. U盘/闪存
         if has_any(["usb flash", "flash drive", "pendrive", "pen drive", "thumb drive", "usb3.0", "usb2.0", "usb_flash_drive"]):
             return "usb_flash_drive"
 
-        # 9. 五金工具/钳子
+        # 15. 五金工具/钳子
         if has_any(["plier", "pliers", "crimper", "crimping", "wire stripper", "cutting plier", "hand tool", "hardware tool"]):
             return "plier"
 
-        # 10. 背包/书包
+        # 16. 背包/书包
         if has_any(["backpack", "backpacks", "travel bag", "laptop bag", "schoolbag", "rucksack", "duffel bag"]):
             return "backpack"
 
-        # 11. 耳机
+        # 17. 耳机
         if has_any(["headphone", "headphones", "earphone", "earphones", "earbuds", "headset", "tws"]):
             return "headphone"
 
-        # 12. 数据线
+        # 18. 数据线
         if has_any(["data cable", "charging cable", "usb cable", "type-c cable", "lightning cable"]):
             return "data_cable"
 
-        # 13. 智能开关插座
+        # 19. 智能开关插座
         if has_any(["smart plug", "smart switch", "wifi plug", "socket plug", "power socket"]):
             return "smart_switch_plug"
 
-        # 14. 毛巾浴巾 (必须有明确毛巾关键词才匹配)
+        # 20. 毛巾浴巾 (必须有明确毛巾关键词才匹配)
         if has_any(["towel", "towels", "bath towel", "hand towel", "washcloth", "microfiber towel", "bath_towel"]):
             return "bath_towel"
 
-        # 15. 床品
+        # 21. 床品
         if has_any(["bedsheet", "bed sheet", "duvet cover", "fitted sheet", "pillowcase", "bedding"]):
             return "bedsheet"
 
-        # 默认通用服饰配件
-        return "costume_wear"
+        # 22. 真正的变装/万圣节/派对道具服 (仅限明确变装，严禁日常服装内衣误入)
+        if has_any(["cosplay", "fancy dress", "halloween costume", "party costume", "carnival costume"]):
+            return "costume_wear"
+
+        # 默认安全通用配件 (允许自定义标题，杜绝 Spider Man 戏服标题生成)
+        return "cases_covers"
 
     @classmethod
     def get_candidate_verticals(cls, title: str = "", category: str = "", specs: any = None, description: str = "", max_candidates: int = 35) -> list:
@@ -353,8 +403,12 @@ class VerticalService:
 
         # 1. 核心高频通用官方类目（确保主流品类均有明确选项）
         CORE_CANONICAL = [
-            "costume_wear",        # 服饰 / 内衣 / 文胸 / 塑身衣 / 睡衣 / 穿戴类
             "protective_glasses",  # 眼镜 / 太阳镜 / 防蓝光眼镜 / 护目镜
+            "torch",               # 手电筒 / 头灯 / 户外照明
+            "foot_pad",            # 足垫 / 矫形垫 / 足部护理
+            "cap",                 # 帽子 / 围巾 / 护颈
+            "glove",               # 手套
+            "raincoat",            # 雨衣
             "garden_tools",        # 园艺工具 / 修枝剪 / 高枝剪 / 铲
             "pruner",              # 修枝剪
             "plier",               # 五金钳子 / 压线钳 / 剥线钳 / 工具
@@ -379,9 +433,6 @@ class VerticalService:
             "headphone",           # 耳机 / 耳麦
             "mouse",               # 鼠标
             "keyboard",            # 键盘
-            "glove",               # 手套
-            "cap",                 # 帽子
-            "raincoat",            # 雨衣
             "watch",               # 手表
         ]
 

@@ -1,11 +1,15 @@
 import re
 import json
+import os
+import hashlib
+import requests
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 from ..database import get_db
 from ..models.product import Product, ProductVariant
+from ..models.store import ProductStoreListing
 from ..models.task import TaskLog
 from ..schemas.product import (
     TakealotCollectRequest,
@@ -15,6 +19,21 @@ from ..schemas.product import (
 )
 from ..services.takealot_service import TakealotService
 from ..services.audit_logger import record_audit_log
+
+# 全局高复用图片会话连接池 (复用 media.takealot.com 的 HTTPS 长连接)
+_image_session = requests.Session()
+_image_adapter = requests.adapters.HTTPAdapter(
+    pool_connections=30,
+    pool_maxsize=100,
+    max_retries=1
+)
+_image_session.mount("https://", _image_adapter)
+_image_session.mount("http://", _image_adapter)
+
+# 图片内存热缓存 (最多缓存 120 张高频小图，避免频繁磁盘 I/O)
+_IMAGE_MEM_CACHE = {}
+_IMAGE_MEM_CACHE_KEYS = []
+_MAX_MEM_IMAGES = 120
 
 router = APIRouter(prefix="/products", tags=["商品管理"])
 
@@ -72,6 +91,13 @@ def _format_product(p: Product) -> dict:
                 "submitted_at": sl.submitted_at
             })
 
+    seo_kw = []
+    if getattr(p, "seo_keywords", None):
+        try:
+            seo_kw = json.loads(p.seo_keywords) if isinstance(p.seo_keywords, str) else p.seo_keywords
+        except Exception:
+            seo_kw = []
+
     return {
         "id": p.id,
         "takealot_id": p.takealot_id,
@@ -87,6 +113,7 @@ def _format_product(p: Product) -> dict:
         "previous_status": getattr(p, "previous_status", None),
         "makro_vertical": p.makro_vertical,
         "makro_title": p.makro_title,
+        "seo_keywords": seo_kw,
         "makro_description": p.makro_description,
         "makro_brand": p.makro_brand,
         "makro_selling_price": p.makro_selling_price,
@@ -212,24 +239,38 @@ def check_products_existence(payload: dict, db: Session = Depends(get_db)):
     rows = db.query(
         Product.group_code,
         Product.takealot_id,
-        func.count(Product.id).label("cnt"),
-        func.max(Product.status).label("status"),
-        func.max(Product.takealot_title).label("title")
+        Product.status,
+        Product.takealot_title
     ).filter(
         Product.group_code.in_(lookup_keys) | Product.takealot_id.in_(lookup_keys)
-    ).group_by(Product.group_code).all()
+    ).all()
+
+    # 在 Python 内存中高速聚合，免除 SQLite 临时 B-Tree 排序开销
+    group_map = {}
+    for r in rows:
+        gk = r.group_code or r.takealot_id
+        if gk not in group_map:
+            group_map[gk] = {
+                "group_code": r.group_code,
+                "takealot_id": r.takealot_id,
+                "cnt": 1,
+                "status": r.status,
+                "title": r.takealot_title
+            }
+        else:
+            group_map[gk]["cnt"] += 1
 
     exists = {}
-    for r in rows:
+    for gk, info_dict in group_map.items():
         matched_keys = set()
-        if r.group_code: matched_keys.add(r.group_code)
-        if r.takealot_id: matched_keys.add(r.takealot_id)
+        if info_dict["group_code"]: matched_keys.add(info_dict["group_code"])
+        if info_dict["takealot_id"]: matched_keys.add(info_dict["takealot_id"])
 
         info = {
             "collected": True,
-            "count": r.cnt,
-            "status": r.status,
-            "title": r.title
+            "count": info_dict["cnt"],
+            "status": info_dict["status"],
+            "title": info_dict["title"]
         }
         for mk in matched_keys:
             for orig in key_mapping.get(mk, []):
@@ -278,7 +319,17 @@ def list_products(
         )
 
     total = query.count()
-    items = query.order_by(Product.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    # 使用 selectinload 预加载关联变体与店铺记录，彻底消除 N+1 慢查询 (从 150+ 次 SQL 直降为 3 次)
+    items = (
+        query.options(
+            selectinload(Product.variants),
+            selectinload(Product.store_listings).joinedload(ProductStoreListing.store)
+        )
+        .order_by(Product.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
 
     # 统计各流程状态商品数量
     counts_raw = db.query(Product.status, func.count(Product.id)).group_by(Product.status).all()
@@ -298,6 +349,100 @@ def list_products(
         "items": [_format_product(p) for p in items],
         "status_counts": status_counts
     }
+
+IMAGE_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".image_cache")
+os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+
+@router.get("/image-proxy", summary="高可用图片代理中转与加速缓存")
+def proxy_image(url: str = Query(..., description="远程图片完整URL")):
+    """
+    针对国内网络/客户端 DNS 无法解析 media.takealot.com 或 Cloudflare WAF 防爬风控提供的兜底高可用中转与本地缓存服务。
+    内置多级缓存: 内存热缓存 (0ms) -> 本地持久化缓存 -> 全局长连接复用池抓取
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing image url")
+    
+    # 自动纠偏 Takealot {size} 占位符为最高清的 pdpxl 规格
+    if "{size}" in url:
+        url = url.replace("{size}", "pdpxl")
+    
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="Invalid image url protocol")
+    
+    cache_key = hashlib.md5(url.encode("utf-8")).hexdigest()
+
+    # 0. 优先命中内存高速热缓存 (0ms，跳过任何磁盘文件 I/O)
+    if cache_key in _IMAGE_MEM_CACHE:
+        mem_item = _IMAGE_MEM_CACHE[cache_key]
+        return Response(
+            content=mem_item["data"],
+            media_type=mem_item["type"],
+            headers={"Cache-Control": "public, max-age=604800, immutable"}
+        )
+
+    cache_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.img")
+    content_type_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.type")
+    
+    # 1. 命中本地持久化缓存直接流式返回并存入内存热缓存
+    if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+        try:
+            with open(cache_path, "rb") as f:
+                img_data = f.read()
+            media_type = "image/jpeg"
+            if os.path.exists(content_type_path):
+                with open(content_type_path, "r", encoding="utf-8") as f:
+                    media_type = f.read().strip() or "image/jpeg"
+            
+            # 更新内存热缓存
+            if len(_IMAGE_MEM_CACHE_KEYS) >= _MAX_MEM_IMAGES:
+                oldest_k = _IMAGE_MEM_CACHE_KEYS.pop(0)
+                _IMAGE_MEM_CACHE.pop(oldest_k, None)
+            _IMAGE_MEM_CACHE_KEYS.append(cache_key)
+            _IMAGE_MEM_CACHE[cache_key] = {"data": img_data, "type": media_type}
+
+            return Response(
+                content=img_data,
+                media_type=media_type,
+                headers={"Cache-Control": "public, max-age=604800, immutable"}
+            )
+        except Exception:
+            pass
+            
+    # 2. 请求远程图片 (使用全局 Session 连接池复用 HTTPS 连接)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Referer": "https://www.takealot.com/"
+    }
+    try:
+        resp = _image_session.get(url, headers=headers, timeout=12)
+        if resp.status_code == 200 and resp.content:
+            media_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+            try:
+                with open(cache_path, "wb") as f:
+                    f.write(resp.content)
+                with open(content_type_path, "w", encoding="utf-8") as f:
+                    f.write(media_type)
+            except Exception:
+                pass
+
+            # 存入内存热缓存
+            if len(_IMAGE_MEM_CACHE_KEYS) >= _MAX_MEM_IMAGES:
+                oldest_k = _IMAGE_MEM_CACHE_KEYS.pop(0)
+                _IMAGE_MEM_CACHE.pop(oldest_k, None)
+            _IMAGE_MEM_CACHE_KEYS.append(cache_key)
+            _IMAGE_MEM_CACHE[cache_key] = {"data": resp.content, "type": media_type}
+
+            return Response(
+                content=resp.content,
+                media_type=media_type,
+                headers={"Cache-Control": "public, max-age=604800, immutable"}
+            )
+    except Exception:
+        pass
+        
+    fallback_svg = """<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><rect width='100%' height='100%' fill='#f1f5f9'/><text x='50%' y='46%' dominant-baseline='middle' text-anchor='middle' fill='#94a3b8' font-size='14' font-family='sans-serif'>图片载入中</text><text x='50%' y='62%' dominant-baseline='middle' text-anchor='middle' fill='#cbd5e1' font-size='11' font-family='sans-serif'>或网络受限</text></svg>"""
+    return Response(content=fallback_svg.encode("utf-8"), media_type="image/svg+xml", status_code=200)
 
 @router.get("/{product_id}", response_model=ProductResponse, summary="获取单个商品详情")
 def get_product(product_id: int, db: Session = Depends(get_db)):
@@ -506,6 +651,7 @@ def batch_update_price(payload: dict, db: Session = Depends(get_db)):
     updated_count = 0
 
     for p in products:
+        curr = float(p.makro_selling_price or p.takealot_price or 0.0)
         if mode == "fixed":
             if fixed_price is None or float(fixed_price) <= 0:
                 continue
@@ -520,6 +666,25 @@ def batch_update_price(payload: dict, db: Session = Depends(get_db)):
 
         p.makro_selling_price = new_selling
         p.makro_mrp = new_mrp
+
+        # 同步更新变体价格
+        if hasattr(p, "variants") and p.variants:
+            for v in p.variants:
+                if mode == "fixed":
+                    v.makro_selling_price = new_selling
+                    v.makro_mrp = new_mrp
+                else:
+                    v_curr = float(v.makro_selling_price or v.takealot_price or curr)
+                    v_new = max(1, round(v_curr * mult + offset))
+                    v.makro_selling_price = v_new
+                    v.makro_mrp = max(v_new, round(v_new * mrp_ratio))
+
+        # 同步更新多店铺已关联的 Listing 价格
+        if hasattr(p, "store_listings") and p.store_listings:
+            for sl in p.store_listings:
+                sl.selling_price = new_selling
+                sl.mrp = new_mrp
+
         updated_count += 1
 
     db.commit()
