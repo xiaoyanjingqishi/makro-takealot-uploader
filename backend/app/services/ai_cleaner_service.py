@@ -1,8 +1,12 @@
 import json
 import logging
 import re
+import base64
+import io
+import requests
 from typing import Dict, Any, Optional
 from openai import OpenAI
+from PIL import Image
 from ..config import settings
 from ..models.setting import SystemSetting
 from sqlalchemy.orm import Session
@@ -24,7 +28,7 @@ def truncate_title_safely(title: str, max_len: int = 120) -> str:
 
 class AICleanerService:
     """
-    AI 数据清洗与属性规范化服务 (支持通义千问 Qwen 与 DeepSeek)
+    AI 数据清洗与属性规范化服务 (支持通义千问 Qwen 与 DeepSeek，支持纯文本与图文多模态双模式)
     全品类自适应：智能识别类目，不再局限于毛巾浴巾，支持工具、3C数码、家居百货等所有品类
     """
 
@@ -34,13 +38,20 @@ class AICleanerService:
         api_key: str = None,
         base_url: str = None,
         model: str = None,
+        cleaner_mode: str = None,
+        qwen_vision_model: str = None,
+        qwen_api_key: str = None,
+        qwen_base_url: str = None,
         seo_title_enabled: bool = True,
         seo_title_max_len: int = 120
     ):
         self.provider = provider or settings.AI_PROVIDER
+        self.cleaner_mode = cleaner_mode or getattr(settings, "DEFAULT_CLEANER_MODE", "text")
+        self.qwen_vision_model = qwen_vision_model or getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")
         self.seo_title_enabled = seo_title_enabled
         self.seo_title_max_len = max(60, min(180, seo_title_max_len or 120))
         
+        # 主模型客户端配置
         if self.provider == "deepseek":
             self.api_key = api_key or settings.DEEPSEEK_API_KEY
             self.base_url = base_url or settings.DEEPSEEK_BASE_URL
@@ -56,6 +67,16 @@ class AICleanerService:
                 self.client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=35.0)
             except Exception as e:
                 logger.error(f"初始化 OpenAI 客户端失败: {e}")
+
+        # 视觉多模态大模型客户端 (固定使用 DashScope Qwen-VL)
+        self.qwen_api_key = qwen_api_key or (self.api_key if self.provider == "qwen" else settings.QWEN_API_KEY)
+        self.qwen_base_url = qwen_base_url or (self.base_url if self.provider == "qwen" else settings.QWEN_BASE_URL)
+        self.vision_client = None
+        if self.qwen_api_key:
+            try:
+                self.vision_client = OpenAI(api_key=self.qwen_api_key, base_url=self.qwen_base_url, timeout=45.0)
+            except Exception as e:
+                logger.error(f"初始化 Qwen 视觉客户端失败: {e}")
 
     @classmethod
     def from_db(cls, db: Session):
@@ -78,6 +99,17 @@ class AICleanerService:
             base_url = s_url.value if s_url else settings.QWEN_BASE_URL
             model = s_model.value if s_model else settings.QWEN_MODEL
 
+        s_qwen_key = db.query(SystemSetting).filter(SystemSetting.key == "qwen_api_key").first()
+        s_qwen_url = db.query(SystemSetting).filter(SystemSetting.key == "qwen_base_url").first()
+        qwen_api_key = s_qwen_key.value if s_qwen_key else settings.QWEN_API_KEY
+        qwen_base_url = s_qwen_url.value if s_qwen_url else settings.QWEN_BASE_URL
+
+        s_cleaner_mode = db.query(SystemSetting).filter(SystemSetting.key == "cleaner_mode").first()
+        cleaner_mode = s_cleaner_mode.value if s_cleaner_mode and s_cleaner_mode.value else getattr(settings, "DEFAULT_CLEANER_MODE", "text")
+
+        s_vision_model = db.query(SystemSetting).filter(SystemSetting.key == "qwen_vision_model").first()
+        qwen_vision_model = s_vision_model.value if s_vision_model and s_vision_model.value else getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")
+
         s_seo_en = db.query(SystemSetting).filter(SystemSetting.key == "seo_title_enabled").first()
         seo_title_enabled = (s_seo_en.value.lower() in ["true", "1", "yes"]) if s_seo_en and s_seo_en.value else getattr(settings, "DEFAULT_SEO_TITLE_ENABLED", True)
 
@@ -92,22 +124,88 @@ class AICleanerService:
             api_key=api_key,
             base_url=base_url,
             model=model,
+            cleaner_mode=cleaner_mode,
+            qwen_vision_model=qwen_vision_model,
+            qwen_api_key=qwen_api_key,
+            qwen_base_url=qwen_base_url,
             seo_title_enabled=seo_title_enabled,
             seo_title_max_len=seo_title_max_len
         )
 
-    def clean_product_data(self, takealot_product: Dict[str, Any], target_brand: str = "Beishi") -> Dict[str, Any]:
+    def _fetch_primary_image_data_uri(self, raw_images_data: Any) -> Optional[str]:
+        """
+        高效提取首图并转换为规范的 Base64 Data URI
+        限制最大边长 1024px，高质量 JPEG 压缩，将单张图片视觉 token 控制在 ~1000 以内并提速
+        """
+        image_url = None
+        if isinstance(raw_images_data, str):
+            try:
+                parsed = json.loads(raw_images_data)
+                if isinstance(parsed, list) and parsed:
+                    image_url = parsed[0]
+                elif isinstance(parsed, str):
+                    image_url = parsed
+            except Exception:
+                if raw_images_data.startswith("http"):
+                    image_url = raw_images_data
+        elif isinstance(raw_images_data, list) and raw_images_data:
+            image_url = raw_images_data[0]
+
+        if not image_url or not isinstance(image_url, str) or not image_url.startswith("http"):
+            return None
+
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": "https://www.takealot.com/"
+            }
+            resp = requests.get(image_url, headers=headers, timeout=10)
+            if resp.status_code != 200 or not resp.content:
+                return None
+
+            img = Image.open(io.BytesIO(resp.content))
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+
+            # 缩放至最大边长不超过 1024px
+            max_edge = 1024
+            w, h = img.size
+            if max(w, h) > max_edge:
+                scale = max_edge / max(w, h)
+                new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85, optimize=True)
+            b64_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return f"data:image/jpeg;base64,{b64_data}"
+        except Exception as e:
+            logger.warning(f"下载或压缩商品首图失败，将平滑降级为纯文本清洗: {e}")
+            return None
+
+    def clean_product_data(
+        self,
+        takealot_product: Dict[str, Any],
+        target_brand: str = "Beishi",
+        clean_mode: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         清洗商品数据并输出符合 Makro 规范的结构化字典
+        支持 clean_mode: 'text' (纯文本标准) 或 'vision' (图文多模态)
         """
+        actual_mode = (clean_mode or self.cleaner_mode or "text").lower()
         if self.client and self.api_key:
             try:
-                return self._clean_with_llm(takealot_product, target_brand)
+                return self._clean_with_llm(takealot_product, target_brand, clean_mode=actual_mode)
             except Exception as e:
                 logger.error(f"AI 调用失败，执行本地启发式清洗保底: {e}")
-                return self._fallback_rule_clean(takealot_product, target_brand)
+                res = self._fallback_rule_clean(takealot_product, target_brand)
+                res["clean_mode"] = "fallback"
+                return res
         else:
-            return self._fallback_rule_clean(takealot_product, target_brand)
+            res = self._fallback_rule_clean(takealot_product, target_brand)
+            res["clean_mode"] = "fallback"
+            return res
 
     def _decide_vertical_with_llm(
         self,
@@ -115,9 +213,10 @@ class AICleanerService:
         category: str,
         specs: Any,
         description: str,
-        candidate_verticals: list
+        candidate_verticals: list,
+        image_data_uri: Optional[str] = None
     ) -> str:
-        """阶段 1: 极速分类决策 —— 让大模型从候选集精准裁定 1 个 Makro 官方类目"""
+        """阶段 1: 极速分类决策 —— 让大模型从候选集精准裁定 1 个 Makro 官方类目 (支持首图多模态)"""
         from .vertical_service import VerticalService
 
         candidates_str = ", ".join(f'"{c}"' for c in candidate_verticals)
@@ -140,12 +239,24 @@ Description: {description[:300]}
 Reply ONLY with a JSON object:
 {{"vertical": "<exact_code_from_candidate_list>"}}"""
 
+        if image_data_uri and self.vision_client:
+            user_content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_data_uri}}
+            ]
+            active_client = self.vision_client
+            active_model = self.qwen_vision_model
+        else:
+            user_content = prompt
+            active_client = self.client
+            active_model = self.model
+
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
+            resp = active_client.chat.completions.create(
+                model=active_model,
                 messages=[
                     {"role": "system", "content": "You are a professional category classifier. Reply ONLY with valid JSON."},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": user_content}
                 ],
                 temperature=0.1,
                 max_tokens=80
@@ -169,13 +280,23 @@ Reply ONLY with a JSON object:
 
         return VerticalService.predict_vertical(title=raw_title, category=category, specs=specs, description=description)
 
-    def _clean_with_llm(self, product: Dict[str, Any], target_brand: str) -> Dict[str, Any]:
-        """两阶段流水线：阶段1定标官方类目 -> 阶段2注入官方元数据Schema精准抽取属性与重写标题"""
+    def _clean_with_llm(self, product: Dict[str, Any], target_brand: str, clean_mode: str = "text") -> Dict[str, Any]:
+        """两阶段流水线：阶段1定标官方类目 -> 阶段2注入官方元数据Schema精准抽取属性与重写标题 (支持纯文本与图文双模式)"""
         raw_title = product.get('takealot_title', '')
         category = product.get('takealot_category', '')
         specs = product.get('takealot_specs', {})
         description = product.get('takealot_description', '')
         preset_vertical = product.get('makro_vertical')
+
+        applied_mode = "text"
+        image_data_uri = None
+        if clean_mode == "vision":
+            image_data_uri = self._fetch_primary_image_data_uri(product.get("raw_images") or product.get("cover_image"))
+            if image_data_uri and self.vision_client:
+                applied_mode = "vision"
+            else:
+                logger.info("未获取到可用首图或未配置视觉大模型客户端，平滑降级为纯文本模式")
+                applied_mode = "text"
 
         from .vertical_service import VerticalService
 
@@ -195,12 +316,22 @@ Reply ONLY with a JSON object:
                 category=category,
                 specs=specs,
                 description=description,
-                candidate_verticals=candidate_verticals
+                candidate_verticals=candidate_verticals,
+                image_data_uri=image_data_uri if applied_mode == "vision" else None
             )
 
         # ★★★ 阶段 2: 注入该类目的官方元数据 Schema 规范并深度清洗 ★★★
         schema_summary = VerticalService.get_vertical_schema_summary(chosen_vertical)
         guidelines_text = schema_summary.get("guidelines_text", "")
+
+        vision_instructions = ""
+        if applied_mode == "vision" and image_data_uri:
+            vision_instructions = """
+【★★★ 核心要求：附图多模态实物核验与深度校准 (实物对照)】:
+- 请仔细观察随附的商品首图实物外观；
+- 结合首图真实外观校准商品的实际颜色 (brand_colour)、真实款式类型、材质手感与适用对象；
+- 首图与文本参数互为印证：硬性规格/兼容型号以文本 Specs 为准，外观真实形态、主色调与款式以首图为准，绝不可无中生有。
+"""
 
         if self.seo_title_enabled:
             title_instructions = f"""
@@ -283,6 +414,8 @@ Reply ONLY with a JSON object:
    - 严禁在标题、描述、属性中输出任何未经授权的受保护IP或角色名称（如 Spider Man, Batman, Superman, Marvel, Disney, Barbie, Transformers 等）；
    - 若类目为 costume_wear，character 属性必须且只能输出 "Party" 或 "Cosplay" 等通用中性词，绝不可填入 "Spider Man" 等具体IP角色名！
 
+{vision_instructions}
+
 {title_instructions}
 
 【Takealot 原始商品数据】:
@@ -296,11 +429,23 @@ Reply ONLY with a JSON object:
 必须且仅返回纯 JSON 对象，格式如下：
 {output_schema}
 """
-        response = self.client.chat.completions.create(
-            model=self.model,
+        if applied_mode == "vision" and image_data_uri:
+            user_content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": image_data_uri}}
+            ]
+            active_client = self.vision_client
+            active_model = self.qwen_vision_model
+        else:
+            user_content = prompt
+            active_client = self.client
+            active_model = self.model
+
+        response = active_client.chat.completions.create(
+            model=active_model,
             messages=[
                 {"role": "system", "content": "You are a professional e-commerce product catalog expert. Always reply with valid JSON."},
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": user_content}
             ],
             temperature=0.2
         )
@@ -318,6 +463,7 @@ Reply ONLY with a JSON object:
             data["description"] = str(desc)
 
         data["vertical"] = chosen_vertical
+        data["clean_mode"] = applied_mode
 
         # 代码保底：确保 Model Number 包含完整标题，并在配件命中知名品牌时兜底添加第三方兼容声明
         makro_title = data.get("makro_title") or raw_title

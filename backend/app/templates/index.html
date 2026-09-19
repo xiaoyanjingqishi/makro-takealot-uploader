@@ -439,14 +439,26 @@
 
               <!-- 普通选品箱常规批量操作 -->
               <template v-else>
-                <button 
-                  @click="batchClean" 
-                  :disabled="selectedIds.length === 0 || isCleaning"
-                  class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg shadow-xs flex items-center space-x-1 transition"
-                >
-                  <span v-if="isCleaning">⏳ 清洗中...</span>
-                  <span v-else>⚡ 批量AI清洗</span>
-                </button>
+                <!-- 批量清洗双模式复合按钮组 -->
+                <div class="inline-flex items-center rounded-lg shadow-xs overflow-hidden border border-indigo-200 bg-white">
+                  <button 
+                    @click="batchClean" 
+                    :disabled="selectedIds.length === 0 || isCleaning"
+                    class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-1 transition cursor-pointer"
+                  >
+                    <span v-if="isCleaning">⏳ 清洗中...</span>
+                    <span v-else>{{ batchCleanMode === 'vision' ? '🖼️ 批量图文清洗' : '⚡ 批量文本清洗' }}</span>
+                  </button>
+                  <select 
+                    v-model="batchCleanMode" 
+                    :disabled="isCleaning"
+                    class="text-[11px] bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-medium py-1.5 px-2 border-l border-indigo-200 outline-none cursor-pointer"
+                    title="切换批量清洗工作模式"
+                  >
+                    <option value="text">📝 纯文本模式</option>
+                    <option value="vision">🖼️ 图文多模态</option>
+                  </select>
+                </div>
                 <button 
                   @click="batchCheckCompliance" 
                   :disabled="selectedIds.length === 0 || isBatchCheckingCompliance"
@@ -689,9 +701,13 @@
                       </div>
                     </td>
                     <td class="py-2.5 px-4">
-                      <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[10px] font-semibold rounded-full inline-block">
-                        {{ formatStatus(item.status) }}
-                      </span>
+                      <div class="flex items-center space-x-1">
+                        <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[10px] font-semibold rounded-full inline-block">
+                          {{ formatStatus(item.status) }}
+                        </span>
+                        <span v-if="item.clean_mode === 'vision'" class="px-1.5 py-0.2 text-[9px] font-bold rounded bg-purple-100 text-purple-700 border border-purple-200 inline-block" title="图文多模态深度校准">🖼️ 图文</span>
+                        <span v-else-if="item.status === 'CLEANED' || item.clean_mode === 'text'" class="px-1.5 py-0.2 text-[9px] font-medium rounded bg-blue-50 text-blue-700 border border-blue-200 inline-block" title="纯文本快速清洗">📝 文本</span>
+                      </div>
                       <!-- 多店铺独立上架状态徽章 -->
                       <div v-if="item.store_listings && item.store_listings.length" class="flex flex-wrap gap-1 mt-1">
                         <span 
@@ -867,9 +883,13 @@
                   </div>
                 </td>
                 <td class="py-3 px-4">
-                  <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[11px] font-semibold rounded-full inline-block">
-                    {{ formatStatus(item.status) }}
-                  </span>
+                  <div class="flex items-center space-x-1">
+                    <span :class="getStatusBadgeClass(item.status)" class="px-2 py-0.5 text-[11px] font-semibold rounded-full inline-block">
+                      {{ formatStatus(item.status) }}
+                    </span>
+                    <span v-if="item.clean_mode === 'vision'" class="px-1.5 py-0.2 text-[9px] font-bold rounded bg-purple-100 text-purple-700 border border-purple-200 inline-block" title="图文多模态深度校准">🖼️ 图文</span>
+                    <span v-else-if="item.status === 'CLEANED' || item.clean_mode === 'text'" class="px-1.5 py-0.2 text-[9px] font-medium rounded bg-blue-50 text-blue-700 border border-blue-200 inline-block" title="纯文本快速清洗">📝 文本</span>
+                  </div>
                   <!-- 多店铺独立上架状态徽章 -->
                   <div v-if="item.store_listings && item.store_listings.length" class="flex flex-wrap gap-1 mt-1">
                     <span 
@@ -985,19 +1005,37 @@
       <div v-if="currentTab === 'inspector' && activeItem" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
         <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div class="flex items-center space-x-3">
-            <button @click="currentTab = 'products'" class="text-xs text-slate-500 hover:text-slate-800 flex items-center space-x-1">
+            <button @click="currentTab = 'products'" class="text-xs text-slate-500 hover:text-slate-800 flex items-center space-x-1 cursor-pointer">
               <span>&larr; 返回选品箱</span>
             </button>
-            <h2 class="text-sm font-bold text-slate-900">商品审品与规则微调 (ID: #{{ activeItem.id }})</h2>
+            <div class="flex items-center space-x-2">
+              <h2 class="text-sm font-bold text-slate-900">商品审品与规则微调 (ID: #{{ activeItem.id }})</h2>
+              <span v-if="activeItem.clean_mode === 'vision'" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-purple-100 text-purple-700 border border-purple-200">🖼️ 图文多模态校准</span>
+              <span v-else-if="activeItem.status === 'CLEANED' || activeItem.clean_mode === 'text'" class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-100 text-blue-700 border border-blue-200">📝 纯文本已清洗</span>
+            </div>
           </div>
           <div class="flex items-center space-x-2">
-            <button 
-              @click="reCleanActiveItem" 
-              :disabled="isCleaning"
-              class="px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 flex items-center space-x-1"
-            >
-              <span>⚡ 重新 AI 清洗</span>
-            </button>
+            <!-- 双模式对比清洗按钮组 -->
+            <div class="inline-flex items-center rounded-lg border border-indigo-200 overflow-hidden shadow-2xs">
+              <button 
+                @click="reCleanActiveItem('text')" 
+                :disabled="isCleaning"
+                class="px-2.5 py-1.5 text-xs font-semibold hover:bg-indigo-50 transition flex items-center space-x-1 border-r border-indigo-200 cursor-pointer"
+                :class="activeItem.clean_mode === 'text' ? 'bg-indigo-100 text-indigo-800' : 'bg-white text-slate-700'"
+                title="以纯文本方式极速清洗 (耗时约 1.5s)"
+              >
+                <span>📝 纯文本清洗</span>
+              </button>
+              <button 
+                @click="reCleanActiveItem('vision')" 
+                :disabled="isCleaning"
+                class="px-2.5 py-1.5 text-xs font-semibold hover:bg-purple-50 transition flex items-center space-x-1 cursor-pointer"
+                :class="activeItem.clean_mode === 'vision' ? 'bg-purple-100 text-purple-800 font-bold' : 'bg-white text-purple-700'"
+                title="携带首图实物 + 文本多模态深度校准 (推荐对比)"
+              >
+                <span>🖼️ 图文多模态</span>
+              </button>
+            </div>
             <button 
               @click="saveActiveItem" 
               class="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg"
@@ -1855,6 +1893,55 @@
                   </div>
                   <div class="text-[11px] text-slate-500 flex items-center">
                     <span>💡 结构范式：<code class="text-blue-700 font-bold font-mono text-[10px]">[品牌] + [核心品名] + [高频长尾词] + [使用场景] + [规格]</code></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI 清洗工作模式双选 (纯文本 vs 图文多模态) -->
+              <div class="p-3.5 bg-gradient-to-r from-purple-50/70 via-indigo-50/50 to-purple-50/70 rounded-xl border border-purple-200 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                      <span>🎨</span>
+                      <span>AI 清洗工作模式 (纯文本标准 vs 图文多模态对比)</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">选择默认清洗方式。图文多模态将把 Takealot 首图与规格一同送入大模型，深度校准实物颜色与款式。</p>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-purple-100">
+                  <label class="flex items-start p-2.5 rounded-lg border cursor-pointer transition-all"
+                    :class="settings.cleaner_mode === 'text' ? 'bg-white border-blue-500 shadow-xs' : 'bg-slate-50/60 border-slate-200 hover:bg-white'">
+                    <input type="radio" v-model="settings.cleaner_mode" value="text" class="mt-0.5 mr-2">
+                    <div>
+                      <div class="text-xs font-bold text-slate-800">📝 纯文本清洗 (标准版)</div>
+                      <div class="text-[10px] text-slate-500 mt-0.5">单件 ~0.003元，耗时 ~1.8秒，适合大批量标品与成熟参数商品快速搬运。</div>
+                    </div>
+                  </label>
+
+                  <label class="flex items-start p-2.5 rounded-lg border cursor-pointer transition-all"
+                    :class="settings.cleaner_mode === 'vision' ? 'bg-white border-purple-500 shadow-xs' : 'bg-slate-50/60 border-slate-200 hover:bg-white'">
+                    <input type="radio" v-model="settings.cleaner_mode" value="vision" class="mt-0.5 mr-2">
+                    <div>
+                      <div class="text-xs font-bold text-purple-900 flex items-center space-x-1">
+                        <span>🖼️ 图文多模态 (推荐对比)</span>
+                      </div>
+                      <div class="text-[10px] text-slate-500 mt-0.5">单件 ~0.0038元，结合首图实物校准颜色与外观，彻底防止类目错挂。</div>
+                    </div>
+                  </label>
+                </div>
+
+                <!-- 视觉模型选择 (仅在图文多模态模式下展示) -->
+                <div v-if="settings.cleaner_mode === 'vision'" class="grid grid-cols-2 gap-3 pt-2 border-t border-purple-100/80">
+                  <div>
+                    <label class="block text-xs font-semibold text-purple-900 mb-1">视觉大模型 (通义千问 Qwen-VL)</label>
+                    <select v-model="settings.qwen_vision_model" class="w-full text-xs p-2 border rounded-lg bg-white">
+                      <option value="qwen-vl-plus">⚡ qwen-vl-plus (极速高性价比，推荐)</option>
+                      <option value="qwen-vl-max">👑 qwen-vl-max (旗舰高精度视觉)</option>
+                    </select>
+                  </div>
+                  <div class="text-[11px] text-slate-500 flex items-center">
+                    <span>💡 首图经过本地高效压缩控制在 1024px，每千件仅增加约 0.8 元费用。</span>
                   </div>
                 </div>
               </div>
@@ -2879,8 +2966,11 @@
             cookie: '',
             default_brand: 'Beishi',
             seo_title_enabled: true,
-            seo_title_max_len: 120
+            seo_title_max_len: 120,
+            cleaner_mode: 'text',
+            qwen_vision_model: 'qwen-vl-plus'
           },
+          batchCleanMode: 'text',
           searchQuery: '',
           statusFilter: '',
           complianceFilter: '',
@@ -3312,6 +3402,9 @@
           try {
             const res = await fetch('/api/settings');
             this.settings = await res.json();
+            if (this.settings.cleaner_mode) {
+              this.batchCleanMode = this.settings.cleaner_mode;
+            }
           } catch (e) {
             console.error(e);
           }
@@ -3523,15 +3616,21 @@
             alert('保存失败: ' + e);
           }
         },
-        async reCleanActiveItem() {
+        async reCleanActiveItem(mode = null) {
           this.isCleaning = true;
+          const targetMode = mode || this.settings.cleaner_mode || 'text';
+          const modeName = targetMode === 'vision' ? '图文多模态' : '纯文本';
           try {
-            const res = await fetch(`/api/cleaner/clean/${this.activeItem.id}`, { method: 'POST' });
+            const res = await fetch(`/api/cleaner/clean/${this.activeItem.id}?mode=${targetMode}`, { method: 'POST' });
+            if (!res.ok) {
+              const err = await res.json();
+              throw new Error(err.detail || '清洗接口请求失败');
+            }
             this.activeItem = await res.json();
-            this.loadProducts();
-            alert('AI 清洗完成！已更新 Makro 属性与建议标题。');
+            await this.loadProducts();
+            alert(`🎉 AI ${modeName}清洗完成！已更新 Makro 属性与建议标题。`);
           } catch (e) {
-            alert('清洗失败: ' + e);
+            alert(`清洗失败: ${e.message || e}`);
           } finally {
             this.isCleaning = false;
           }
@@ -3540,18 +3639,20 @@
           if (this.selectedIds.length === 0 || this.isCleaning) return;
           this.isCleaning = true;
           const targetIds = [...this.selectedIds];
+          const mode = this.batchCleanMode || this.settings.cleaner_mode || 'text';
+          const modeName = mode === 'vision' ? '图文多模态' : '纯文本';
           try {
             const res = await fetch('/api/cleaner/batch-clean', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ product_ids: targetIds })
+              body: JSON.stringify({ product_ids: targetIds, clean_mode: mode })
             });
             const resData = await res.json();
             if (resData.task_id) {
               this.addOrUpdateBgTask({
                 id: resData.task_id,
                 task_type: 'BATCH_CLEAN',
-                name: '批量AI数据清洗',
+                name: `批量AI数据清洗 (${modeName})`,
                 status: 'RUNNING',
                 total: targetIds.length,
                 current: 0,

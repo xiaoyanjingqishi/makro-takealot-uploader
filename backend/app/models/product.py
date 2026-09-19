@@ -25,6 +25,7 @@ class Product(Base):
     makro_vertical = Column(String(100), default="bath_towel", index=True)
     makro_title = Column(String(500), nullable=True)
     seo_keywords = Column(Text, nullable=True)  # JSON: 搜索意图长尾词列表 ["garden hose nozzle", "car wash gun"]
+    clean_mode = Column(String(20), default="text")  # 清洗模式: 'text' (纯文本快速) 或 'vision' (图文多模态深度校准)
     makro_description = Column(Text, nullable=True)
     makro_brand = Column(String(100), default="Beishi")
     makro_selling_price = Column(Float, default=0.0)

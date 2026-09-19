@@ -60,6 +60,8 @@ def get_settings(db: Session = Depends(get_db)):
         deepseek_model=_get_str("deepseek_model", settings.DEEPSEEK_MODEL),
         seo_title_enabled=_get_bool("seo_title_enabled", getattr(settings, "DEFAULT_SEO_TITLE_ENABLED", True)),
         seo_title_max_len=_get_int("seo_title_max_len", getattr(settings, "DEFAULT_SEO_TITLE_MAX_LEN", 120)),
+        cleaner_mode=_get_str("cleaner_mode", getattr(settings, "DEFAULT_CLEANER_MODE", "text")),
+        qwen_vision_model=_get_str("qwen_vision_model", getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")),
     )
 
 @router.post("", summary="保存或更新系统配置")

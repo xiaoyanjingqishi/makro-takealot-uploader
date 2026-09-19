@@ -68,6 +68,7 @@ class ProductResponse(BaseModel):
     makro_vertical: Optional[str] = "bath_towel"
     makro_title: Optional[str] = None
     seo_keywords: Optional[List[str]] = []
+    clean_mode: Optional[str] = "text"
     makro_description: Optional[str] = None
     makro_brand: Optional[str] = "Beishi"
     makro_selling_price: float
@@ -121,6 +122,7 @@ class ProductUpdateRequest(BaseModel):
 class BatchCleanRequest(BaseModel):
     product_ids: List[int]
     ai_provider: Optional[str] = None  # 'qwen' or 'deepseek'
+    clean_mode: Optional[str] = None   # 'text' or 'vision'
 
 class BatchPublishRequest(BaseModel):
     product_ids: List[int]

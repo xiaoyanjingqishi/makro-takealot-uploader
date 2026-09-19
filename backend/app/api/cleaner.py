@@ -16,16 +16,21 @@ from .products import _format_product
 router = APIRouter(prefix="/cleaner", tags=["AI清洗与规范化"])
 
 @router.post("/clean/{product_id}", response_model=ProductResponse, summary="单品触发 AI 数据清洗")
-def clean_single_product(product_id: int, db: Session = Depends(get_db)):
+def clean_single_product(
+    product_id: int,
+    mode: Optional[str] = Query(None, description="清洗模式: 'text'(纯文本) 或 'vision'(图文多模态)"),
+    db: Session = Depends(get_db)
+):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
 
+    mode_label = "图文多模态" if mode == "vision" else "纯文本"
     task = TaskLog(
         product_id=product.id,
         task_type="CLEAN",
         status="RUNNING",
-        message=f"正在对商品 {product.id} 执行 AI 清洗...",
+        message=f"正在对商品 {product.id} 执行 AI {mode_label}清洗...",
         created_at=datetime.now()
     )
     db.add(task)
@@ -42,8 +47,10 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
             "takealot_brand": product.takealot_brand,
             "takealot_category": product.takealot_category,
             "takealot_specs": combined_specs,
-            "takealot_description": product.takealot_description
-        }, target_brand=product.makro_brand or "Beishi")
+            "takealot_description": product.takealot_description,
+            "raw_images": product.raw_images,
+            "cover_image": product.raw_images
+        }, target_brand=product.makro_brand or "Beishi", clean_mode=mode)
 
         product.makro_title = cleaned.get("makro_title", product.takealot_title)
         raw_seo_kw = cleaned.get("seo_keywords") or []
@@ -111,11 +118,13 @@ def clean_single_product(product_id: int, db: Session = Depends(get_db)):
         clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
         catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{product.id}")[:250], "qualifier": None}]
 
+        product.clean_mode = cleaned.get("clean_mode", mode or "text")
         product.makro_catalog_attributes = json.dumps(catalog_attrs)
         product.makro_submit_error = None
         product.status = "CLEANED"
         task.status = "SUCCESS"
-        task.message = f"AI 清洗完成: 生成规范标题「{product.makro_title[:30]}...」与类目属性"
+        applied_mode_label = "图文多模态" if product.clean_mode == "vision" else "纯文本"
+        task.message = f"AI {applied_mode_label}清洗完成: 生成规范标题「{product.makro_title[:30]}...」与类目属性"
         task.finished_at = datetime.now()
         task.detail_logs = json.dumps(cleaned, ensure_ascii=False)
 
@@ -136,7 +145,9 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
 
     ai_service = AICleanerService.from_db(db)
     total = len(req.product_ids)
-    task = task_manager.create_task("BATCH_CLEAN", "批量AI数据清洗", total, req.product_ids)
+    clean_mode = req.clean_mode
+    mode_label = "图文多模态" if clean_mode == "vision" else ("纯文本" if clean_mode == "text" else "默认模式")
+    task = task_manager.create_task("BATCH_CLEAN", f"批量AI数据清洗 ({mode_label})", total, req.product_ids)
     task_id = task["id"]
 
     def _worker(tm: TaskManager, tid: str):
@@ -162,8 +173,10 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                     "takealot_brand": prod.takealot_brand,
                     "takealot_category": prod.takealot_category,
                     "takealot_specs": combined_specs,
-                    "takealot_description": prod.takealot_description
-                }, target_brand=prod.makro_brand or "Beishi")
+                    "takealot_description": prod.takealot_description,
+                    "raw_images": prod.raw_images,
+                    "cover_image": prod.raw_images
+                }, target_brand=prod.makro_brand or "Beishi", clean_mode=clean_mode)
 
                 prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
                 raw_seo_kw = cleaned.get("seo_keywords") or []
@@ -228,6 +241,7 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                 clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', prod.makro_title or "", flags=re.I)
                 clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
                 catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{prod.id}")[:250], "qualifier": None}]
+                prod.clean_mode = cleaned.get("clean_mode", clean_mode or "text")
                 prod.makro_catalog_attributes = json.dumps(catalog_attrs)
                 prod.makro_submit_error = None
                 prod.status = "CLEANED"

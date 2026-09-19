@@ -114,6 +114,7 @@ def _format_product(p: Product) -> dict:
         "makro_vertical": p.makro_vertical,
         "makro_title": p.makro_title,
         "seo_keywords": seo_kw,
+        "clean_mode": getattr(p, "clean_mode", "text") or "text",
         "makro_description": p.makro_description,
         "makro_brand": p.makro_brand,
         "makro_selling_price": p.makro_selling_price,

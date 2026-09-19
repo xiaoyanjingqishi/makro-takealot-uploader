@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     DEFAULT_SEO_TITLE_ENABLED: bool = True
     DEFAULT_SEO_TITLE_MAX_LEN: int = 120
 
+    # AI 清洗双模式配置: 'text' (纯文本快速清洗) 或 'vision' (图文多模态首图深度校准)
+    DEFAULT_CLEANER_MODE: str = "text"
+    DEFAULT_QWEN_VISION_MODEL: str = "qwen-vl-plus"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

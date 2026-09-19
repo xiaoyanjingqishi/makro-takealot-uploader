@@ -40,6 +40,10 @@ class SystemSettingsSchema(BaseModel):
     seo_title_enabled: bool = True
     seo_title_max_len: int = 120
 
+    # AI 清洗双模式配置
+    cleaner_mode: Optional[str] = "text"  # 'text' 或 'vision'
+    qwen_vision_model: Optional[str] = "qwen-vl-plus"  # 'qwen-vl-plus' 或 'qwen-vl-max'
+
 class SyncCredentialsRequest(BaseModel):
     seller_id: Optional[str] = None
     fk_csrf_token: Optional[str] = None

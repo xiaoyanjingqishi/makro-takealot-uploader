@@ -76,10 +76,16 @@ try:
 except Exception as _e:
     print(f"[INIT] 店铺初始迁移跳过或异常: {_e}")
 
-# 确保核心高频复合索引存在，彻底消除全表扫描慢查询
+# 确保核心高频复合索引与新增字段存在，彻底消除全表扫描慢查询
 try:
     from sqlalchemy import text
     with engine.connect() as _conn:
+        # 检查并补充 products.clean_mode 字段
+        cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(products)")).fetchall()]
+        if "clean_mode" not in cols:
+            _conn.execute(text("ALTER TABLE products ADD COLUMN clean_mode VARCHAR(20) DEFAULT 'text'"))
+            _conn.commit()
+
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_product_variants_product_id ON product_variants (product_id)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_status_id ON products (status, id DESC)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_compliance_status_id ON products (compliance_status, id DESC)"))
@@ -87,7 +93,7 @@ try:
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_logs_created_at ON task_logs (created_at DESC)"))
         _conn.commit()
 except Exception as _ie:
-    print(f"[INIT] 复合索引初始化跳过或异常: {_ie}")
+    print(f"[INIT] 字段与复合索引初始化跳过或异常: {_ie}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
