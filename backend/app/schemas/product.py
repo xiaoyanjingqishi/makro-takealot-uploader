@@ -123,6 +123,7 @@ class BatchCleanRequest(BaseModel):
     product_ids: List[int]
     ai_provider: Optional[str] = None  # 'qwen' or 'deepseek'
     clean_mode: Optional[str] = None   # 'text' or 'vision'
+    concurrency: Optional[int] = 20    # 并发工作线程数 (默认20线程并发)
 
 class BatchPublishRequest(BaseModel):
     product_ids: List[int]

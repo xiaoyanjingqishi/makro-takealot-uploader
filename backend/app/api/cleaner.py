@@ -310,7 +310,8 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
     from ..services.compliance_service import ComplianceService
     cs = ComplianceService.from_db(db)
     total = len(req.product_ids)
-    task = task_manager.create_task("BATCH_COMPLIANCE", "批量合规与侵权排查", total, req.product_ids)
+    concurrency_limit = max(1, min(req.concurrency or 20, 50))
+    task = task_manager.create_task("BATCH_COMPLIANCE", f"批量合规与侵权排查 ({concurrency_limit}线程并发)", total, req.product_ids)
     task_id = task["id"]
 
     def _worker(tm: TaskManager, tid: str):
@@ -348,7 +349,7 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
             finally:
                 local_db.close()
 
-        max_workers = min(6, max(1, total))
+        max_workers = min(concurrency_limit, max(1, total))
         completed_count = 0
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_do_one, pid): pid for pid in req.product_ids}
@@ -370,7 +371,7 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
         succ = t_now["success_count"] if t_now else 0
         fail = t_now["fail_count"] if t_now else 0
         status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
-        tm.finish_task(tid, status=status, message=f"批量合规排查完成: 成功 {succ} 件, 失败 {fail} 件")
+        tm.finish_task(tid, status=status, message=f"批量合规排查完成: 成功 {succ} 件, 失败 {fail} 件 ({concurrency_limit}线程)")
 
     task_manager.start_task(task_id, _worker)
 
@@ -378,7 +379,8 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
         "task_id": task_id,
         "status": "RUNNING",
         "total": total,
-        "message": f"已在后台启动批量合规排查 (共 {total} 件商品)"
+        "concurrency": concurrency_limit,
+        "message": f"已在后台启动批量合规排查 (共 {total} 件商品，{concurrency_limit} 线程受控并发)"
     }
 
 @router.post("/check-compliance/{product_id}", summary="单品独立触发 AI 侵权与违禁品全量检测 (含首图视觉)")

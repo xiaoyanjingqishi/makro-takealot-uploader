@@ -4246,21 +4246,21 @@
             const res = await fetch('/api/cleaner/batch-compliance', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ product_ids: targetIds })
+              body: JSON.stringify({ product_ids: targetIds, concurrency: 20 })
             });
             const resData = await res.json();
             if (resData.task_id) {
               this.addOrUpdateBgTask({
                 id: resData.task_id,
                 task_type: 'BATCH_COMPLIANCE',
-                name: '批量合规与侵权排查',
+                name: '批量合规与侵权排查 (20线程并发)',
                 status: 'RUNNING',
                 total: targetIds.length,
                 current: 0,
                 progress: 0,
                 success_count: 0,
                 fail_count: 0,
-                current_title: '正在排查品牌侵权与违禁属性...',
+                current_title: '正在以 20 线程并发排查品牌侵权与违禁属性...',
                 message: resData.message
               });
               this.ensureBgTasksPolling();

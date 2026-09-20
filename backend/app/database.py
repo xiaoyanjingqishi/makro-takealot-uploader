@@ -6,8 +6,8 @@ from .config import settings
 engine = create_engine(
     settings.DATABASE_URL,
     poolclass=QueuePool if "sqlite" in settings.DATABASE_URL else None,
-    pool_size=15 if "sqlite" in settings.DATABASE_URL else 5,
-    max_overflow=30 if "sqlite" in settings.DATABASE_URL else 10,
+    pool_size=25 if "sqlite" in settings.DATABASE_URL else 5,
+    max_overflow=40 if "sqlite" in settings.DATABASE_URL else 10,
     connect_args={"check_same_thread": False, "timeout": 30.0} if "sqlite" in settings.DATABASE_URL else {}
 )
 
