@@ -174,7 +174,8 @@ def _build_makro_payload(
     client: Optional[MakroClient] = None,
     draft_resp: Optional[Dict[str, Any]] = None,
     variant: Optional[ProductVariant] = None,
-    target_store: Optional[Any] = None
+    target_store: Optional[Any] = None,
+    vertical: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     基于抓包逆向结果精准构建 Makro (Flipkart SaaS) submit 请求体
@@ -195,9 +196,11 @@ def _build_makro_payload(
     brand = target_brand
     source_brand = (product.makro_brand or "").strip() or _get_setting_val(db, "default_brand", settings.DEFAULT_BRAND) or "Beishi"
 
-    raw_vertical = product.makro_vertical or "bath_towel"
+    raw_vertical = vertical or product.makro_vertical or "bath_towel"
     valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
     vertical = valid_vertical
+    if product.makro_vertical != valid_vertical:
+        product.makro_vertical = valid_vertical
     
     shipping_days = _get_setting_val(db, "shipping_days", settings.DEFAULT_SHIPPING_DAYS)
     country_of_origin = _get_setting_val(db, "country_of_origin", settings.DEFAULT_COUNTRY_OF_ORIGIN)
@@ -221,14 +224,24 @@ def _build_makro_payload(
     selling_price = str(int(var_selling or 199))
     mrp_price = str(int(var_mrp or 299))
 
-    # 获取类目官方属性定义以做严格过滤
+    # 定义严禁混入 Catalog 的纯 Listing 级属性 (如 country_of_origin, mrp, shipping_days 等)
+    LISTING_ONLY_ATTRS = {
+        "country_of_origin", "mrp", "flipkart_selling_price", "shipping_days",
+        "listing_status", "service_profile", "packer_details", "manufacturer_details",
+        "importer_details", "packages", "forbid_shipping", "max_order_quantity_allowed",
+        "minimum_order_quantity", "sku_id"
+    }
+
+    # 获取类目官方属性定义以做严格过滤 (仅提取 CATALOG 属性，杜绝 LISTING 级属性混入 Catalog)
     allowed_attrs = {}
     if client:
         try:
             v_def = client.get_vertical_definition(vertical)
             for item in v_def.get("entityDefinitionMap", {}).get(vertical, {}).get("definitionList", []):
+                if item.get("source") == "LISTING":
+                    continue
                 name = item.get("attributeName")
-                if name:
+                if name and name not in LISTING_ONLY_ATTRS:
                     allowed_attrs[name] = item
         except Exception as e:
             logger.warning(f"获取类目 {vertical} 属性定义失败: {e}")
@@ -260,6 +273,8 @@ def _build_makro_payload(
 
     # 1. 保留合法属性，并替换其中出现的旧品牌名
     for k, v_list in user_attrs.items():
+        if k in LISTING_ONLY_ATTRS:
+            continue  # 严防 Listing 级属性 (如 country_of_origin) 混入 Catalog 属性导致 412
         if allowed_attrs and k not in allowed_attrs:
             continue  # 抛弃该类目不支持的属性 (如 plier 下的 colour/size)
         if isinstance(v_list, list) and len(v_list) > 0:
@@ -577,7 +592,7 @@ def _record_store_listing(
             listing.selling_price = selling_price
         if mrp is not None:
             listing.mrp = mrp
-        listing.submitted_at = datetime.utcnow()
+        listing.submitted_at = datetime.now()
         db.commit()
     except Exception as ex:
         logger.error(f"记录 ProductStoreListing 异常: {ex}", exc_info=True)
@@ -644,7 +659,35 @@ def _auto_heal_payload(payload: dict, err_details: dict, allowed_attrs: dict) ->
                 logger.info(f"412 自愈修复: 剔除属性 [{attr_name}] 品牌词 -> {clean_v}")
                 healed = True
 
+        # 错误类型 E: 类目不支持该属性 (Category ... has no attribute called [...])
+        elif "has no attribute called" in err_str.lower():
+            if attr_name in catalog_attrs:
+                del catalog_attrs[attr_name]
+                logger.info(f"412 自愈修复: 移除类目不支持的属性 [{attr_name}]")
+                healed = True
+
     return healed
+
+def _get_safe_fallback_vertical(vertical: str, product: Product) -> Tuple[str, str]:
+    """当类目在平台创建草稿报 500 崩溃时，根据商品标题关键词自动智能推导安全的备用类目"""
+    fallback_v = "cases_covers"
+    t_lower = (product.takealot_title or "").lower()
+    if any(k in t_lower for k in ["craft", "bead", "mold", "mould", "resin", "diy", "clay", "art", "jewelry"]):
+        fallback_v = "art_craft_kit"
+    elif any(k in t_lower for k in ["knit", "loom", "sew", "crochet", "stitch"]):
+        fallback_v = "sewing_kit"
+    elif any(k in t_lower for k in ["garden", "prun", "trowel", "rake", "trimmer", "plant"]):
+        fallback_v = "garden_tool_set"
+    elif any(k in t_lower for k in ["car", "vehicle", "seat"]):
+        fallback_v = "vehicle_cover"
+    elif any(k in t_lower for k in ["coffee", "kitchen", "cooker", "dehydrator", "food"]):
+        fallback_v = "coffee_maker"
+    elif any(k in t_lower for k in ["torch", "light", "lamp"]):
+        fallback_v = "torch"
+    elif any(k in t_lower for k in ["tool", "plier", "wrench", "screw"]):
+        fallback_v = "plier"
+
+    return VerticalService.resolve_vertical(fallback_v)
 
 def _publish_single_product(
     client: MakroClient,
@@ -655,8 +698,21 @@ def _publish_single_product(
     brand: str,
     target_store: Optional[Any] = None
 ) -> dict:
-    """内部函数：为单个扁平独立商品创建草稿、上传图组并提交 Makro 发布"""
-    draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
+    """内部函数：为单个扁平独立商品创建草稿、上传图组并提交 Makro 发布 (含 500 毒瘤类目自愈降级)"""
+    try:
+        draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
+    except Exception as draft_err:
+        err_msg = str(draft_err)
+        if "500" in err_msg or "Internal Server Error" in err_msg:
+            fb_v, fb_vid = _get_safe_fallback_vertical(vertical, product)
+            logger.warning(f"商品 #{product.id} 在类目 [{vertical}] 创建草稿报 500 异常，启动自愈降级至安全类目 [{fb_v}] (vid: {fb_vid}) 重试...")
+            draft_resp = client.create_draft(vertical=fb_v, brand=brand, vid=fb_vid)
+            vertical = fb_v
+            product.makro_vertical = fb_v
+            db.commit()
+        else:
+            raise
+
     request_id = draft_resp.get("requestId")
     txn_id = draft_resp.get("txnId")
     req_id = draft_resp.get("reqId")
@@ -682,7 +738,7 @@ def _publish_single_product(
     # 组装 Payload 并提交
     payload = _build_makro_payload(
         db, product, request_id, txn_id, req_id, images_map,
-        client=client, draft_resp=draft_resp, target_store=target_store
+        client=client, draft_resp=draft_resp, target_store=target_store, vertical=vertical
     )
     is_success, err_details, msg = client.submit_product(payload)
 
@@ -750,8 +806,21 @@ def _publish_single_variant(
     brand: str,
     target_store: Optional[Any] = None
 ) -> dict:
-    """内部函数：兼容遗留子变体结构发布"""
-    draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
+    """内部函数：兼容遗留子变体结构发布 (含 500 毒瘤类目自愈降级)"""
+    try:
+        draft_resp = client.create_draft(vertical=vertical, brand=brand, vid=vid)
+    except Exception as draft_err:
+        err_msg = str(draft_err)
+        if "500" in err_msg or "Internal Server Error" in err_msg:
+            fb_v, fb_vid = _get_safe_fallback_vertical(vertical, product)
+            logger.warning(f"变体 {variant.sku_id} 在类目 [{vertical}] 创建草稿报 500 异常，启动自愈降级至安全类目 [{fb_v}] (vid: {fb_vid}) 重试...")
+            draft_resp = client.create_draft(vertical=fb_v, brand=brand, vid=fb_vid)
+            vertical = fb_v
+            product.makro_vertical = fb_v
+            db.commit()
+        else:
+            raise
+
     request_id = draft_resp.get("requestId")
     txn_id = draft_resp.get("txnId")
     req_id = draft_resp.get("reqId")
@@ -778,7 +847,7 @@ def _publish_single_variant(
 
     payload = _build_makro_payload(
         db, product, request_id, txn_id, req_id, images_map,
-        client=client, draft_resp=draft_resp, variant=variant, target_store=target_store
+        client=client, draft_resp=draft_resp, variant=variant, target_store=target_store, vertical=vertical
     )
     is_success, err_details, msg = client.submit_product(payload)
 
@@ -902,7 +971,8 @@ def publish_product_to_makro(
             product_id=product.id,
             task_type="SUBMIT_LISTING",
             status="RUNNING",
-            message=f"开始向店铺【{s_name}】(刊登品牌: {brand}) 执行 Makro 上品调用..."
+            message=f"开始向店铺【{s_name}】(刊登品牌: {brand}) 执行 Makro 上品调用...",
+            created_at=datetime.now()
         )
         db.add(task)
         db.commit()
@@ -923,7 +993,7 @@ def publish_product_to_makro(
             )
             task.status = "FAILED"
             task.message = msg
-            task.finished_at = datetime.utcnow()
+            task.finished_at = datetime.now()
             db.commit()
             store_results.append({
                 "store_id": s_id,
@@ -962,7 +1032,7 @@ def publish_product_to_makro(
                     task.message = f"店铺【{s_name}】所有变体提交均失败"
 
                 task.detail_logs = json.dumps(v_results, ensure_ascii=False)
-                task.finished_at = datetime.utcnow()
+                task.finished_at = datetime.now()
                 db.commit()
 
                 store_results.append({
@@ -985,7 +1055,7 @@ def publish_product_to_makro(
 
                 task.request_id = p_res.get("request_id")
                 task.detail_logs = json.dumps(p_res, ensure_ascii=False)
-                task.finished_at = datetime.utcnow()
+                task.finished_at = datetime.now()
                 db.commit()
 
                 store_results.append({
@@ -999,7 +1069,7 @@ def publish_product_to_makro(
             logger.error(f"店铺 {s_name} 上架异常: {e}", exc_info=True)
             task.status = "FAILED"
             task.message = f"店铺【{s_name}】上架异常: {e}"
-            task.finished_at = datetime.utcnow()
+            task.finished_at = datetime.now()
             db.commit()
             store_results.append({
                 "store_id": s_id,
@@ -1115,6 +1185,9 @@ def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = Non
 
                 raw_vertical = product.makro_vertical or "bath_towel"
                 valid_vertical, vid = VerticalService.resolve_vertical(raw_vertical)
+                if valid_vertical != product.makro_vertical:
+                    product.makro_vertical = valid_vertical
+                    local_db.commit()
 
                 # 店铺间交替轮询调度：不同商品由不同店铺优先启动，实现多店铺天然并行
                 n_stores = len(target_stores)

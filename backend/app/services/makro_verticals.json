@@ -655,14 +655,6 @@
       "path": "Automotive Care & Accessories > Vehicle Covers"
     }
   ],
-  "vehicle_seat_cover": [
-    {
-      "id": 7959,
-      "verticalName": "vehicle_seat_cover",
-      "verticalDisplayName": "Vehicle Seat Cover",
-      "path": "Automotive Care & Accessories > Vehicle Interior"
-    }
-  ],
   "bike_mobile_holder": [
     {
       "id": 539,
@@ -2084,14 +2076,6 @@
       "id": 8102,
       "verticalName": "vacuum_maintenance_kit",
       "verticalDisplayName": "Vacuum Maintenance Kit",
-      "path": "Home & Kitchen Accessories > Appliance Accessories"
-    }
-  ],
-  "coffeemachine_accessories": [
-    {
-      "id": 8366,
-      "verticalName": "coffeemachine_accessories",
-      "verticalDisplayName": "Coffee Machine Accessories",
       "path": "Home & Kitchen Accessories > Appliance Accessories"
     }
   ],
@@ -8261,14 +8245,6 @@
       "path": "Home Improvement Tools > Gardening Tools"
     }
   ],
-  "garden_tools": [
-    {
-      "id": 8396,
-      "verticalName": "garden_tools",
-      "verticalDisplayName": "Garden Tools",
-      "path": "Home Improvement Tools > Gardening Tools"
-    }
-  ],
   "commode": [
     {
       "id": 469,
@@ -8676,14 +8652,6 @@
       "id": 2317,
       "verticalName": "water_leak_detector",
       "verticalDisplayName": "Water Leak Detector",
-      "path": "Home Improvement Tools > Home Automation & Safety"
-    }
-  ],
-  "smart_door_bell": [
-    {
-      "id": 8599,
-      "verticalName": "smart_door_bell",
-      "verticalDisplayName": "Smart Door Bell",
       "path": "Home Improvement Tools > Home Automation & Safety"
     }
   ],
@@ -9108,14 +9076,6 @@
       "id": 4114,
       "verticalName": "stapler",
       "verticalDisplayName": "Stapler",
-      "path": "Home Improvement Tools > Power Tools"
-    }
-  ],
-  "string_trimmer": [
-    {
-      "id": 4115,
-      "verticalName": "string_trimmer",
-      "verticalDisplayName": "String Trimmer",
       "path": "Home Improvement Tools > Power Tools"
     }
   ],
@@ -10259,14 +10219,6 @@
       "path": "Mobile, Tablets and Accessories > Mobile & Tablet Accessories"
     }
   ],
-  "security_software": [
-    {
-      "id": 3339,
-      "verticalName": "security_software",
-      "verticalDisplayName": "Security Softwares",
-      "path": "Mobile, Tablets and Accessories > Mobile & Tablet Accessories"
-    }
-  ],
   "selfie_stick": [
     {
       "id": 3340,
@@ -10415,14 +10367,6 @@
       "verticalName": "smart_switch_plug",
       "verticalDisplayName": "Smart Switch Plug",
       "path": "Smart Devices > Automation & Robotics"
-    }
-  ],
-  "camera_kit": [
-    {
-      "id": 8334,
-      "verticalName": "camera_kit",
-      "verticalDisplayName": "Camera Kit",
-      "path": "Cameras and Accessories > Photography Equipment"
     }
   ],
   "point_shoot_camera": [
@@ -10987,14 +10931,6 @@
       "verticalName": "popcorn_maker",
       "verticalDisplayName": "Popcorn Maker",
       "path": "Home & Kitchen Appliances > Kitchen Appliances"
-    }
-  ],
-  "built_in_braai": [
-    {
-      "id": 8580,
-      "verticalName": "built_in_braai",
-      "verticalDisplayName": "Built-In Braai",
-      "path": "Home & Kitchen Appliances > Outdoor Cooking"
     }
   ],
   "air_cooler": [
@@ -13113,14 +13049,6 @@
       "path": "Baby Care > Baby Activity & Gear"
     }
   ],
-  "extender_adaptors": [
-    {
-      "id": 8351,
-      "verticalName": "extender_adaptors",
-      "verticalDisplayName": "Extender Adaptors",
-      "path": "Electronics > Cables & Adapters"
-    }
-  ],
   "binding_wire": [
     {
       "id": 7539,
@@ -13527,22 +13455,6 @@
       "verticalName": "cutting_mat",
       "verticalDisplayName": "Cutting Mat",
       "path": "Pens, Stationery & Hobby Materials > Art Supplies"
-    }
-  ],
-  "electric_food_dehydrator": [
-    {
-      "id": 8491,
-      "verticalName": "electric_food_dehydrator",
-      "verticalDisplayName": "Electric Food Dehydrator",
-      "path": "Home & Kitchen Appliances         > Kitchen Appliances        "
-    }
-  ],
-  "office_software": [
-    {
-      "id": 7563,
-      "verticalName": "office_software",
-      "verticalDisplayName": "Office Software",
-      "path": "Software > Books & Media"
     }
   ],
   "ammo": [
@@ -14371,22 +14283,6 @@
       "path": "Liquor > Spirits"
     }
   ],
-  "cider": [
-    {
-      "id": 8606,
-      "verticalName": "cider",
-      "verticalDisplayName": "Cider",
-      "path": "Liquor > Spirits"
-    }
-  ],
-  "premix": [
-    {
-      "id": 8607,
-      "verticalName": "premix",
-      "verticalDisplayName": "Premix",
-      "path": "Liquor > Spirits"
-    }
-  ],
   "gaming_vr": [
     {
       "id": 7916,
@@ -14457,30 +14353,6 @@
       "verticalName": "carbonating_cylinders",
       "verticalDisplayName": "Carbonating Cylinders",
       "path": "Home & Kitchen > Accessories"
-    }
-  ],
-  "hobby_consumables": [
-    {
-      "id": 8312,
-      "verticalName": "hobby_consumables",
-      "verticalDisplayName": "Hobby Consumables",
-      "path": "Arts & Crafts > Hobby Supplies"
-    }
-  ],
-  "hobby_accessories": [
-    {
-      "id": 8313,
-      "verticalName": "hobby_accessories",
-      "verticalDisplayName": "Hobby Accessories",
-      "path": "Arts & Crafts > Hobby Supplies"
-    }
-  ],
-  "hobby_machines": [
-    {
-      "id": 8371,
-      "verticalName": "hobby_machines",
-      "verticalDisplayName": "Hobby Machines",
-      "path": "Arts & Crafts > Hobby Supplies"
     }
   ],
   "match_box": [

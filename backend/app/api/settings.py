@@ -58,6 +58,7 @@ def get_settings(db: Session = Depends(get_db)):
         deepseek_api_key=_get_str("deepseek_api_key", settings.DEEPSEEK_API_KEY),
         deepseek_base_url=_get_str("deepseek_base_url", settings.DEEPSEEK_BASE_URL),
         deepseek_model=_get_str("deepseek_model", settings.DEEPSEEK_MODEL),
+        deepseek_vision_model=_get_str("deepseek_vision_model", getattr(settings, "DEEPSEEK_VISION_MODEL", "deepseek-flash")),
         seo_title_enabled=_get_bool("seo_title_enabled", getattr(settings, "DEFAULT_SEO_TITLE_ENABLED", True)),
         seo_title_max_len=_get_int("seo_title_max_len", getattr(settings, "DEFAULT_SEO_TITLE_MAX_LEN", 120)),
         cleaner_mode=_get_str("cleaner_mode", getattr(settings, "DEFAULT_CLEANER_MODE", "text")),

@@ -12,5 +12,5 @@ class TaskLog(Base):
     request_id = Column(String(100), nullable=True)
     message = Column(String(500), nullable=True)
     detail_logs = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
     finished_at = Column(DateTime, nullable=True)

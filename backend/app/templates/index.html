@@ -56,7 +56,7 @@
           <button 
             v-for="tab in tabs" 
             :key="tab.id"
-            @click="currentTab = tab.id"
+            @click="switchTab(tab.id)"
             :class="[
               'px-4 py-2 text-xs font-semibold rounded-lg transition-all flex items-center space-x-1.5',
               currentTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
@@ -216,7 +216,7 @@
       </div>
 
       <!-- ================= Tab 1: 选品箱 ================= -->
-      <div v-if="currentTab === 'products'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div v-show="currentTab === 'products'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
         <!-- 顶部固定控制区 (状态标签栏 + 筛选过滤批量操作栏 + 母体聚合全选折叠控制栏) -->
         <div class="shrink-0 space-y-2 pb-2">
           <!-- 流程状态分页栏 (Tab 标签分页式无缝切换) -->
@@ -335,6 +335,7 @@
                 class="text-xs px-2.5 py-1.5 border border-purple-300 bg-purple-50/70 text-purple-900 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none font-medium cursor-pointer"
               >
                 <option value="">全部合规状态</option>
+                <option value="DISPUTED">⚖️ 分歧待仲裁 (DISPUTED)</option>
                 <option value="SAFE">🛡️ 安全合规 (SAFE)</option>
                 <option value="RISK">⚠️ 疑似风险 (RISK)</option>
                 <option value="PROHIBITED">🚫 违禁拦截 (PROHIBITED)</option>
@@ -551,7 +552,11 @@
           <div 
             v-for="grp in groupedProducts" 
             :key="grp.group_code" 
-            class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden transition hover:border-slate-300"
+            :id="'product-group-' + grp.group_code"
+            :class="[
+              'bg-white rounded-xl border shadow-sm overflow-hidden transition-all duration-300',
+              isGroupHighlighted(grp) ? 'border-blue-500 ring-2 ring-blue-400/80 shadow-md' : 'border-slate-200 hover:border-slate-300'
+            ]"
           >
             <!-- 母体卡片头部 -->
             <div class="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
@@ -568,6 +573,7 @@
                     :src="grp.coverImage || placeholderImg" 
                     @error="handleImageError($event, grp.coverImage)"
                     loading="lazy"
+                    decoding="async"
                     class="w-16 h-16 object-cover rounded-lg border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition"
                   />
                   <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -637,7 +643,15 @@
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
-                  <tr v-for="item in grp.items" :key="item.id" class="hover:bg-slate-50/80 transition">
+                  <tr 
+                    v-for="item in grp.items" 
+                    :key="item.id" 
+                    :id="'product-row-' + item.id"
+                    :class="[
+                      'transition-all duration-300',
+                      highlightedProductId === item.id ? 'bg-blue-50/90 ring-2 ring-blue-500 ring-inset shadow-sm' : 'hover:bg-slate-50/80'
+                    ]"
+                  >
                     <td class="py-2.5 px-4">
                       <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600">
                     </td>
@@ -647,6 +661,7 @@
                           :src="getItemImage(item)" 
                           @error="handleImageError($event, getItemImage(item))"
                           loading="lazy"
+                          decoding="async"
                           class="w-10 h-10 object-cover rounded border border-slate-200 bg-white shadow-xs group-hover:opacity-85 transition" 
                         />
                       </div>
@@ -678,7 +693,8 @@
                       <div class="flex items-center space-x-1.5 mt-0.5 text-[10px]">
                         <span class="text-slate-400">类目: {{ item.makro_vertical }}</span>
                         <span class="text-blue-600 font-semibold">品牌: {{ item.makro_brand }}</span>
-                        <span v-if="item.compliance_status === 'PROHIBITED'" class="text-rose-600 font-bold">🚫 违禁拦截</span>
+                        <span v-if="item.compliance_status === 'DISPUTED'" class="text-purple-600 font-bold">⚖️ 分歧待仲裁</span>
+                        <span v-else-if="item.compliance_status === 'PROHIBITED'" class="text-rose-600 font-bold">🚫 违禁拦截</span>
                         <span v-else-if="item.compliance_status === 'RISK'" class="text-amber-600 font-bold">⚠️ 风险预警</span>
                         <span v-else-if="item.compliance_status === 'SAFE'" class="text-emerald-600 font-bold">🛡️ 合规安全</span>
                       </div>
@@ -771,7 +787,15 @@
                   暂无采集商品。请使用上方【📥 + PLID极速采集】或 Chrome 插件采集！
                 </td>
               </tr>
-              <tr v-for="item in products.items" :key="item.id" class="hover:bg-slate-50/80 transition">
+              <tr 
+                v-for="item in products.items" 
+                :key="item.id" 
+                :id="'product-row-' + item.id"
+                :class="[
+                  'transition-all duration-300',
+                  highlightedProductId === item.id ? 'bg-blue-50/90 ring-2 ring-blue-500 ring-inset shadow-sm' : 'hover:bg-slate-50/80'
+                ]"
+              >
                 <td class="py-3 px-4">
                   <input type="checkbox" :value="item.id" v-model="selectedIds" class="rounded text-blue-600 cursor-pointer">
                 </td>
@@ -781,6 +805,7 @@
                       :src="getItemImage(item)" 
                       @error="handleImageError($event, getItemImage(item))"
                       loading="lazy"
+                      decoding="async"
                       class="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-xs bg-white group-hover:opacity-85 transition"
                     />
                     <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -832,7 +857,13 @@
                   </div>
                   <!-- 合规与侵权检测徽章 -->
                   <div class="mt-1.5 flex items-center space-x-1.5 flex-wrap gap-y-1">
-                    <span v-if="item.compliance_status === 'PROHIBITED'" 
+                    <span v-if="item.compliance_status === 'DISPUTED'" 
+                          @click.stop="showComplianceModal(item)"
+                          class="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-300 rounded text-[10px] font-bold cursor-pointer hover:bg-purple-200 flex items-center shadow-2xs"
+                          title="千问与DeepSeek判定存在分歧，点击查看双AI对比并人工仲裁">
+                      ⚖️ 分歧待仲裁
+                    </span>
+                    <span v-else-if="item.compliance_status === 'PROHIBITED'" 
                           @click.stop="showComplianceModal(item)"
                           class="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded text-[10px] font-bold cursor-pointer hover:bg-rose-100 flex items-center"
                           title="点击查看详细违禁项与分析报告">
@@ -974,7 +1005,7 @@
               <span class="text-slate-500">每页:</span>
               <select v-model.number="pageSize" @change="loadProducts(1)" class="px-2 py-1 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-blue-500 font-medium cursor-pointer">
                 <option :value="20">20 条/页</option>
-                <option :value="50">50 条/页</option>
+                <option :value="50">50 条/页 (推荐·极速)</option>
                 <option :value="100">100 条/页</option>
                 <option :value="200">200 条/页</option>
               </select>
@@ -1005,7 +1036,7 @@
       <div v-if="currentTab === 'inspector' && activeItem" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
         <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
           <div class="flex items-center space-x-3">
-            <button @click="currentTab = 'products'" class="text-xs text-slate-500 hover:text-slate-800 flex items-center space-x-1 cursor-pointer">
+            <button @click="returnToProducts" class="text-xs font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-200 flex items-center space-x-1.5 cursor-pointer transition shadow-2xs">
               <span>&larr; 返回选品箱</span>
             </button>
             <div class="flex items-center space-x-2">
@@ -1100,6 +1131,7 @@
                     :src="cleanImageUrl(img)" 
                     @error="handleImageError($event, img)"
                     loading="lazy"
+                    decoding="async"
                     class="w-20 h-20 object-cover rounded-lg border border-slate-200 shrink-0 bg-white group-hover:opacity-85 transition"
                   />
                   <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
@@ -1307,6 +1339,7 @@
 
             <!-- AI 侵权与合规检测卡片 -->
             <div class="p-3.5 rounded-xl border" :class="{
+              'bg-purple-50/90 border-purple-300': activeItem.compliance_status === 'DISPUTED',
               'bg-rose-50/80 border-rose-200': activeItem.compliance_status === 'PROHIBITED',
               'bg-amber-50/80 border-amber-200': activeItem.compliance_status === 'RISK',
               'bg-emerald-50/80 border-emerald-200': activeItem.compliance_status === 'SAFE',
@@ -1315,6 +1348,7 @@
               <div class="flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                   <span class="text-xs font-bold" :class="{
+                    'text-purple-900': activeItem.compliance_status === 'DISPUTED',
                     'text-rose-900': activeItem.compliance_status === 'PROHIBITED',
                     'text-amber-900': activeItem.compliance_status === 'RISK',
                     'text-emerald-900': activeItem.compliance_status === 'SAFE',
@@ -1322,7 +1356,10 @@
                   }">
                     AI 侵权与合规排查:
                   </span>
-                  <span v-if="activeItem.compliance_status === 'PROHIBITED'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-200 text-rose-800">
+                  <span v-if="activeItem.compliance_status === 'DISPUTED'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-purple-200 text-purple-900 animate-pulse">
+                    ⚖️ 双AI分歧待仲裁
+                  </span>
+                  <span v-else-if="activeItem.compliance_status === 'PROHIBITED'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-200 text-rose-800">
                     🚫 违禁品不可售 ({{ getProhibitedSummary(activeItem) }})
                   </span>
                   <span v-else-if="activeItem.compliance_status === 'RISK'" class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-200 text-amber-800">
@@ -2007,140 +2044,403 @@
       </div>
 
       <!-- ================= AI 侵权与合规诊断弹窗 ================= -->
+      <!-- ================= AI 侵权与合规诊断弹窗 (全新双 AI 会审架构) ================= -->
       <div v-if="complianceModalItem" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200">
-          <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between" :class="{
-            'bg-rose-50/70 text-rose-900': complianceModalItem.compliance_status === 'PROHIBITED',
-            'bg-amber-50/70 text-amber-900': complianceModalItem.compliance_status === 'RISK',
-            'bg-emerald-50/70 text-emerald-900': complianceModalItem.compliance_status === 'SAFE',
+        <div class="bg-white rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+          <!-- 弹窗顶栏 -->
+          <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0" :class="{
+            'bg-purple-50/90 text-purple-950': complianceModalItem.compliance_status === 'DISPUTED',
+            'bg-rose-50/80 text-rose-950': complianceModalItem.compliance_status === 'PROHIBITED',
+            'bg-amber-50/80 text-amber-950': complianceModalItem.compliance_status === 'RISK',
+            'bg-emerald-50/80 text-emerald-950': complianceModalItem.compliance_status === 'SAFE',
             'bg-slate-50 text-slate-900': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
           }">
-            <div class="flex items-center space-x-2">
-              <span class="text-xl">
-                {{ complianceModalItem.compliance_status === 'PROHIBITED' ? '🚫' : (complianceModalItem.compliance_status === 'RISK' ? '⚠️' : '🛡️') }}
+            <div class="flex items-center space-x-2.5">
+              <span class="text-2xl">
+                {{ complianceModalItem.compliance_status === 'DISPUTED' ? '⚖️' : (complianceModalItem.compliance_status === 'PROHIBITED' ? '🚫' : (complianceModalItem.compliance_status === 'RISK' ? '⚠️' : '🛡️')) }}
               </span>
               <div>
-                <h3 class="font-bold text-sm">AI 侵权与平台合规诊断报告</h3>
-                <p class="text-[11px] opacity-80">包含违禁品筛查、品牌侵权与第三方配件规范、首图视觉多模态排查</p>
+                <h3 class="font-bold text-sm flex items-center">
+                  <span>双 AI 交叉会审合规与侵权诊断报告</span>
+                  <span class="ml-2 text-[10px] px-2 py-0.5 rounded-full font-bold bg-white/70 border border-current">
+                    {{ complianceModalItem.compliance_details?.dual_ai_mode ? '千问 + DeepSeek 双模并行' : '单模型审查' }}
+                  </span>
+                </h3>
+                <p class="text-[11px] opacity-80 mt-0.5">通义千问 (Qwen-Plus / VL) 与 DeepSeek (Flash / Vision) 标题独立风控与首图视觉双轮审查</p>
               </div>
             </div>
-            <button @click="complianceModalItem = null" class="text-slate-400 hover:text-slate-600 p-1 text-lg">✕</button>
+            <button @click="complianceModalItem = null" class="text-slate-400 hover:text-slate-600 p-1 text-lg cursor-pointer">✕</button>
           </div>
 
-          <div class="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs">
-            <!-- 诊断结论横幅 -->
-            <div class="flex items-center justify-between p-3 rounded-xl border" :class="{
-              'bg-rose-100/60 border-rose-300 text-rose-900': complianceModalItem.compliance_status === 'PROHIBITED',
-              'bg-amber-100/60 border-amber-300 text-amber-900': complianceModalItem.compliance_status === 'RISK',
-              'bg-emerald-100/60 border-emerald-300 text-emerald-900': complianceModalItem.compliance_status === 'SAFE',
+          <!-- 弹窗主体滚动区 -->
+          <div class="p-6 space-y-4 overflow-y-auto text-xs custom-scrollbar flex-1">
+            <!-- 1. 综合诊断结论横幅 -->
+            <div class="flex items-center justify-between p-3.5 rounded-xl border shadow-2xs" :class="{
+              'bg-purple-100/70 border-purple-300 text-purple-950': complianceModalItem.compliance_status === 'DISPUTED',
+              'bg-rose-100/70 border-rose-300 text-rose-950': complianceModalItem.compliance_status === 'PROHIBITED',
+              'bg-amber-100/70 border-amber-300 text-amber-950': complianceModalItem.compliance_status === 'RISK',
+              'bg-emerald-100/70 border-emerald-300 text-emerald-950': complianceModalItem.compliance_status === 'SAFE',
               'bg-slate-100 border-slate-300 text-slate-700': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
             }">
               <div>
-                <span class="font-bold text-sm">当前状态: </span>
-                <span class="font-black text-sm">
-                  {{ complianceModalItem.compliance_status === 'PROHIBITED' ? '违禁品不可售 (平台严禁)' : (complianceModalItem.compliance_status === 'RISK' ? '存在侵权风险 / 配件未合规' : '合规安全 (可安心上架)') }}
-                </span>
+                <div class="flex items-center space-x-2">
+                  <span class="font-bold text-sm">会审综合状态:</span>
+                  <span class="font-black text-sm px-2 py-0.5 rounded" :class="{
+                    'bg-purple-600 text-white': complianceModalItem.compliance_status === 'DISPUTED',
+                    'bg-rose-600 text-white': complianceModalItem.compliance_status === 'PROHIBITED',
+                    'bg-amber-500 text-white': complianceModalItem.compliance_status === 'RISK',
+                    'bg-emerald-600 text-white': complianceModalItem.compliance_status === 'SAFE'
+                  }">
+                    {{ complianceModalItem.compliance_status === 'DISPUTED' ? '⚖️ 会审分歧待仲裁 (需人工审阅)' : (complianceModalItem.compliance_status === 'PROHIBITED' ? '🚫 违禁品不可售 (平台严禁)' : (complianceModalItem.compliance_status === 'RISK' ? '⚠️ 存在侵权风险 / 配件未合规' : '🛡️ 双 AI 一致合规安全')) }}
+                  </span>
+                </div>
+                <div v-if="complianceModalItem.compliance_details?.reconciliation_summary && complianceModalItem.compliance_status !== 'DISPUTED'" class="text-[11px] mt-1 opacity-90 leading-relaxed">
+                  {{ complianceModalItem.compliance_details.reconciliation_summary }}
+                </div>
               </div>
               <button 
                 @click="checkCompliance(complianceModalItem)" 
                 :disabled="checkingComplianceId === complianceModalItem.id"
-                class="px-3 py-1 bg-white border rounded-lg text-xs font-semibold shadow-xs hover:bg-slate-50"
+                class="px-3.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold shadow-xs hover:bg-slate-50 cursor-pointer disabled:opacity-50 shrink-0 flex items-center space-x-1"
               >
-                {{ checkingComplianceId === complianceModalItem.id ? '正在视觉分析中...' : '重新检测 (含首图)' }}
+                <span>{{ checkingComplianceId === complianceModalItem.id ? '⏳' : '🔄' }}</span>
+                <span>{{ checkingComplianceId === complianceModalItem.id ? '交叉会审中...' : '重新检测 (双AI)' }}</span>
               </button>
             </div>
 
-            <!-- 商品基本信息 -->
-            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <div class="text-[11px] text-slate-500 font-medium">诊断商品标题:</div>
-              <div class="font-semibold text-slate-800 mt-0.5">{{ complianceModalItem.makro_title || complianceModalItem.takealot_title }}</div>
+            <!-- 商品基本标题信息 -->
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-start space-x-2">
+              <span class="text-sm mt-0.5">📦</span>
+              <div class="flex-1">
+                <div class="text-[10px] text-slate-500 font-medium">受审商品标题:</div>
+                <div class="font-semibold text-slate-800 mt-0.5 select-all">{{ complianceModalItem.makro_title || complianceModalItem.takealot_title }}</div>
+              </div>
             </div>
 
-            <div v-if="complianceModalItem.compliance_details" class="space-y-3">
-              <!-- 1. 违禁品排查 (蓝牙/WiFi/红外线/液体) -->
-              <div class="p-3 rounded-xl border" :class="complianceModalItem.compliance_details.prohibited_items?.length ? 'bg-rose-50/60 border-rose-200' : 'bg-slate-50 border-slate-200'">
-                <div class="flex items-center justify-between">
-                  <span class="font-bold text-slate-800">1. 违禁品特性排查 (蓝牙 / WiFi / 红外线 / 液体):</span>
-                  <span v-if="complianceModalItem.compliance_details.prohibited_items?.length" class="px-2 py-0.5 bg-rose-600 text-white rounded font-bold text-[10px]">
-                    命中 {{ complianceModalItem.compliance_details.prohibited_items.length }} 项违禁
-                  </span>
-                  <span v-else class="text-emerald-600 font-semibold text-[11px]">✓ 未检出违禁品</span>
+            <div v-if="complianceModalItem.compliance_details" class="space-y-4">
+              <!-- ★★★ 【置顶】会审分歧聚光灯卡片 (Dispute Spotlight) ★★★ -->
+              <!-- 仅在产生分歧 (DISPUTED) 时以醒目聚焦卡片展示，让用户一眼看穿为何分歧 -->
+              <div v-if="complianceModalItem.compliance_status === 'DISPUTED' || complianceModalItem.compliance_details.is_disputed" class="border-2 border-purple-400 bg-gradient-to-r from-purple-50 via-indigo-50/40 to-amber-50/40 rounded-xl p-4 shadow-sm space-y-2.5">
+                <div class="flex items-center justify-between pb-2 border-b border-purple-200">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="text-base">🚨</span>
+                    <span class="font-black text-xs text-purple-950">
+                      {{ complianceModalItem.compliance_details.dispute_root_cause?.title || '【分歧焦点穿透与溯源】' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center space-x-1 text-[10px]">
+                    <span class="px-2 py-0.5 rounded font-bold" :class="complianceModalItem.compliance_details.round_1_status?.status === 'SAFE' ? 'bg-emerald-100 text-emerald-800' : (complianceModalItem.compliance_details.round_1_status?.status === 'DISPUTED' ? 'bg-purple-200 text-purple-900' : 'bg-amber-100 text-amber-800')">
+                      第一轮标题: {{ complianceModalItem.compliance_details.round_1_status?.status === 'SAFE' ? '✓ 一致SAFE' : (complianceModalItem.compliance_details.round_1_status?.status === 'DISPUTED' ? '⚠️ 分歧' : '风险') }}
+                    </span>
+                    <span class="px-2 py-0.5 rounded font-bold" :class="complianceModalItem.compliance_details.round_2_status?.status === 'SAFE' ? 'bg-emerald-100 text-emerald-800' : (complianceModalItem.compliance_details.round_2_status?.status === 'DISPUTED' ? 'bg-purple-200 text-purple-900' : 'bg-amber-100 text-amber-800')">
+                      第二轮首图: {{ complianceModalItem.compliance_details.round_2_status?.status === 'SAFE' ? '✓ 一致SAFE' : (complianceModalItem.compliance_details.round_2_status?.status === 'DISPUTED' ? '⚠️ 分歧' : '风险') }}
+                    </span>
+                  </div>
                 </div>
-                <div v-if="complianceModalItem.compliance_details.prohibited_items?.length" class="mt-2 text-rose-800 text-[11px]">
-                  <div>检出项: <strong class="underline">{{ complianceModalItem.compliance_details.prohibited_items.join('、') }}</strong></div>
-                  <div class="mt-1 text-slate-600">说明：Makro 平台禁售未经南非工信 ICASA 认证的无线设备 (蓝牙/WiFi/红外发射)，液体跨境物流亦严禁运输。建议下架或改为有线普通款。</div>
+
+                <div class="text-[11px] text-slate-800 leading-relaxed bg-white/80 p-2.5 rounded-lg border border-purple-200/70">
+                  <strong class="text-purple-950">🔍 分歧核心溯源: </strong>
+                  <span>{{ complianceModalItem.compliance_details.dispute_root_cause?.detail || complianceModalItem.compliance_details.reconciliation_summary }}</span>
+                </div>
+
+                <div class="text-[11px] text-purple-900 bg-purple-100/70 p-2.5 rounded-lg border border-purple-200 flex items-start space-x-1.5">
+                  <span class="text-sm">💡</span>
+                  <div>
+                    <strong>人工仲裁参考建议: </strong>
+                    <span>{{ complianceModalItem.compliance_details.dispute_root_cause?.recommendation || '请结合千问与DeepSeek的审查理由，点击下方控制台按钮进行终审裁决。' }}</span>
+                  </div>
                 </div>
               </div>
 
-              <!-- 2. 品牌与第三方配件侵权排查 -->
-              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div class="flex items-center justify-between">
-                  <span class="font-bold text-slate-800">2. 知名品牌与第三方配件合规:</span>
-                  <span v-if="complianceModalItem.compliance_details.brand_info?.detected_brands?.length" class="text-amber-700 font-semibold text-[11px]">
-                    检出品牌: {{ complianceModalItem.compliance_details.brand_info.detected_brands.join(', ') }}
+              <!-- ★★★ 第一轮：标题与品牌文本风控 (Qwen vs DeepSeek 对称卡片) ★★★ -->
+              <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                <!-- 第一轮轮次栏 -->
+                <div class="bg-slate-100/80 px-3.5 py-2 border-b border-slate-200 flex items-center justify-between">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="text-sm">📝</span>
+                    <span class="font-bold text-xs text-slate-800">第一轮：标题与品牌文本风控 (Round 1)</span>
+                  </div>
+                  <!-- 本轮共识徽章 -->
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-bold" :class="{
+                    'bg-emerald-100 text-emerald-800 border border-emerald-300': complianceModalItem.compliance_details.round_1_status?.status === 'SAFE',
+                    'bg-purple-100 text-purple-800 border border-purple-300': complianceModalItem.compliance_details.round_1_status?.status === 'DISPUTED',
+                    'bg-amber-100 text-amber-800 border border-amber-300': complianceModalItem.compliance_details.round_1_status?.status === 'RISK',
+                    'bg-rose-100 text-rose-800 border border-rose-300': complianceModalItem.compliance_details.round_1_status?.status === 'PROHIBITED'
+                  }">
+                    {{ complianceModalItem.compliance_details.round_1_status?.summary || (complianceModalItem.compliance_details.qwen_verdict?.title_audit?.risk_level === 'SAFE' && complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '标题文本审查完成') }}
                   </span>
-                  <span v-else class="text-emerald-600 font-semibold text-[11px]">✓ 未涉及受保护知名品牌</span>
                 </div>
-                <div v-if="complianceModalItem.compliance_details.brand_info?.detected_brands?.length" class="mt-2 text-[11px] space-y-1">
-                  <div v-if="complianceModalItem.compliance_details.brand_info.is_accessory" class="p-2 bg-amber-50 rounded border border-amber-200 text-amber-900">
-                    <div>★ 该商品为品牌配件。按照跨境平台防侵权规范，必须注明<strong>“第三方配件适用于 (Third-Party ... Compatible with)”</strong>。</div>
-                    <div v-if="complianceModalItem.compliance_details.brand_info.recommended_title" class="mt-1.5 pt-1.5 border-t border-amber-200">
-                      <div class="text-[10px] text-slate-500 font-medium">推荐合规标题:</div>
-                      <div class="font-mono text-blue-800 select-all">{{ complianceModalItem.compliance_details.brand_info.recommended_title }}</div>
-                      <button @click="adoptRecommendedTitle(complianceModalItem); complianceModalItem = null;" class="mt-1 px-2.5 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">
-                        一键采纳并同步更新 Model Number
-                      </button>
+
+                <!-- 品牌检出归因横幅 (若检出任何品牌，明确标明由哪一方检出) -->
+                <div v-if="complianceModalItem.compliance_details.brand_breakdown?.has_brand || complianceModalItem.compliance_details.brand_info?.detected_brands?.length" class="bg-amber-50/70 border-b border-amber-200/80 px-3.5 py-2 flex items-center justify-between text-[11px]">
+                  <div class="flex items-center space-x-1.5 flex-wrap gap-1">
+                    <span class="font-bold text-amber-900">🏷️ 品牌检出归因分析:</span>
+                    <span v-if="complianceModalItem.compliance_details.brand_breakdown?.source_summary" class="px-2 py-0.5 rounded font-bold text-[10px]" :class="complianceModalItem.compliance_details.brand_breakdown.consensus_brands?.length ? 'bg-amber-200 text-amber-900' : 'bg-purple-100 text-purple-800 border border-purple-200'">
+                      {{ complianceModalItem.compliance_details.brand_breakdown.source_summary }}
+                    </span>
+                    <span v-else class="text-amber-800 font-semibold">
+                      检出词: {{ complianceModalItem.compliance_details.brand_info?.detected_brands?.join(', ') }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 第一轮并排两列对比 -->
+                <div class="p-3 grid grid-cols-2 gap-3">
+                  <!-- 左列: 通义千问 (Qwen-Plus) -->
+                  <div class="bg-blue-50/40 p-3 rounded-lg border border-blue-200/80 space-y-2">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                      <span class="font-bold text-blue-900 text-xs flex items-center">
+                        <span class="mr-1">🤖</span>通义千问 (Qwen-Plus)
+                      </span>
+                      <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.qwen_verdict?.title_audit?.risk_level)">
+                        {{ complianceModalItem.compliance_details.qwen_verdict?.title_audit?.risk_level || '未执行' }}
+                      </span>
+                    </div>
+
+                    <!-- 品牌排查 -->
+                    <div class="text-[11px] space-y-1">
+                      <div class="flex items-center space-x-1">
+                        <span class="text-slate-500 font-medium">品牌检出:</span>
+                        <span v-if="complianceModalItem.compliance_details.qwen_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded">
+                          {{ complianceModalItem.compliance_details.qwen_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                        </span>
+                        <span v-else class="text-emerald-700 font-semibold">✓ 未检出品牌/IP</span>
+                      </div>
+                      <div>
+                        <span class="text-slate-500 font-medium">违规类型:</span>
+                        <span class="font-mono text-slate-700 ml-1">{{ complianceModalItem.compliance_details.qwen_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                      </div>
+                      <div class="pt-1 text-slate-700 leading-relaxed border-t border-blue-100">
+                        <div class="text-slate-500 font-medium text-[10px]">审查理由:</div>
+                        <div class="mt-0.5">{{ complianceModalItem.compliance_details.qwen_verdict?.title_audit?.summary || '未返回说明' }}</div>
+                      </div>
                     </div>
                   </div>
-                  <div v-else class="p-2 bg-rose-50 rounded border border-rose-200 text-rose-800">
-                    ⚠️ 商品疑似整机提及知名品牌，若非官方授权店铺，严禁直接刊登！
+
+                  <!-- 右列: DeepSeek (Flash) -->
+                  <div class="bg-indigo-50/40 p-3 rounded-lg border border-indigo-200/80 space-y-2">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                      <span class="font-bold text-indigo-900 text-xs flex items-center">
+                        <span class="mr-1">🐬</span>DeepSeek (Flash)
+                      </span>
+                      <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.risk_level)">
+                        {{ complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.risk_level || '未执行' }}
+                      </span>
+                    </div>
+
+                    <!-- 品牌排查 -->
+                    <div class="text-[11px] space-y-1">
+                      <div class="flex items-center space-x-1 flex-wrap">
+                        <span class="text-slate-500 font-medium">品牌检出:</span>
+                        <span v-if="complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.2 rounded">
+                          {{ complianceModalItem.compliance_details.deepseek_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                          <span v-if="complianceModalItem.compliance_details.brand_breakdown?.deepseek_only_brands?.length" class="text-[9px] bg-purple-200 text-purple-800 px-1 rounded ml-1 font-normal">单方检出</span>
+                        </span>
+                        <span v-else class="text-emerald-700 font-semibold">✓ 未检出品牌/IP</span>
+                      </div>
+                      <div>
+                        <span class="text-slate-500 font-medium">违规类型:</span>
+                        <span class="font-mono text-slate-700 ml-1">{{ complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                      </div>
+                      <div class="pt-1 text-slate-700 leading-relaxed border-t border-indigo-100">
+                        <div class="text-slate-500 font-medium text-[10px]">审查理由:</div>
+                        <div class="mt-0.5">{{ complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.summary || '未返回说明' }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 推荐修改标题条 (若有建议标题) -->
+                <div v-if="complianceModalItem.compliance_details.brand_info?.recommended_title" class="p-3 bg-amber-50/60 border-t border-amber-200/70 text-[11px]">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-[10px] text-slate-500 font-medium">💡 AI 推荐合规标题 (已规避侵权词并规范兼容声明):</div>
+                      <div class="font-mono text-blue-800 font-semibold mt-0.5 select-all">{{ complianceModalItem.compliance_details.brand_info.recommended_title }}</div>
+                    </div>
+                    <button @click="adoptRecommendedTitle(complianceModalItem); complianceModalItem = null;" class="ml-3 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer shrink-0">
+                      一键采纳并更新
+                    </button>
                   </div>
                 </div>
               </div>
 
-              <!-- 3. 首图 AI 视觉多模态大模型排查 -->
-              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                <div class="flex items-center justify-between">
-                  <span class="font-bold text-slate-800">3. 首图 AI 多模态视觉诊断 (Qwen-VL-Max):</span>
-                  <span v-if="complianceModalItem.compliance_details.image_inspection?.tested" class="text-blue-600 font-semibold text-[11px]">
-                    已完成视觉分析
+              <!-- ★★★ 第二轮：首图视觉与运输合规 (Qwen-VL vs DeepSeek-Vision 对称卡片) ★★★ -->
+              <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                <!-- 第二轮轮次栏 -->
+                <div class="bg-slate-100/80 px-3.5 py-2 border-b border-slate-200 flex items-center justify-between">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="text-sm">🖼️</span>
+                    <span class="font-bold text-xs text-slate-800">第二轮：首图视觉与运输合规 (Round 2 多模态看图)</span>
+                  </div>
+                  <!-- 本轮共识徽章 -->
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-bold" :class="{
+                    'bg-emerald-100 text-emerald-800 border border-emerald-300': complianceModalItem.compliance_details.round_2_status?.status === 'SAFE',
+                    'bg-purple-100 text-purple-800 border border-purple-300': complianceModalItem.compliance_details.round_2_status?.status === 'DISPUTED',
+                    'bg-amber-100 text-amber-800 border border-amber-300': complianceModalItem.compliance_details.round_2_status?.status === 'RISK',
+                    'bg-rose-100 text-rose-800 border border-rose-300': complianceModalItem.compliance_details.round_2_status?.status === 'PROHIBITED'
+                  }">
+                    {{ complianceModalItem.compliance_details.round_2_status?.summary || (complianceModalItem.compliance_details.qwen_verdict?.image_audit?.risk_level === 'SAFE' && complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '视觉审查完成') }}
                   </span>
-                  <span v-else class="text-slate-400 text-[11px]">未调用看图模型</span>
                 </div>
-                <div v-if="complianceModalItem.compliance_details.image_inspection?.tested" class="mt-2 text-[11px] text-slate-700 space-y-1">
-                  <div class="flex space-x-3 items-center">
+
+                <!-- 首图预览与两列对比 -->
+                <div class="p-3 space-y-3">
+                  <!-- 首图缩略图 -->
+                  <div v-if="complianceModalItem.compliance_details.image_inspection?.image_url" class="flex items-center space-x-3 p-2 bg-slate-50 rounded-lg border border-slate-200">
                     <img 
                       :src="cleanImageUrl(complianceModalItem.compliance_details.image_inspection.image_url)" 
                       @error="handleImageError($event, complianceModalItem.compliance_details.image_inspection.image_url)"
                       @click="openImagePreview(complianceModalItem.compliance_details.image_inspection.image_url)"
-                      class="w-12 h-12 rounded object-cover border cursor-pointer hover:opacity-85 transition shadow-2xs" 
-                      title="点击放大预览"
+                      class="w-14 h-14 rounded-lg object-cover border cursor-pointer hover:opacity-80 transition shadow-xs shrink-0" 
+                      title="点击放大预览首图"
                     />
-                    <div>
-                      <div>诊断结论: <strong>{{ complianceModalItem.compliance_details.image_inspection.summary }}</strong></div>
-                      <div v-if="complianceModalItem.compliance_details.image_inspection.has_brand_logo" class="text-amber-700 font-bold mt-0.5">
-                        ⚠️ 画面中包含品牌 Logo 或官方商标: {{ complianceModalItem.compliance_details.image_inspection.logo_names?.join(', ') }}
+                    <div class="text-[11px] text-slate-600 flex-1">
+                      <div class="font-medium text-slate-700">首图图片审查对象:</div>
+                      <div class="font-mono text-[10px] text-slate-500 truncate max-w-lg">{{ complianceModalItem.compliance_details.image_inspection.image_url }}</div>
+                      <div class="text-[10px] text-blue-600 mt-0.5">点击左侧缩略图可查看大图</div>
+                    </div>
+                  </div>
+
+                  <!-- 视觉并排两列对比 -->
+                  <div class="grid grid-cols-2 gap-3">
+                    <!-- 左列: 通义千问视觉 (Qwen-VL-Max) -->
+                    <div class="bg-blue-50/40 p-3 rounded-lg border border-blue-200/80 space-y-2">
+                      <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                        <span class="font-bold text-blue-900 text-xs flex items-center">
+                          <span class="mr-1">🤖</span>通义千问视觉 (Qwen-VL)
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.qwen_verdict?.image_audit?.risk_level)">
+                          {{ complianceModalItem.compliance_details.qwen_verdict?.image_audit?.risk_level || 'SAFE' }}
+                        </span>
+                      </div>
+
+                      <div class="text-[11px] space-y-1.5">
+                        <div>
+                          <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                          <span v-if="complianceModalItem.compliance_details.qwen_verdict?.image_audit?.logo_names?.length" class="font-bold text-amber-800 bg-amber-100 px-1 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.qwen_verdict.image_audit.logo_names.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                        </div>
+                        <div>
+                          <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                          <span v-if="complianceModalItem.compliance_details.qwen_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.qwen_verdict.image_audit.prohibited_types.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                        </div>
+                        <div class="pt-1 text-slate-700 leading-relaxed border-t border-blue-100">
+                          <div class="text-slate-500 font-medium text-[10px]">视觉分析说明:</div>
+                          <div class="mt-0.5">{{ complianceModalItem.compliance_details.qwen_verdict?.image_audit?.summary || '无异常' }}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 右列: DeepSeek 视觉 (DeepSeek-Vision) -->
+                    <div class="bg-indigo-50/40 p-3 rounded-lg border border-indigo-200/80 space-y-2">
+                      <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                        <span class="font-bold text-indigo-900 text-xs flex items-center">
+                          <span class="mr-1">🐬</span>DeepSeek 视觉 (Flash-Vision)
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level)">
+                          {{ complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level || 'SAFE' }}
+                        </span>
+                      </div>
+
+                      <div class="text-[11px] space-y-1.5">
+                        <div>
+                          <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                          <span v-if="complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.logo_names?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.deepseek_verdict.image_audit.logo_names.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                        </div>
+                        <div>
+                          <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                          <span v-if="complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.deepseek_verdict.image_audit.prohibited_types.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                        </div>
+                        <div class="pt-1 text-slate-700 leading-relaxed border-t border-indigo-100">
+                          <div class="text-slate-500 font-medium text-[10px]">视觉分析说明:</div>
+                          <div class="mt-0.5">{{ complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.summary || '无异常' }}</div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- 4. 优化与整改建议 -->
-              <div v-if="complianceModalItem.compliance_details.suggestions?.length" class="p-3 bg-blue-50/70 rounded-xl border border-blue-200 text-[11px] text-blue-900">
-                <div class="font-bold mb-1">💡 合规整改建议:</div>
-                <ul class="list-disc list-inside space-y-0.5">
-                  <li v-for="(s, idx) in complianceModalItem.compliance_details.suggestions" :key="idx">{{ s }}</li>
-                </ul>
+              <!-- ★★★ 底层硬性平台合规拦截 (Local Hard Rules) ★★★ -->
+              <div v-if="complianceModalItem.compliance_details.prohibited_items?.length" class="p-3 bg-rose-50 border border-rose-200 rounded-xl text-[11px] text-rose-900 space-y-1">
+                <div class="flex items-center justify-between font-bold">
+                  <span>🚫 触发平台底层硬性违禁拦截:</span>
+                  <span class="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px]">不可上架</span>
+                </div>
+                <div>检出项: <strong class="underline">{{ complianceModalItem.compliance_details.prohibited_items.join('、') }}</strong></div>
+                <div class="text-slate-600 text-[10px]">说明：Makro 严禁销售未获南非 ICASA 认证的无线设备 (蓝牙/WiFi/红外)；液体/精油形态跨境物流亦严禁航空运输。建议停止刊登或更换普通款式。</div>
+              </div>
+
+              <!-- ★★★ 人工终审裁定控制台 (Human Arbitration Console) ★★★ -->
+              <div class="p-4 bg-purple-50/90 rounded-xl border border-purple-200 space-y-3 shadow-xs">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-xs text-purple-950 flex items-center">
+                    <span class="mr-1.5 text-sm">⚖️</span> 人工终审裁定控制台
+                  </span>
+                  <span v-if="complianceModalItem.compliance_details?.human_arbitration" class="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-bold">
+                    ✓ 已终审: {{ complianceModalItem.compliance_details.human_arbitration.human_verdict }} (归因: {{ complianceModalItem.compliance_details.human_arbitration.error_attribution }})
+                  </span>
+                  <span v-else class="text-[10px] text-purple-700 font-medium">
+                    人工裁定结果将保存为日志，自动沉淀为 AI 提示词优化样本
+                  </span>
+                </div>
+
+                <!-- 备注输入框 -->
+                <input 
+                  v-model="arbitrationNotes" 
+                  type="text" 
+                  placeholder="填写裁定理由或关键词修正备注（例如：HW300PRO是通用产品型号，非侵权大牌商标；或：画面无Logo判为SAFE）..." 
+                  class="w-full text-xs px-3 py-2 bg-white border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                />
+
+                <!-- 一键裁定按钮组 -->
+                <div class="flex items-center space-x-2 pt-0.5">
+                  <button 
+                    @click="submitArbitration(complianceModalItem, 'SAFE')" 
+                    :disabled="isArbitrating"
+                    class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <span>🛡️</span>
+                    <span>裁定为【SAFE 安全合规】</span>
+                  </button>
+                  <button 
+                    @click="submitArbitration(complianceModalItem, 'RISK')" 
+                    :disabled="isArbitrating"
+                    class="flex-1 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <span>⚠️</span>
+                    <span>裁定为【RISK 风险预警】</span>
+                  </button>
+                  <button 
+                    @click="submitArbitration(complianceModalItem, 'PROHIBITED')" 
+                    :disabled="isArbitrating"
+                    class="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <span>🚫</span>
+                    <span>裁定为【PROHIBITED 违禁拦截】</span>
+                  </button>
+                </div>
               </div>
             </div>
-            <div v-else class="text-center py-6 text-slate-400">
-              暂无详细检测数据，请点击右上角【重新检测】按钮触发 AI 诊断。
+            <div v-else class="text-center py-8 text-slate-400">
+              暂无详细检测数据，请点击右上角【重新检测 (双AI)】按钮触发会审诊断。
             </div>
           </div>
 
-          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2">
-            <button @click="complianceModalItem = null" class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">
+          <!-- 弹窗底栏 -->
+          <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end space-x-2 shrink-0">
+            <button @click="complianceModalItem = null" class="px-4 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg cursor-pointer">
               关闭
             </button>
           </div>
@@ -2894,6 +3194,8 @@
       data() {
         return {
           currentTab: 'products',
+          highlightedProductId: null,
+          lastInspectedId: null,
           networkInfo: null,
           copiedLan: false,
           viewMode: 'grouped', // 'grouped' | 'flat'
@@ -2991,6 +3293,8 @@
           activeItem: null,
           complianceModalItem: null,
           checkingComplianceId: null,
+          arbitrationNotes: '',
+          isArbitrating: false,
           loadingProducts: false,
           isCleaning: false,
           isBatchCheckingCompliance: false,
@@ -3312,8 +3616,66 @@
           }
         },
         changeStatusTab(st) {
+          if (this.statusFilter === st && !this.loadingProducts) return;
           this.statusFilter = st;
+          this.selectedIds = [];
           this.loadProducts(1);
+        },
+        switchTab(tabId) {
+          const prevTab = this.currentTab;
+          this.currentTab = tabId;
+          if (tabId === 'inspector' && this.activeItem && this.activeItem.id && (!this.activeItem.takealot_specs || !this.activeItem.makro_catalog_attributes)) {
+            this.fetchFullProductDetails(this.activeItem.id);
+          }
+          if (tabId === 'products' && prevTab === 'inspector' && this.lastInspectedId) {
+            this.scrollToProduct(this.lastInspectedId);
+          }
+        },
+        returnToProducts() {
+          this.currentTab = 'products';
+          if (this.lastInspectedId) {
+            this.scrollToProduct(this.lastInspectedId);
+          }
+        },
+        scrollToProduct(productId) {
+          if (!productId) return;
+          this.highlightedProductId = productId;
+          this.$nextTick(() => {
+            if (this.viewMode === 'grouped' && this.groupedProducts) {
+              const grp = this.groupedProducts.find(g => g.items && g.items.some(x => x.id === productId));
+              if (grp) {
+                this.expandedGroups[grp.group_code] = true;
+              }
+            }
+            setTimeout(() => {
+              const el = document.getElementById(`product-row-${productId}`) || document.getElementById(`product-group-${productId}`);
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            }, 60);
+            setTimeout(() => {
+              if (this.highlightedProductId === productId) {
+                this.highlightedProductId = null;
+              }
+            }, 3000);
+          });
+        },
+        isGroupHighlighted(grp) {
+          return this.highlightedProductId && grp && grp.items && grp.items.some(x => x.id === this.highlightedProductId);
+        },
+        async fetchFullProductDetails(productId) {
+          if (!productId) return;
+          try {
+            const res = await fetch(`/api/products/${productId}`);
+            if (res.ok) {
+              const full = await res.json();
+              if (this.activeItem && this.activeItem.id === productId) {
+                this.activeItem = full;
+              }
+            }
+          } catch (e) {
+            console.error('获取完整商品详情失败:', e);
+          }
         },
         openBatchPriceModal() {
           if (this.selectedIds.length === 0) return;
@@ -3530,6 +3892,9 @@
         formatDateTime(dtStr) {
           if (!dtStr) return '-';
           try {
+            if (typeof dtStr === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(dtStr) && !dtStr.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(dtStr)) {
+              return dtStr.replace('T', ' ').slice(0, 19);
+            }
             const d = new Date(dtStr);
             if (isNaN(d.getTime())) {
               return String(dtStr).replace('T', ' ').slice(0, 19);
@@ -3543,7 +3908,7 @@
             const s = pad(d.getSeconds());
             return `${Y}-${M}-${D} ${h}:${m}:${s}`;
           } catch (e) {
-            return String(dtStr).slice(0, 19);
+            return String(dtStr).replace('T', ' ').slice(0, 19);
           }
         },
         formatJsonLog(logData) {
@@ -3583,8 +3948,10 @@
           return map[type] || { text: type, bg: 'bg-slate-100 text-slate-700 border-slate-200' };
         },
         openInspector(item) {
+          this.lastInspectedId = item.id;
           this.activeItem = JSON.parse(JSON.stringify(item));
           this.currentTab = 'inspector';
+          this.fetchFullProductDetails(item.id);
         },
         async saveActiveItem() {
           try {
@@ -3610,7 +3977,27 @@
             });
             const updated = await res.json();
             this.activeItem = updated;
-            this.loadProducts();
+
+            // 内存就地同步更新选品箱列表中的该条记录，避免重新请求与重置滚动条
+            if (this.products && this.products.items) {
+              const idx = this.products.items.findIndex(p => p.id === this.activeItem.id);
+              if (idx !== -1) {
+                const cur = this.products.items[idx];
+                cur.makro_title = updated.makro_title;
+                cur.makro_vertical = updated.makro_vertical;
+                cur.makro_brand = updated.makro_brand;
+                cur.makro_selling_price = updated.makro_selling_price;
+                cur.makro_mrp = updated.makro_mrp;
+                cur.sku_id = updated.sku_id;
+                cur.barcode = updated.barcode;
+                cur.colour = updated.colour;
+                cur.size = updated.size;
+                cur.brand_colour = updated.brand_colour;
+                cur.pack_of = updated.pack_of;
+                cur.variant_attributes = updated.variant_attributes;
+                cur.updated_at = updated.updated_at;
+              }
+            }
             alert('修改已保存！');
           } catch (e) {
             alert('保存失败: ' + e);
@@ -3627,7 +4014,22 @@
               throw new Error(err.detail || '清洗接口请求失败');
             }
             this.activeItem = await res.json();
-            await this.loadProducts();
+
+            // 内存就地同步更新选品箱列表中的清洗状态与结果，避免全表刷新
+            if (this.products && this.products.items) {
+              const idx = this.products.items.findIndex(p => p.id === this.activeItem.id);
+              if (idx !== -1) {
+                const cur = this.products.items[idx];
+                cur.makro_title = this.activeItem.makro_title;
+                cur.makro_vertical = this.activeItem.makro_vertical;
+                cur.makro_brand = this.activeItem.makro_brand;
+                cur.makro_selling_price = this.activeItem.makro_selling_price;
+                cur.makro_mrp = this.activeItem.makro_mrp;
+                cur.status = this.activeItem.status;
+                cur.clean_mode = this.activeItem.clean_mode;
+                cur.updated_at = this.activeItem.updated_at;
+              }
+            }
             alert(`🎉 AI ${modeName}清洗完成！已更新 Makro 属性与建议标题。`);
           } catch (e) {
             alert(`清洗失败: ${e.message || e}`);
@@ -3800,6 +4202,52 @@
           } finally {
             this.checkingComplianceId = null;
           }
+        },
+        async submitArbitration(item, humanVerdict) {
+          if (!item) return;
+          this.isArbitrating = true;
+          try {
+            const res = await fetch(`/api/cleaner/arbitrate-compliance/${item.id}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                human_verdict: humanVerdict,
+                human_notes: this.arbitrationNotes || ''
+              })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              item.compliance_status = data.compliance_status;
+              item.compliance_details = data.compliance_details;
+              if (this.activeItem && this.activeItem.id === item.id) {
+                this.activeItem.compliance_status = data.compliance_status;
+                this.activeItem.compliance_details = data.compliance_details;
+              }
+              if (this.complianceModalItem && this.complianceModalItem.id === item.id) {
+                this.complianceModalItem.compliance_status = data.compliance_status;
+                this.complianceModalItem.compliance_details = data.compliance_details;
+              }
+              this.showToast(`✅ 人工终审完成！已裁定为【${humanVerdict}】，归因: ${data.error_attribution}`, 'success');
+              this.arbitrationNotes = '';
+            } else {
+              const err = await res.json().catch(() => ({}));
+              alert('人工仲裁提交失败: ' + (err.detail || res.statusText));
+            }
+          } catch (e) {
+            alert('人工仲裁提交异常: ' + e);
+          } finally {
+            this.isArbitrating = false;
+          }
+        },
+        getRiskBadgeClass(level) {
+          if (level === 'PROHIBITED') return 'bg-rose-600 text-white';
+          if (level === 'RISK') return 'bg-amber-500 text-white';
+          return 'bg-emerald-600 text-white';
+        },
+        getTextRiskColor(level) {
+          if (level === 'PROHIBITED') return 'text-rose-600';
+          if (level === 'RISK') return 'text-amber-600';
+          return 'text-emerald-600';
         },
         async publishItem(item) {
           this.triggerProductPublish(item);

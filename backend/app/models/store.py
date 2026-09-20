@@ -15,8 +15,8 @@ class Store(Base):
     is_active = Column(Boolean, default=True)  # 是否启用
     is_default = Column(Boolean, default=False)  # 是否为默认店铺
     notes = Column(String(255), nullable=True)  # 备注说明
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     listings = relationship("ProductStoreListing", back_populates="store", cascade="all, delete-orphan")
 
@@ -35,8 +35,8 @@ class ProductStoreListing(Base):
     selling_price = Column(Float, nullable=True)
     mrp = Column(Float, nullable=True)
     submitted_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
         UniqueConstraint("product_id", "store_id", name="uq_product_store"),

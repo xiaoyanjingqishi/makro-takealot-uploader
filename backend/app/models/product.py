@@ -52,12 +52,12 @@ class Product(Base):
     makro_sku_id = Column(String(100), nullable=True)
     makro_submit_error = Column(Text, nullable=True)
 
-    # AI 侵权与合规检测: PENDING_CHECK, SAFE, RISK, PROHIBITED
+    # AI 侵权与合规检测: PENDING_CHECK, SAFE, RISK, PROHIBITED, DISPUTED (分歧待仲裁)
     compliance_status = Column(String(50), default="PENDING_CHECK", index=True)
-    compliance_details = Column(Text, nullable=True)  # 存储结构化检测结果与首图分析 JSON
+    compliance_details = Column(Text, nullable=True)  # 存储结构化双 AI 会审检测结果与首图分析 JSON
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     # 关联变体 (保持向下兼容)
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")

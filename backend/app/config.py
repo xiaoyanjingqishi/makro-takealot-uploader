@@ -40,8 +40,9 @@ class Settings(BaseSettings):
     
     # DeepSeek
     DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-flash"
+    DEEPSEEK_VISION_MODEL: str = "deepseek-flash"
 
     # 上品执行模式: 'backend' (后端发包) 或 'extension' (插件在浏览器上下文代发)
     UPLOAD_MODE: str = "backend"

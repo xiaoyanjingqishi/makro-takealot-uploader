@@ -1,19 +1,32 @@
 import re
 import json
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
 from ..database import get_db
 from ..models.product import Product
 from ..models.task import TaskLog
+from ..models.compliance_log import ComplianceArbitrationLog
 from ..schemas.product import BatchCleanRequest, ProductResponse
 from ..services.ai_cleaner_service import AICleanerService
 from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
 from .products import _format_product
 
+class ArbitrateComplianceRequest(BaseModel):
+    human_verdict: str  # 'SAFE', 'RISK', 'PROHIBITED'
+    human_notes: Optional[str] = None
+
 router = APIRouter(prefix="/cleaner", tags=["AI清洗与规范化"])
+
+LISTING_ONLY_ATTRS = {
+    "country_of_origin", "mrp", "flipkart_selling_price", "shipping_days",
+    "listing_status", "service_profile", "packer_details", "manufacturer_details",
+    "importer_details", "packages", "forbid_shipping", "max_order_quantity_allowed",
+    "minimum_order_quantity", "sku_id"
+}
 
 @router.post("/clean/{product_id}", response_model=ProductResponse, summary="单品触发 AI 数据清洗")
 def clean_single_product(
@@ -43,8 +56,8 @@ def clean_single_product(
         combined_specs = {**specs, **var_attrs}
         
         cleaned = ai_service.clean_product_data({
+            "id": product.id,
             "takealot_title": product.takealot_title,
-            "takealot_brand": product.takealot_brand,
             "takealot_category": product.takealot_category,
             "takealot_specs": combined_specs,
             "takealot_description": product.takealot_description,
@@ -75,6 +88,8 @@ def clean_single_product(
         attrs = cleaned.get("attributes", {})
         catalog_attrs = {}
         for k, val in attrs.items():
+            if k in LISTING_ONLY_ATTRS:
+                continue  # 排除纯 Listing 级属性，严防混入 Catalog 导致 412
             qualifier = None
             if k in ["width", "length"]:
                 qualifier = "cm"
@@ -201,6 +216,8 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
                 attrs = cleaned.get("attributes", {})
                 catalog_attrs = {}
                 for k, val in attrs.items():
+                    if k in LISTING_ONLY_ATTRS:
+                        continue  # 排除纯 Listing 级属性，严防混入 Catalog 导致 412
                     qualifier = None
                     if k in ["width", "length"]:
                         qualifier = "cm"
@@ -320,7 +337,7 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
                     "takealot_description": prod.takealot_description,
                     "makro_brand": prod.makro_brand,
                     "raw_images": prod.raw_images
-                }, check_image=True)
+                }, check_image=True, check_ai_title=True)
 
                 prod.compliance_status = comp_res.get("compliance_status", "SAFE")
                 prod.compliance_details = json.dumps(comp_res, ensure_ascii=False)
@@ -383,7 +400,7 @@ def check_single_compliance(product_id: int, db: Session = Depends(get_db)):
         "takealot_description": product.takealot_description,
         "makro_brand": product.makro_brand,
         "raw_images": product.raw_images
-    }, check_image=True)
+    }, check_image=True, check_ai_title=True)
 
     product.compliance_status = comp_res.get("compliance_status", "SAFE")
     product.compliance_details = json.dumps(comp_res, ensure_ascii=False)
@@ -406,9 +423,170 @@ def check_single_compliance(product_id: int, db: Session = Depends(get_db)):
         "compliance_details": comp_res
     }
 
+@router.post("/arbitrate-compliance/{product_id}", summary="人工终审仲裁双 AI 合规分歧并沉淀语料日志")
+def arbitrate_compliance(
+    product_id: int,
+    req: ArbitrateComplianceRequest,
+    db: Session = Depends(get_db)
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="商品未找到")
+
+    human = req.human_verdict.upper()
+    if human not in ["SAFE", "RISK", "PROHIBITED"]:
+        raise HTTPException(status_code=400, detail="裁决状态必须为 SAFE, RISK 或 PROHIBITED")
+
+    # 解析现有会审细节
+    details = {}
+    if product.compliance_details:
+        try:
+            details = json.loads(product.compliance_details)
+        except Exception:
+            details = {}
+
+    qwen_verdict = details.get("qwen_verdict", {})
+    deepseek_verdict = details.get("deepseek_verdict", {})
+    qwen_status = qwen_verdict.get("overall_risk", "SAFE")
+    deepseek_status = deepseek_verdict.get("overall_risk", "SAFE")
+    has_dual = details.get("dual_ai_mode", False)
+
+    # 智能归因分析
+    if has_dual:
+        if qwen_status == human and deepseek_status == human:
+            attribution = "CONSENSUS_AFFIRMED"
+        elif qwen_status != human and deepseek_status == human:
+            attribution = "QWEN_FALSE_POSITIVE" if (qwen_status in ["RISK", "PROHIBITED"] and human == "SAFE") else "QWEN_FALSE_NEGATIVE"
+        elif deepseek_status != human and qwen_status == human:
+            attribution = "DEEPSEEK_FALSE_POSITIVE" if (deepseek_status in ["RISK", "PROHIBITED"] and human == "SAFE") else "DEEPSEEK_FALSE_NEGATIVE"
+        else:
+            attribution = "BOTH_MISJUDGED"
+    else:
+        if qwen_status == human:
+            attribution = "QWEN_AFFIRMED"
+        else:
+            attribution = "QWEN_FALSE_POSITIVE" if (qwen_status in ["RISK", "PROHIBITED"] and human == "SAFE") else "QWEN_FALSE_NEGATIVE"
+
+    # 获取首图 URL
+    first_img_url = None
+    if product.raw_images:
+        try:
+            imgs = json.loads(product.raw_images) if isinstance(product.raw_images, str) else product.raw_images
+            if isinstance(imgs, list) and len(imgs) > 0 and isinstance(imgs[0], str):
+                first_img_url = imgs[0]
+        except Exception:
+            first_img_url = None
+
+    # 更新商品合规状态与细节快照
+    product.compliance_status = human
+    details["compliance_status"] = human
+    details["is_disputed"] = False
+    details["human_arbitration"] = {
+        "human_verdict": human,
+        "notes": req.human_notes or "",
+        "error_attribution": attribution,
+        "arbitrated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    product.compliance_details = json.dumps(details, ensure_ascii=False)
+
+    # 记录持久化仲裁日志与提示词样本
+    arbitration_log = ComplianceArbitrationLog(
+        product_id=product.id,
+        takealot_title=product.takealot_title,
+        makro_title=product.makro_title,
+        brand=product.makro_brand or product.takealot_brand or "Beishi",
+        image_url=first_img_url,
+        qwen_verdict=json.dumps(qwen_verdict, ensure_ascii=False) if qwen_verdict else None,
+        deepseek_verdict=json.dumps(deepseek_verdict, ensure_ascii=False) if deepseek_verdict else None,
+        qwen_status=qwen_status,
+        deepseek_status=deepseek_status,
+        human_verdict=human,
+        error_attribution=attribution,
+        dispute_keywords=json.dumps(details.get("brand_info", {}).get("detected_brands", []), ensure_ascii=False),
+        human_notes=req.human_notes,
+        created_at=datetime.now(),
+        arbitrated_at=datetime.now()
+    )
+    db.add(arbitration_log)
+    db.commit()
+    db.refresh(product)
+
+    # 记录操作审计日志
+    record_audit_log(
+        task_type="ARBITRATION",
+        status="SUCCESS",
+        message=f"商品 ID {product.id} 人工终审完成: 裁定为 [{human}], 归因标注=[{attribution}]",
+        product_id=product.id,
+        detail_logs={
+            "human_verdict": human,
+            "attribution": attribution,
+            "qwen_status": qwen_status,
+            "deepseek_status": deepseek_status,
+            "notes": req.human_notes
+        },
+        db=db
+    )
+
+    return {
+        "success": True,
+        "product_id": product.id,
+        "compliance_status": product.compliance_status,
+        "error_attribution": attribution,
+        "arbitration_log_id": arbitration_log.id,
+        "compliance_details": details
+    }
+
+@router.get("/compliance-logs", summary="获取双 AI 分歧仲裁与提示词优化语料日志")
+def get_compliance_logs(
+    attribution: Optional[str] = Query(None, description="按归因过滤: 如 QWEN_FALSE_POSITIVE"),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db)
+):
+    query = db.query(ComplianceArbitrationLog)
+    if attribution:
+        query = query.filter(ComplianceArbitrationLog.error_attribution == attribution)
+    
+    logs = query.order_by(ComplianceArbitrationLog.id.desc()).limit(limit).all()
+
+    # 汇总统计
+    all_logs = db.query(ComplianceArbitrationLog).all()
+    stats = {
+        "total": len(all_logs),
+        "qwen_false_positive": sum(1 for l in all_logs if l.error_attribution == "QWEN_FALSE_POSITIVE"),
+        "qwen_false_negative": sum(1 for l in all_logs if l.error_attribution == "QWEN_FALSE_NEGATIVE"),
+        "deepseek_false_positive": sum(1 for l in all_logs if l.error_attribution == "DEEPSEEK_FALSE_POSITIVE"),
+        "deepseek_false_negative": sum(1 for l in all_logs if l.error_attribution == "DEEPSEEK_FALSE_NEGATIVE"),
+        "both_misjudged": sum(1 for l in all_logs if l.error_attribution == "BOTH_MISJUDGED"),
+        "consensus_affirmed": sum(1 for l in all_logs if l.error_attribution in ["CONSENSUS_AFFIRMED", "QWEN_AFFIRMED"])
+    }
+
+    result_items = []
+    for l in logs:
+        result_items.append({
+            "id": l.id,
+            "product_id": l.product_id,
+            "title": l.makro_title or l.takealot_title,
+            "brand": l.brand,
+            "image_url": l.image_url,
+            "qwen_status": l.qwen_status,
+            "deepseek_status": l.deepseek_status,
+            "human_verdict": l.human_verdict,
+            "error_attribution": l.error_attribution,
+            "dispute_keywords": json.loads(l.dispute_keywords) if l.dispute_keywords else [],
+            "human_notes": l.human_notes,
+            "arbitrated_at": l.arbitrated_at.strftime("%Y-%m-%d %H:%M:%S") if l.arbitrated_at else ""
+        })
+
+    return {
+        "stats": stats,
+        "total": len(result_items),
+        "logs": result_items
+    }
+
 @router.get("/verticals", summary="获取系统支持的全部 Makro 垂直类目")
 def get_supported_verticals():
     from ..services.vertical_service import VerticalService
     return {
         "supported_verticals": VerticalService.list_verticals()
     }
+

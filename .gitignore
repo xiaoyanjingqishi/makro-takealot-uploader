@@ -62,7 +62,9 @@ Thumbs.db
 
 # Temp scratch & screenshots
 scratch/
-scratch_test_app.js
+scratch_*.py
+scratch_*.js
+*.bak*
 .tempmediaStorage/
 .image_cache/
 backend/.image_cache/

@@ -33,8 +33,9 @@ class SystemSettingsSchema(BaseModel):
     qwen_model: Optional[str] = "qwen-plus"
     
     deepseek_api_key: Optional[str] = ""
-    deepseek_base_url: Optional[str] = "https://api.deepseek.com/v1"
-    deepseek_model: Optional[str] = "deepseek-chat"
+    deepseek_base_url: Optional[str] = "https://api.deepseek.com"
+    deepseek_model: Optional[str] = "deepseek-flash"
+    deepseek_vision_model: Optional[str] = "deepseek-flash"
 
     # 标题 SEO 关键词扩展增强
     seo_title_enabled: bool = True

@@ -90,10 +90,27 @@ try:
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_status_id ON products (status, id DESC)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_compliance_status_id ON products (compliance_status, id DESC)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_logs_product_id ON task_logs (product_id, id DESC)"))
-        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_task_logs_created_at ON task_logs (created_at DESC)"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_compliance_arbitration_logs_product_id ON compliance_arbitration_logs (product_id, id DESC)"))
         _conn.commit()
 except Exception as _ie:
     print(f"[INIT] 字段与复合索引初始化跳过或异常: {_ie}")
+
+# 确保全量存量商品类目健康合规 (自动纠偏历史脏类目)
+try:
+    with SessionLocal() as _db:
+        from app.services.vertical_service import VerticalService
+        _dirty = _db.query(Product).filter(Product.status.in_(["PENDING_CLEAN", "CLEANED", "FAILED"])).all()
+        _repaired = 0
+        for _p in _dirty:
+            _target, _ = VerticalService.resolve_vertical(_p.makro_vertical)
+            if _target != _p.makro_vertical:
+                _p.makro_vertical = _target
+                _repaired += 1
+        if _repaired > 0:
+            _db.commit()
+            print(f"[INIT] 启动自动巡检：纠偏 {_repaired} 件商品的失效/历史类目")
+except Exception as _ve:
+    print(f"[INIT] 商品类目巡检跳过: {_ve}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

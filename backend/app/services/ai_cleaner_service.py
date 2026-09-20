@@ -219,16 +219,34 @@ class AICleanerService:
         """阶段 1: 极速分类决策 —— 让大模型从候选集精准裁定 1 个 Makro 官方类目 (支持首图多模态)"""
         from .vertical_service import VerticalService
 
-        candidates_str = ", ".join(f'"{c}"' for c in candidate_verticals)
+        verticals_map = VerticalService._load_verticals()
+        formatted_candidates = []
+        for c in candidate_verticals:
+            info = verticals_map.get(c)
+            if info and isinstance(info, list) and info[0]:
+                disp = info[0].get("verticalDisplayName", c)
+                path = info[0].get("path", "")
+                formatted_candidates.append(f'"{c}" ({disp} | Path: {path})')
+            else:
+                formatted_candidates.append(f'"{c}"')
+        candidates_str = "\n".join(formatted_candidates)
+
         prompt = f"""You are a professional e-commerce category taxonomy expert for Makro (Flipkart/Walmart SaaS).
-Select the SINGLE best matching Makro official vertical code from this candidate list:
-[{candidates_str}]
+Select the SINGLE best matching Makro official vertical code from this candidate list (each item displays its code, display name, and category path):
+[
+{candidates_str}
+]
 
 Category Selection Rules:
 - NEVER select "costume_wear" for normal daily bras, underwear, lingerie, everyday clothes, headlamps, or foot sleeves! "costume_wear" is strictly for cosplay and fancy dress party costumes.
 - For headlamps, flashlights, or portable lights, choose "torch".
 - For foot socks, neuropathy socks, heel protectors, or plantar fasciitis pads, choose "foot_pad".
 - For neck warmers, gaiters, beanies, or scarves, choose "cap".
+- For lawn signs, garden decor, statues, boundary markers, sculptures, or lawn ornaments, choose "garden_gnome".
+- For garden sprayers, hose nozzles, sprinklers, or lawn watering, choose "garden_sprayer".
+- For garden tools, pruning shears, loppers, or trowels, choose "garden_tool_set".
+- For bathroom grab bars, safety rails, or handicap handles, choose "shower_grab_bar".
+- For phone stands, phone holders, or ring grips, choose "mobile_holder".
 
 Product Data:
 Title: {raw_title}
@@ -699,8 +717,35 @@ Reply ONLY with a JSON object:
                 "ideal_for": "Men & Women",
                 "design": "Classic"
             }
-        elif any(k in title_lower or k in cat_lower for k in ["garden", "prun", "shear"]):
-            vertical = "garden_tools"
+        elif any(k in title_lower or k in cat_lower for k in ["decor", "ornament", "sculpture", "statue", "sign", "gnome"]):
+            vertical = "garden_gnome"
+            makro_title = f"{target_brand} Decorative Garden Lawn Sign Ornament ({colour})"
+            attrs = {
+                "model_name": "Garden Decor",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "Cast Iron",
+                "packaging_type": "Box",
+                "sales_package": "1 Garden Lawn Sign",
+                "weather_resistant": "Yes",
+                "design": "Classic"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["sprayer", "sprinkler", "hose"]):
+            vertical = "garden_sprayer"
+            makro_title = f"{target_brand} Adjustable Garden Sprayer Nozzle Sprinkler ({colour})"
+            attrs = {
+                "model_name": "Pro Sprayer",
+                "model_number": model_number,
+                "brand_colour": colour,
+                "colour": colour,
+                "material": "ABS Plastic",
+                "packaging_type": "Box",
+                "sales_package": "1 Sprayer",
+                "design": "Ergonomic"
+            }
+        elif any(k in title_lower or k in cat_lower for k in ["garden", "prun", "shear", "axe", "rake", "spade"]):
+            vertical = "garden_tool_set"
             makro_title = f"{target_brand} Heavy Duty Bypass Pruning Shears Garden Tool ({colour})"
             attrs = {
                 "model_name": "Garden Master",
