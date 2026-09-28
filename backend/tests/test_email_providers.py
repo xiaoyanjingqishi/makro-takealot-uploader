@@ -1,4 +1,13 @@
-from app.services.email_otp_service import EmailOtpService, resolve_imap_server
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.services.email_otp_service import EmailOtpService, resolve_imap_server, _detect_available_proxy
+
+def test_proxy_detection():
+    # 验证代理探测函数正常执行且不抛异常
+    proxy = _detect_available_proxy()
+    print(f"[OK] Proxy detected in current environment: {proxy}")
 
 def test_email_resolution():
     cases = [
@@ -30,6 +39,7 @@ def test_otp_extraction():
     print("[OK] OTP extraction regex test passed!")
 
 if __name__ == "__main__":
+    test_proxy_detection()
     test_email_resolution()
     test_otp_extraction()
     print("ALL TESTS PASSED SUCCESSFULLY!")

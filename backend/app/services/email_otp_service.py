@@ -5,6 +5,10 @@ import time
 import re
 import html
 import logging
+import socket
+import ssl
+import os
+from urllib.parse import urlparse
 from typing import Optional, Tuple, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 
@@ -47,9 +51,153 @@ def resolve_imap_server(email_address: str) -> Tuple[str, int, bool]:
     return ("imap.gmail.com", 993, True)
 
 
+def _detect_available_proxy() -> Optional[Tuple[str, str, int]]:
+    """
+    智能探测当前系统可用的网络代理 (SOCKS5 / HTTP)：
+    1. 检查环境变量 ALL_PROXY, HTTPS_PROXY, HTTP_PROXY
+    2. 探测本地常见代理端口 (127.0.0.1:10808, 127.0.0.1:10809, 127.0.0.1:7890, 127.0.0.1:1080)
+    返回: (proxy_type, proxy_host, proxy_port) 例如 ("socks5", "127.0.0.1", 10808)
+    """
+    # 1. 优先检查环境变量
+    for env_var in ["ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]:
+        val = os.environ.get(env_var)
+        if val:
+            try:
+                parsed = urlparse(val if "://" in val else f"http://{val}")
+                scheme = (parsed.scheme or "http").lower()
+                p_host = parsed.hostname or "127.0.0.1"
+                p_port = parsed.port or (10808 if "socks" in scheme else 10809)
+                p_type = "socks5" if "socks" in scheme else "http"
+                return (p_type, p_host, p_port)
+            except Exception:
+                pass
+
+    # 2. 快速探测本地常见代理端口 (超短 0.15s 超时)
+    probe_targets = [
+        ("socks5", "127.0.0.1", 10808),
+        ("http", "127.0.0.1", 10809),
+        ("socks5", "127.0.0.1", 7890),
+        ("http", "127.0.0.1", 7890),
+        ("socks5", "127.0.0.1", 1080),
+    ]
+    for p_type, p_host, p_port in probe_targets:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.15)
+                if s.connect_ex((p_host, p_port)) == 0:
+                    return (p_type, p_host, p_port)
+        except Exception:
+            continue
+
+    return None
+
+
+def _create_socks5_socket(target_host: str, target_port: int, proxy_host: str, proxy_port: int, timeout: float = 8.0) -> socket.socket:
+    """
+    使用标准库实现纯 SOCKS5 握手并建立 TCP 连接 (支持目标域名远端解析，防止 DNS 污染)
+    """
+    s = socket.create_connection((proxy_host, proxy_port), timeout=timeout)
+    s.settimeout(timeout)
+    # 1. 协商认证方式: VER=5, NMETHODS=1, METHOD=0 (无密码)
+    s.sendall(b"\x05\x01\x00")
+    auth_resp = s.recv(2)
+    if not auth_resp or len(auth_resp) < 2 or auth_resp != b"\x05\x00":
+        s.close()
+        raise ConnectionError(f"SOCKS5 代理认证协商失败: {auth_resp}")
+
+    # 2. 发送 CONNECT 请求: VER=5, CMD=1, RSV=0, ATYP=3 (域名解析), 目标主机, 目标端口
+    host_bytes = target_host.encode("utf-8")
+    req = b"\x05\x01\x00\x03" + bytes([len(host_bytes)]) + host_bytes + target_port.to_bytes(2, "big")
+    s.sendall(req)
+
+    resp = s.recv(4)
+    if not resp or len(resp) < 4 or resp[1] != 0:
+        s.close()
+        status_code = resp[1] if len(resp) >= 2 else "未知"
+        raise ConnectionError(f"SOCKS5 代理连接目标 {target_host}:{target_port} 失败 (状态码: {status_code})")
+
+    # 消费掉服务端返回的绑定地址
+    atyp = resp[3]
+    if atyp == 1:       # IPv4
+        s.recv(6)
+    elif atyp == 3:     # Domain
+        d_len = s.recv(1)
+        if d_len:
+            s.recv(d_len[0] + 2)
+    elif atyp == 4:     # IPv6
+        s.recv(18)
+
+    return s
+
+
+def _create_http_connect_socket(target_host: str, target_port: int, proxy_host: str, proxy_port: int, timeout: float = 8.0) -> socket.socket:
+    """
+    使用标准库 HTTP CONNECT 方法在 HTTP 代理上建立四层 TCP 隧道
+    """
+    s = socket.create_connection((proxy_host, proxy_port), timeout=timeout)
+    s.settimeout(timeout)
+    connect_req = f"CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\nProxy-Connection: Keep-Alive\r\n\r\n".encode("utf-8")
+    s.sendall(connect_req)
+
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(1024)
+        if not chunk:
+            break
+        buf += chunk
+
+    first_line = buf.split(b"\r\n")[0].decode(errors="ignore")
+    if "200" not in first_line:
+        s.close()
+        raise ConnectionError(f"HTTP 代理隧道建立失败: {first_line}")
+
+    return s
+
+
+class ProxiedIMAP4_SSL(imaplib.IMAP4_SSL):
+    """
+    支持透明走本地或系统代理隧道的 IMAP4_SSL 客户端
+    """
+    def __init__(self, host='', port=imaplib.IMAP4_SSL_PORT, keyfile=None, certfile=None, ssl_context=None, timeout=None, proxy_info=None):
+        self.proxy_info = proxy_info
+        super().__init__(host, port, keyfile, certfile, ssl_context, timeout)
+
+    def _create_socket(self, timeout):
+        if self.proxy_info:
+            p_type, p_host, p_port = self.proxy_info
+            if p_type == "socks5":
+                sock = _create_socks5_socket(self.host, self.port, p_host, p_port, timeout=timeout)
+            else:
+                sock = _create_http_connect_socket(self.host, self.port, p_host, p_port, timeout=timeout)
+        else:
+            sock = socket.create_connection((self.host, self.port), timeout)
+
+        server_hostname = self.host if ssl.HAS_SNI else None
+        return self.ssl_context.wrap_socket(sock, server_hostname=server_hostname)
+
+
+class ProxiedIMAP4(imaplib.IMAP4):
+    """
+    支持透明走本地或系统代理隧道的普通非 SSL IMAP4 客户端
+    """
+    def __init__(self, host='', port=imaplib.IMAP4_PORT, timeout=None, proxy_info=None):
+        self.proxy_info = proxy_info
+        super().__init__(host, port, timeout)
+
+    def _create_socket(self, timeout):
+        if self.proxy_info:
+            p_type, p_host, p_port = self.proxy_info
+            if p_type == "socks5":
+                return _create_socks5_socket(self.host, self.port, p_host, p_port, timeout=timeout)
+            else:
+                return _create_http_connect_socket(self.host, self.port, p_host, p_port, timeout=timeout)
+        return socket.create_connection((self.host, self.port), timeout)
+
+
 class EmailOtpService:
     """
     多邮箱服务商通用验证码提取引擎 (支持 Gmail, 163, 126, QQ, Outlook 及自定义 IMAP)
+    内置智能代理隧道支持：海外邮箱 (Gmail) 自动走本地代理通道，国内邮箱直连+失败自动降级代理
     """
 
     @classmethod
@@ -57,15 +205,51 @@ class EmailOtpService:
         cls,
         server: str,
         port: int = 993,
-        use_ssl: bool = True
+        use_ssl: bool = True,
+        timeout: float = 8.0
     ) -> imaplib.IMAP4:
-        """创建 IMAP 连接"""
-        timeout = 20
-        if use_ssl:
-            client = imaplib.IMAP4_SSL(server, port, timeout=timeout)
-        else:
-            client = imaplib.IMAP4(server, port, timeout=timeout)
-        return client
+        """
+        创建 IMAP 客户端连接：
+        - 针对 Gmail / 海外邮箱，若检测到本地代理 (127.0.0.1:10808/10809) 则优先走代理建立隧道，避免 GFW 阻断超时；
+        - 针对 163 / QQ 等国内邮箱，优先直连；若直连异常且有代理，则自动切换代理重试；
+        - 返回的 client 实例携带 conn_mode 属性用于向前端/日志展示连接通道。
+        """
+        proxy_info = _detect_available_proxy()
+        is_overseas_mail = any(x in server.lower() for x in ["gmail", "googlemail", "yahoo"])
+
+        if is_overseas_mail and proxy_info:
+            p_type, p_host, p_port = proxy_info
+            mode_name = f"{p_type.upper()}代理({p_host}:{p_port})"
+            logger.info(f"[{server}:{port}] 识别为海外邮箱服务商，自动启用 {mode_name} 建立安全隧道...")
+            if use_ssl:
+                client = ProxiedIMAP4_SSL(server, port, timeout=timeout, proxy_info=proxy_info)
+            else:
+                client = ProxiedIMAP4(server, port, timeout=timeout, proxy_info=proxy_info)
+            client.conn_mode = mode_name
+            return client
+
+        # 国内常规邮箱 (163, QQ, 企业邮) 或无代理环境：优先直连 (6s 超时)
+        try:
+            connect_timeout = 6.0 if proxy_info else timeout
+            if use_ssl:
+                client = ProxiedIMAP4_SSL(server, port, timeout=connect_timeout, proxy_info=None)
+            else:
+                client = ProxiedIMAP4(server, port, timeout=connect_timeout, proxy_info=None)
+            client.conn_mode = "直连"
+            return client
+        except Exception as direct_err:
+            # 如果直连失败/超时，且存在可用代理，则平滑降级走代理重试一次
+            if proxy_info:
+                p_type, p_host, p_port = proxy_info
+                mode_name = f"{p_type.upper()}代理({p_host}:{p_port})"
+                logger.warning(f"[{server}:{port}] 直连建立失败 ({direct_err})，自动切换至 {mode_name} 隧道重试...")
+                if use_ssl:
+                    client = ProxiedIMAP4_SSL(server, port, timeout=timeout, proxy_info=proxy_info)
+                else:
+                    client = ProxiedIMAP4(server, port, timeout=timeout, proxy_info=proxy_info)
+                client.conn_mode = mode_name
+                return client
+            raise direct_err
 
     @classmethod
     def _handshake_id_if_needed(cls, client: imaplib.IMAP4, server: str):
@@ -86,7 +270,7 @@ class EmailOtpService:
         use_ssl: bool = True
     ) -> Dict[str, Any]:
         """
-        即时测试邮箱连通性与账号密码有效性
+        即时测试邮箱连通性与账号密码有效性 (带智能代理与超时自愈)
         """
         if not email_address or not password:
             return {"success": False, "message": "邮箱地址或密码/授权码不能为空"}
@@ -97,7 +281,8 @@ class EmailOtpService:
 
         client = None
         try:
-            client = cls._create_imap_client(actual_server, actual_port, use_ssl=resolved_ssl)
+            client = cls._create_imap_client(actual_server, actual_port, use_ssl=resolved_ssl, timeout=8.0)
+            conn_mode = getattr(client, "conn_mode", "直连")
             cls._handshake_id_if_needed(client, actual_server)
             client.login(email_address.strip(), password.strip())
 
@@ -116,10 +301,11 @@ class EmailOtpService:
 
             return {
                 "success": True,
-                "message": f"邮箱连接与鉴权成功！收件箱共 {total_messages} 封邮件。",
+                "message": f"邮箱连接与鉴权成功！收件箱共 {total_messages} 封邮件。(连接方式: {conn_mode})",
                 "server": actual_server,
                 "port": actual_port,
-                "total_messages": total_messages
+                "total_messages": total_messages,
+                "conn_mode": conn_mode
             }
         except imaplib.IMAP4.error as e:
             err_msg = str(e)
@@ -127,6 +313,11 @@ class EmailOtpService:
                 hint = "鉴权失败：密码错误或未开启 IMAP。如果是 163/QQ 邮箱请使用专用【授权码】，Gmail 请使用【应用专用密码】。"
                 return {"success": False, "message": f"{hint} (错误详情: {err_msg})"}
             return {"success": False, "message": f"IMAP 服务端返回错误: {err_msg}"}
+        except (socket.timeout, TimeoutError):
+            return {
+                "success": False,
+                "message": f"连接邮箱服务器超时 ({actual_server}:{actual_port})。提示: 海外邮箱 (如 Gmail) 请确保服务器本地代理 (127.0.0.1:10808) 运行正常；国内邮箱请检查网络及 993 端口连通性。"
+            }
         except Exception as e:
             return {"success": False, "message": f"连接邮箱服务器失败 ({actual_server}:{actual_port}): {str(e)}"}
         finally:
