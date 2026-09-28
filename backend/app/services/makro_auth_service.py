@@ -135,10 +135,11 @@ class MakroAuthService:
                 "store_id": store_id,
                 "cookies": cookies_map,
                 "masked_email": masked_user,
-                "mfa_info": mfa_data
+                "mfa_info": mfa_data,
+                "live_session": session  # 保留活跃 requests.Session 实例，维护完整 TCP/TLS 链路与 CookieJar
             }
 
-        logger.info(f"Makro 账号 {username} 发起登录成功，已触发验证码至: {masked_user}")
+        logger.info(f"Makro 账号 {username} 发起登录成功，已触发验证码至: {masked_user} (Session ID: {session_id[:8]}...)")
         return {
             "success": True,
             "session_id": session_id,
@@ -165,15 +166,25 @@ class MakroAuthService:
         if not sess_info:
             return False, {}, "登录会话不存在或已超时 (超过 5 分钟)，请重新发起登录。"
 
-        cookies = sess_info.get("cookies", {})
-        session = cls._build_session()
-        session.cookies.update(cookies)
+        # 优先复用发信时的原生 requests.Session 实例，保留完整的多重 CookieJar (如多 T cookie) 与 TCP/TLS 链路
+        session = sess_info.get("live_session")
+        if not session:
+            session = cls._build_session()
+            cookies = sess_info.get("cookies", {})
+            session.cookies.update(cookies)
+        else:
+            # 确保最新 Cookie 也同步
+            cookies = sess_info.get("cookies", {})
+            session.cookies.update(cookies)
 
         # 1. 提交验证码
         url_verify = f"{MAKRO_BASE_URL}/verifyOtp"
+        logger.info(f"正在向 Makro 提交验证码: {otp} (Session ID: {session_id[:8]}...)")
         try:
             resp_verify = session.post(url_verify, json={"otp": otp.strip()}, timeout=30)
+            logger.info(f"Makro /verifyOtp 响应 HTTP {resp_verify.status_code}: {resp_verify.text[:300]}")
         except Exception as e:
+            logger.error(f"请求验证码核验接口失败: {e}")
             return False, {}, f"请求验证码核验接口失败: {str(e)}"
 
         if resp_verify.status_code != 200:
@@ -256,6 +267,10 @@ class MakroAuthService:
         db: Session,
         login_email: Optional[str] = None,
         login_password: Optional[str] = None,
+        imap_user: Optional[str] = None,
+        imap_password: Optional[str] = None,
+        imap_server: Optional[str] = None,
+        imap_port: Optional[int] = None,
         notes_extra: Optional[str] = None
     ) -> Store:
         """将提取到的凭据直接持久化到指定店铺"""
@@ -273,6 +288,14 @@ class MakroAuthService:
             store.login_email = login_email.strip()
         if login_password:
             store.login_password = login_password.strip()
+        if imap_user:
+            store.imap_user = imap_user.strip()
+        if imap_password:
+            store.imap_password = imap_password.strip()
+        if imap_server:
+            store.imap_server = imap_server.strip()
+        if imap_port:
+            store.imap_port = int(imap_port)
 
         db.commit()
         db.refresh(store)
@@ -280,7 +303,7 @@ class MakroAuthService:
         record_audit_log(
             task_type="STORE_LOGIN_SYNC",
             status="SUCCESS",
-            message=f"店铺【{store.name}】自动登录成功，已自动刷新并持久化凭据",
+            message=f"店铺【{store.name}】自动登录成功，已自动刷新并持久化凭据与邮箱配置",
             detail_logs={
                 "store_id": store.id,
                 "store_name": store.name,
@@ -299,16 +322,19 @@ class MakroAuthService:
         override_username: Optional[str] = None,
         override_password: Optional[str] = None,
         override_imap_password: Optional[str] = None,
+        override_imap_server: Optional[str] = None,
+        override_imap_port: Optional[int] = None,
+        override_imap_user: Optional[str] = None,
         max_wait_seconds: int = 60
     ) -> Dict[str, Any]:
         """
         全自动登录流水线：
-        1. 读取店铺账号密码；
-        2. 发送 Makro 登录请求；
-        3. 自动连接指定邮箱 IMAP 轮询提取验证码 (支持 163/Gmail/QQ/Outlook/自定义)；
-        4. 自动提交验证码核验；
-        5. 自动回写更新数据库店铺凭据；
-        6. 调用类目定义接口验证连通性。
+        0. 预检邮箱收件箱当前最大 UID (阻断历史旧邮件误判)；
+        1. 发送 Makro 登录请求；
+        2. 自动连接指定邮箱 IMAP 轮询提取本次登录生成的新验证码；
+        3. 原生 Session 提交验证码核验；
+        4. 自动回写更新数据库店铺凭据与配置；
+        5. 调用类目定义接口验证连通性。
         """
         store = db.query(Store).filter(Store.id == store_id).first()
         if not store:
@@ -325,10 +351,10 @@ class MakroAuthService:
             }
 
         # 邮箱配置解析
-        imap_user = store.imap_user or login_email
+        imap_user = override_imap_user or store.imap_user or login_email
         imap_password = override_imap_password or store.imap_password
-        imap_server = store.imap_server
-        imap_port = store.imap_port or 993
+        imap_server = override_imap_server or store.imap_server
+        imap_port = override_imap_port or store.imap_port or 993
 
         if not imap_password:
             return {
@@ -337,10 +363,20 @@ class MakroAuthService:
                 "message": f"店铺未配置邮箱应用专用密码/授权码（账号: {imap_user}），无法自动收信。请在店铺编辑中配置，或在弹窗中手动输入验证码。"
             }
 
+        # 阶段 0: 发信前打点，获取当前收件箱最新 UID (彻底杜绝误抓历史旧邮件)
+        logger.info(f"正在预检邮箱 {imap_user} 收件箱最新邮件状态...")
+        min_uid = EmailOtpService.get_latest_uid(
+            email_address=imap_user,
+            password=imap_password,
+            server=imap_server,
+            port=imap_port
+        )
+        logger.info(f"预检完成: 收件箱发信前最高 UID 为 {min_uid}，后续将严格只等待新邮件到达")
+
         # 记录发信起始时间戳 (容许轻微漂移)
         send_time = time.time() - 5
 
-        # 1. 发起登录
+        # 阶段 1: 发起登录
         logger.info(f"正在为店铺【{store.name}】发起 Makro 登录请求...")
         login_res = cls.send_login_request(login_email, login_password, store_id=store.id)
         if not login_res.get("success"):
@@ -352,15 +388,16 @@ class MakroAuthService:
         session_id = login_res["session_id"]
         masked_email = login_res.get("masked_email", login_email)
 
-        # 2. 轮询邮箱获取验证码
-        logger.info(f"正在从邮箱 {imap_user} 轮询提取 Makro 验证码 (最长等待 {max_wait_seconds}s)...")
+        # 阶段 2: 轮询邮箱获取验证码 (仅检查 UID > min_uid 的新邮件)
+        logger.info(f"正在从邮箱 {imap_user} 轮询提取 Makro 验证码 (仅匹配 UID > {min_uid}，最长等待 {max_wait_seconds}s)...")
         otp_ok, otp_code, otp_msg = EmailOtpService.poll_otp(
             email_address=imap_user,
             password=imap_password,
             server=imap_server,
             port=imap_port,
             max_wait_seconds=max_wait_seconds,
-            since_timestamp=send_time
+            since_timestamp=send_time,
+            min_uid=min_uid
         )
 
         if not otp_ok or not otp_code:
@@ -373,7 +410,7 @@ class MakroAuthService:
                 "message": f"自动抓取验证码超时: {otp_msg}。已保留当前登录会话，您可以手动输入邮箱收到的 6 位验证码。"
             }
 
-        # 3. 提交验证码并提取完整凭据
+        # 阶段 3: 提交验证码并提取完整凭据
         logger.info(f"成功提取验证码【{otp_code}】，正在提交 Makro 校验...")
         verify_ok, creds, verify_msg = cls.verify_otp(session_id, otp_code)
         if not verify_ok:
@@ -382,7 +419,7 @@ class MakroAuthService:
                 "message": f"提交验证码失败: {verify_msg}"
             }
 
-        # 4. 同步至数据库
+        # 阶段 4: 同步至数据库 (同时保存登录账密与邮箱配置，以便后续全自动续期与免密登录)
         seller_id = creds.get("seller_id") or store.seller_id
         csrf_token = creds.get("fk_csrf_token")
         cookie_str = creds.get("cookie")
@@ -394,10 +431,14 @@ class MakroAuthService:
             cookie=cookie_str,
             db=db,
             login_email=login_email,
-            login_password=login_password
+            login_password=login_password,
+            imap_user=imap_user,
+            imap_password=imap_password,
+            imap_server=imap_server,
+            imap_port=imap_port
         )
 
-        # 5. 轻量级接口验证
+        # 阶段 5: 轻量级接口验证
         check_msg = "连通性测试通过"
         try:
             from .makro_client import MakroClient
@@ -408,7 +449,7 @@ class MakroAuthService:
 
         return {
             "success": True,
-            "message": f"🎉 店铺【{store.name}】全自动登录成功！凭据已自动更新，{check_msg}。",
+            "message": f"🎉 店铺【{store.name}】全自动登录成功！凭据与邮箱配置已持久化，{check_msg}。",
             "seller_id": seller_id,
             "fk_csrf_token": csrf_token,
             "display_name": creds.get("display_name"),

@@ -1,4 +1,4 @@
-from backend.app.services.email_otp_service import EmailOtpService, resolve_imap_server
+from app.services.email_otp_service import EmailOtpService, resolve_imap_server
 
 def test_email_resolution():
     cases = [

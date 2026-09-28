@@ -3,6 +3,7 @@ import email
 from email.header import decode_header
 import time
 import re
+import html
 import logging
 from typing import Optional, Tuple, Dict, Any, List
 from datetime import datetime, timedelta, timezone
@@ -136,6 +137,53 @@ class EmailOtpService:
                     pass
 
     @classmethod
+    def get_latest_uid(
+        cls,
+        email_address: str,
+        password: str,
+        server: Optional[str] = None,
+        port: Optional[int] = 993,
+        use_ssl: bool = True
+    ) -> int:
+        """
+        获取当前收件箱的最大 UID (用于登录发信前打点，阻断匹配历史旧邮件)
+        """
+        if not email_address or not password:
+            return 0
+
+        resolved_server, resolved_port, resolved_ssl = resolve_imap_server(email_address)
+        actual_server = server.strip() if server and server.strip() else resolved_server
+        actual_port = int(port) if port else resolved_port
+
+        client = None
+        try:
+            client = cls._create_imap_client(actual_server, actual_port, use_ssl=resolved_ssl)
+            cls._handshake_id_if_needed(client, actual_server)
+            client.login(email_address.strip(), password.strip())
+            cls._handshake_id_if_needed(client, actual_server)
+            status, _ = client.select("INBOX", readonly=True)
+            if status != "OK":
+                return 0
+
+            status, data = client.uid("SEARCH", None, "ALL")
+            if status == "OK" and data and data[0]:
+                uids = [int(x) for x in data[0].split() if x.isdigit()]
+                if uids:
+                    max_uid = max(uids)
+                    logger.info(f"[{email_address}] 登录前预检收件箱最新 UID: {max_uid} (收件箱总计 {len(uids)} 封邮件)")
+                    return max_uid
+            return 0
+        except Exception as e:
+            logger.warning(f"获取收件箱最新 UID 失败 (将降级为时间戳容差比对): {e}")
+            return 0
+        finally:
+            if client:
+                try:
+                    client.logout()
+                except Exception:
+                    pass
+
+    @classmethod
     def _decode_mime_str(cls, s: Optional[str]) -> str:
         """解码邮件标题或发件人 MIME 编码字符串"""
         if not s:
@@ -153,35 +201,90 @@ class EmailOtpService:
         return "".join(res)
 
     @classmethod
-    def _extract_otp_from_body(cls, text: str) -> Optional[str]:
+    def _clean_html_to_plain_text(cls, content: str) -> str:
         """
-        从邮件正文内容中精准提取 6 位数字 OTP
+        将 HTML 富文本深度清洗为结构清晰的纯文本
+        彻底清除 CSS 样式、JavaScript、HTML 标签及实体字符对正则匹配的干扰
         """
-        if not text:
+        if not content:
+            return ""
+
+        # 1. 移除 style、script、head 块及其内部所有属性
+        text = re.sub(r'(?is)<style[^>]*>.*?</style>', ' ', content)
+        text = re.sub(r'(?is)<script[^>]*>.*?</script>', ' ', text)
+        text = re.sub(r'(?is)<head[^>]*>.*?</head>', ' ', text)
+
+        # 2. 将换行或块级 HTML 标签转换为换行
+        text = re.sub(r'(?i)<(br|p|div|tr|td|li|h[1-6])[^>]*>', '\n', text)
+        text = re.sub(r'(?i)</(p|div|tr|li|h[1-6])>', '\n', text)
+
+        # 3. 剥离所有剩余的 HTML 标签
+        text = re.sub(r'<[^>]+>', ' ', text)
+
+        # 4. 反转义 HTML 实体 (如 &nbsp;, &#39;, &amp;)
+        text = html.unescape(text)
+
+        # 5. 清理十六进制颜色值 (如 #ffffff, #123456)
+        text = re.sub(r'#[0-9a-fA-F]{6}\b', ' ', text)
+        text = re.sub(r'#[0-9a-fA-F]{3}\b', ' ', text)
+
+        # 6. 规范化空白字符与多余换行
+        text = re.sub(r'[ \t\r\f]+', ' ', text)
+        text = re.sub(r'\n\s*\n', '\n', text)
+        return text.strip()
+
+    @classmethod
+    def _extract_otp_from_body(cls, text: str, subject: str = "") -> Optional[str]:
+        """
+        从邮件正文内容与标题中精准提取 6 位数字 OTP
+        """
+        if not text and not subject:
             return None
 
-        # 清洗可能影响匹配的常见 HTML 十六进制颜色值，如 #123456
-        clean_text = re.sub(r'#[0-9a-fA-F]{6}\b', ' ', text)
-        clean_text = re.sub(r'#[0-9a-fA-F]{3}\b', ' ', clean_text)
+        # 1. 优先检查标题中是否直接含有 6 位验证码 (如 "Makro Seller Portal OTP: 123456")
+        if subject:
+            subj_clean = re.sub(r'#[0-9a-fA-F]{6}\b', ' ', subject)
+            m_sub = re.search(r'(?:verification\s*code|otp|verify|code|验证码)[^\d]{0,25}(\b\d{6}\b)', subj_clean, re.IGNORECASE)
+            if m_sub:
+                otp = m_sub.group(1)
+                logger.info(f"[OTP提取] 从邮件标题直接匹配到验证码: {otp}")
+                return otp
 
-        # 优先级 1: 带有明显关键字引导的 6 位数字
+        # 2. 深度清洗 HTML 正文为规范纯文本
+        clean_text = cls._clean_html_to_plain_text(text)
+
+        # 优先级 1: 紧随强关键字引导的 6 位数字
         p1 = [
-            r'(?:verification\s*code|verify\s*code|otp|one\s*time\s*password|验证码)[^\d]{0,40}(\b\d{6}\b)',
-            r'(\b\d{6}\b)[^\d]{0,40}(?:is\s*your\s*verification|is\s*your\s*otp|为您的验证码|是您的验证码)',
-            r'(?:code|Code|CODE)\s*[:：]?\s*(\b\d{6}\b)',
+            r'(?:verification\s*code|verify\s*code|one\s*time\s*password|otp|code|验证码)\s*(?:is|为|:|：|\-)?\s*(\b\d{6}\b)',
+            r'(\b\d{6}\b)\s*(?:is\s*your\s*(?:verification|otp|code|one\s*time)|为您的验证码|是您的验证码)',
+            r'(?:verification\s*code|verify\s*code|one\s*time\s*password|otp|验证码)[^\d\n]{0,50}(\b\d{6}\b)',
+            r'(\b\d{6}\b)[^\d\n]{0,50}(?:verification\s*code|verify\s*code|one\s*time\s*password|otp|验证码)',
         ]
         for pattern in p1:
             m = re.search(pattern, clean_text, re.IGNORECASE)
             if m:
                 otp = m.group(1)
-                # 排除 123456, 000000 等极端占位符（除非确实就是）
+                snippet_start = max(0, m.start() - 25)
+                snippet_end = min(len(clean_text), m.end() + 25)
+                snippet = clean_text[snippet_start:snippet_end].replace('\n', ' ')
+                logger.info(f"[OTP提取] 关键字精准匹配到验证码: {otp} (上下文: ...{snippet}...)")
                 return otp
 
-        # 优先级 2: 独立出现的 6 位数字
+        # 优先级 2: 独立行出现的 6 位数字 (常见于大号居中验证码文本)
+        m_standalone = re.search(r'(?:^|\n)\s*(\b\d{6}\b)\s*(?:\n|$)', clean_text)
+        if m_standalone:
+            otp = m_standalone.group(1)
+            logger.info(f"[OTP提取] 独立段落匹配到验证码: {otp}")
+            return otp
+
+        # 优先级 3: 提取所有 6 位数字并排除年份与干扰项
         matches = re.findall(r'\b\d{6}\b', clean_text)
-        if matches:
-            # 优先取倒数第一个或最匹配的
-            return matches[0]
+        invalid_prefixes = ["2024", "2025", "2026", "2027", "1111", "0000", "1234"]
+        filtered = [c for c in matches if not any(c.startswith(p) for p in invalid_prefixes)]
+        if filtered:
+            otp = filtered[0]
+            logger.info(f"[OTP提取] 纯文本候选集匹配到验证码: {otp} (候选集: {filtered})")
+            return otp
 
         return None
 
@@ -224,20 +327,23 @@ class EmailOtpService:
         use_ssl: bool = True,
         max_wait_seconds: int = 60,
         poll_interval: int = 3,
-        since_timestamp: Optional[float] = None
+        since_timestamp: Optional[float] = None,
+        min_uid: Optional[int] = None
     ) -> Tuple[bool, Optional[str], str]:
         """
         持续轮询邮箱收件箱，捕获刚刚送达的 Makro 验证码
+        支持根据发信前的 min_uid 进行严格高水位过滤，彻底杜绝误抓历史旧邮件
         返回: (is_success, otp_code, message)
         """
-        start_time = since_timestamp or (time.time() - 90)  # 默认检查最近 90 秒内的邮件
+        start_time = since_timestamp or (time.time() - 90)
         deadline = time.time() + max_wait_seconds
 
         resolved_server, resolved_port, resolved_ssl = resolve_imap_server(email_address)
         actual_server = server.strip() if server and server.strip() else resolved_server
         actual_port = int(port) if port else resolved_port
 
-        logger.info(f"开始轮询邮箱 {email_address} (服务器: {actual_server}:{actual_port}) 获取 Makro 验证码...")
+        filter_desc = f"UID > {min_uid}" if (min_uid and min_uid > 0) else f"时间在 {int(start_time)} 之后"
+        logger.info(f"开始轮询邮箱 {email_address} ({actual_server}:{actual_port}) 获取 Makro 验证码 (过滤策略: {filter_desc})...")
 
         client = None
         try:
@@ -253,16 +359,26 @@ class EmailOtpService:
                     time.sleep(poll_interval)
                     continue
 
-                # 搜索全部或最近未读邮件
-                # 为了防止时区差异导致的 SINCE 漏单，直接检索最新的一批邮件 ID 进行比对
-                status, search_data = client.search(None, "ALL")
-                if status == "OK" and search_data and search_data[0]:
-                    msg_ids = search_data[0].split()
-                    # 检查最新的 10 封邮件
-                    recent_ids = msg_ids[-10:] if len(msg_ids) > 10 else msg_ids
+                target_uids = []
+                if min_uid and min_uid > 0:
+                    # 优先根据 UID 范围精准查询
+                    status, uid_data = client.uid("SEARCH", None, f"UID {min_uid + 1}:*")
+                    if status == "OK" and uid_data and uid_data[0]:
+                        raw_uids = [int(x) for x in uid_data[0].split() if x.isdigit()]
+                        # 严格过滤: 必须严格大于发信前记录的最新 UID
+                        target_uids = [u for u in raw_uids if u > min_uid]
+                else:
+                    # 回退兼容策略: 检索收件箱最新 10 封
+                    status, search_data = client.uid("SEARCH", None, "ALL")
+                    if status == "OK" and search_data and search_data[0]:
+                        raw_uids = [int(x) for x in search_data[0].split() if x.isdigit()]
+                        target_uids = raw_uids[-10:] if len(raw_uids) > 10 else raw_uids
+
+                if target_uids:
+                    logger.info(f"收件箱检测到候选新邮件 UID 列表: {target_uids}")
                     # 从最新到旧倒序检查
-                    for m_id in reversed(recent_ids):
-                        status, msg_data = client.fetch(m_id, "(RFC822)")
+                    for u_val in sorted(target_uids, reverse=True):
+                        status, msg_data = client.uid("FETCH", str(u_val), "(RFC822)")
                         if status != "OK" or not msg_data:
                             continue
 
@@ -280,40 +396,37 @@ class EmailOtpService:
                         sender = cls._decode_mime_str(msg.get("From", ""))
                         date_str = msg.get("Date")
 
-                        # 检查时间是否在触发后
-                        is_recent = True
-                        if date_str:
+                        # 若未启用 min_uid，则执行时间戳比对
+                        if not (min_uid and min_uid > 0) and date_str:
                             try:
                                 msg_date = email.utils.parsedate_to_datetime(date_str)
                                 msg_timestamp = msg_date.timestamp()
-                                # 邮件时间需在起始时间之后（容许 15 秒轻微时间漂移）
                                 if msg_timestamp < (start_time - 15):
-                                    is_recent = False
+                                    continue
                             except Exception:
                                 pass
-
-                        if not is_recent:
-                            continue
 
                         combined_header = f"{subject} {sender}".lower()
                         # 检查是否为 Makro / Flipkart 或验证码相关邮件
                         keywords = ["makro", "flipkart", "otp", "verification", "verify", "code", "security", "login", "auth"]
                         if any(kw in combined_header for kw in keywords):
                             body = cls._get_email_body(msg)
-                            otp = cls._extract_otp_from_body(f"{subject}\n{body}")
+                            otp = cls._extract_otp_from_body(body, subject=subject)
                             if otp:
-                                logger.info(f"成功提取到 Makro 验证码: {otp} (主题: {subject})")
+                                logger.info(f"🎉 成功提取到本次登录 Makro 验证码: {otp} (UID: {u_val}, 主题: 【{subject}】)")
                                 return True, otp, f"成功从主题为【{subject}】的邮件中提取到验证码"
 
                 remaining = int(deadline - time.time())
-                logger.debug(f"未捕获到新验证码邮件，等待 {poll_interval} 秒后重试 (剩余 {remaining}s)...")
+                logger.info(f"等待新验证码邮件送达... (剩余等待时间 {remaining}s)")
                 time.sleep(poll_interval)
 
-            return False, None, f"在 {max_wait_seconds} 秒内未在邮箱收件箱中检测到 Makro 验证码邮件，请检查发件人或尝试手动输入。"
+            return False, None, f"在 {max_wait_seconds} 秒内未在收件箱中检测到新到达的 Makro 验证码邮件，请确认 Makro 发送状态或稍后重试。"
 
         except imaplib.IMAP4.error as e:
+            logger.error(f"IMAP 协议异常: {e}")
             return False, None, f"IMAP 操作异常: {str(e)}"
         except Exception as e:
+            logger.error(f"邮箱轮询异常: {e}")
             return False, None, f"邮箱轮询异常: {str(e)}"
         finally:
             if client:

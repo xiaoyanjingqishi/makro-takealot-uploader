@@ -283,6 +283,9 @@ def auto_login_store(
     override_u = req.username if req else None
     override_p = req.password if req else None
     override_ip = req.imap_password if req else None
+    override_is = req.imap_server if req else None
+    override_ipt = req.imap_port if req else None
+    override_iu = req.imap_user if req else None
     max_wait = (req.max_wait_seconds if req and req.max_wait_seconds else 60)
 
     res = MakroAuthService.run_full_auto_login(
@@ -291,6 +294,9 @@ def auto_login_store(
         override_username=override_u,
         override_password=override_p,
         override_imap_password=override_ip,
+        override_imap_server=override_is,
+        override_imap_port=override_ipt,
+        override_imap_user=override_iu,
         max_wait_seconds=max_wait
     )
     if not res.get("success") and not res.get("need_manual_otp"):
