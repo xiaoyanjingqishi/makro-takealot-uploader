@@ -3,14 +3,17 @@ import json
 import os
 import hashlib
 import requests
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func
+from typing import List, Optional, Union
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload, joinedload
 from ..database import get_db
 from ..models.product import Product, ProductVariant
 from ..models.store import ProductStoreListing
 from ..models.task import TaskLog
+from ..models.user import User
+from ..utils.auth import get_optional_current_user
 from ..schemas.product import (
     TakealotCollectRequest,
     ProductResponse,
@@ -18,6 +21,7 @@ from ..schemas.product import (
     ProductVariantResponse
 )
 from ..services.takealot_service import TakealotService
+from ..services.translation_service import TranslationService
 from ..services.audit_logger import record_audit_log
 
 # 全局高复用图片会话连接池 (复用 media.takealot.com 的 HTTPS 长连接)
@@ -98,6 +102,7 @@ def _format_product(p: Product) -> dict:
         except Exception:
             seo_kw = []
 
+    comp_parsed = json.loads(p.compliance_details) if p.compliance_details else None
     return {
         "id": p.id,
         "takealot_id": p.takealot_id,
@@ -112,7 +117,10 @@ def _format_product(p: Product) -> dict:
         "status": p.status,
         "previous_status": getattr(p, "previous_status", None),
         "makro_vertical": p.makro_vertical,
+        "makro_vertical_zh": TranslationService.get_vertical_zh(p.makro_vertical) if p.makro_vertical else None,
         "makro_title": p.makro_title,
+        "takealot_title_zh": getattr(p, "takealot_title_zh", None),
+        "makro_title_zh": getattr(p, "makro_title_zh", None),
         "seo_keywords": seo_kw,
         "clean_mode": getattr(p, "clean_mode", "text") or "text",
         "makro_description": p.makro_description,
@@ -135,7 +143,12 @@ def _format_product(p: Product) -> dict:
         "makro_request_id": p.makro_request_id,
         "makro_submit_error": p.makro_submit_error,
         "compliance_status": p.compliance_status or "PENDING_CHECK",
-        "compliance_details": json.loads(p.compliance_details) if p.compliance_details else None,
+        "compliance_details": comp_parsed,
+        "brand_nature": comp_parsed.get("brand_nature") if isinstance(comp_parsed, dict) else None,
+        "target_compatible_brand": comp_parsed.get("target_compatible_brand") if isinstance(comp_parsed, dict) else None,
+        "user_id": p.user_id,
+        "creator_name": (p.creator.nickname or p.creator.username) if p.creator else "未分配",
+        "creator_username": p.creator.username if p.creator else None,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
         "variants": variants_data,
@@ -169,12 +182,7 @@ def _format_product_summary(p: Product) -> dict:
         try:
             cd = json.loads(p.compliance_details) if isinstance(p.compliance_details, str) else p.compliance_details
             if cd:
-                comp_details = {
-                    "prohibited_items": cd.get("prohibited_items", []),
-                    "brand_info": cd.get("brand_info", {}),
-                    "image_inspection": cd.get("image_inspection", {}),
-                    "suggestions": cd.get("suggestions", [])
-                }
+                comp_details = cd
         except Exception:
             pass
 
@@ -190,7 +198,10 @@ def _format_product_summary(p: Product) -> dict:
         "status": p.status,
         "previous_status": getattr(p, "previous_status", None),
         "makro_vertical": p.makro_vertical,
+        "makro_vertical_zh": TranslationService.get_vertical_zh(p.makro_vertical) if p.makro_vertical else None,
         "makro_title": p.makro_title,
+        "takealot_title_zh": getattr(p, "takealot_title_zh", None),
+        "makro_title_zh": getattr(p, "makro_title_zh", None),
         "clean_mode": getattr(p, "clean_mode", "text") or "text",
         "makro_brand": p.makro_brand,
         "makro_selling_price": p.makro_selling_price,
@@ -208,22 +219,38 @@ def _format_product_summary(p: Product) -> dict:
         "makro_submit_error": p.makro_submit_error,
         "compliance_status": p.compliance_status or "PENDING_CHECK",
         "compliance_details": comp_details,
+        "user_id": p.user_id,
+        "creator_name": (p.creator.nickname or p.creator.username) if p.creator else "未分配",
+        "creator_username": p.creator.username if p.creator else None,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
         "store_listings": store_listings_data
     }
 
 @router.post("/collect", summary="接收插件采集的 Takealot 商品")
-def collect_product(req: TakealotCollectRequest, db: Session = Depends(get_db)):
-    products = TakealotService.save_collected_product(db, req)
+def collect_product(
+    req: TakealotCollectRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    user_id = current_user.id if current_user else None
+    if user_id is None:
+        if req.user_id:
+            user_id = req.user_id
+        elif req.collector_username:
+            u = db.query(User).filter(User.username == req.collector_username.strip()).first()
+            if u:
+                user_id = u.id
+
+    products = TakealotService.save_collected_product(db, req, user_id=user_id)
     v_count = len(products) if isinstance(products, list) else 1
     p_obj = products[0] if isinstance(products, list) else products
     record_audit_log(
         task_type="COLLECT",
         status="SUCCESS",
-        message=f"浏览器插件采集: {req.takealot_title[:35]} (共 {v_count} 个独立变体)",
+        message=f"浏览器插件采集: {req.takealot_title[:35]} (共 {v_count} 个独立变体, 归属用户ID: {user_id})",
         product_id=p_obj.id if p_obj else None,
-        detail_logs={"url": req.url, "title": req.takealot_title, "variants_count": v_count, "plid": req.takealot_id},
+        detail_logs={"url": req.takealot_url, "title": req.takealot_title, "variants_count": v_count, "plid": req.takealot_id, "user_id": user_id},
         db=db
     )
     if isinstance(products, list):
@@ -231,27 +258,53 @@ def collect_product(req: TakealotCollectRequest, db: Session = Depends(get_db)):
         return {
             "total_variants": len(products),
             "items": [_format_product(p) for p in products],
-            **primary
+            **(primary or {})
         }
     return _format_product(products)
 
+@router.get("/vertical-translations", summary="获取 Makro 全部官方类目中文翻译映射字典")
+def get_vertical_translations():
+    from ..services.translation_service import MAKRO_VERTICAL_ZH_MAP
+    return {
+        "total": len(MAKRO_VERTICAL_ZH_MAP),
+        "translations": MAKRO_VERTICAL_ZH_MAP
+    }
+
 @router.post("/collect-by-plid", summary="通过 Takealot PLID 或 URL 直接请求官方 API 极速采集")
-def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
+def collect_by_plid(
+    payload: dict,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     raw_plid = payload.get("plid")
     raw_url = payload.get("url")
     plid_or_url = raw_plid or raw_url
     if not plid_or_url:
         raise HTTPException(status_code=400, detail="请提供 plid 或 url 参数")
     try:
-        products = TakealotService.fetch_and_save_by_plid(plid_or_url, db, custom_url=raw_url)
+        user_id = current_user.id if current_user else None
+        if user_id is None:
+            req_uid = payload.get("user_id") or payload.get("collector_user_id")
+            req_uname = payload.get("username") or payload.get("collector_username")
+            if req_uid:
+                try:
+                    user_id = int(req_uid)
+                except (ValueError, TypeError):
+                    pass
+            elif req_uname:
+                u = db.query(User).filter(User.username == str(req_uname).strip()).first()
+                if u:
+                    user_id = u.id
+
+        products = TakealotService.fetch_and_save_by_plid(plid_or_url, db, custom_url=raw_url, user_id=user_id)
         v_count = len(products) if isinstance(products, list) else 1
         p_obj = products[0] if isinstance(products, list) else products
         record_audit_log(
             task_type="COLLECT",
             status="SUCCESS",
-            message=f"PLID极速采集: {plid_or_url} (入库 {v_count} 个变体)",
+            message=f"PLID极速采集: {plid_or_url} (入库 {v_count} 个变体, 归属用户ID: {user_id})",
             product_id=p_obj.id if p_obj else None,
-            detail_logs={"plid_or_url": plid_or_url, "variants_count": v_count},
+            detail_logs={"plid_or_url": plid_or_url, "variants_count": v_count, "user_id": user_id},
             db=db
         )
         if isinstance(products, list):
@@ -259,7 +312,7 @@ def collect_by_plid(payload: dict, db: Session = Depends(get_db)):
             return {
                 "total_variants": len(products),
                 "items": [_format_product(p) for p in products],
-                **primary
+                **(primary or {})
             }
         return _format_product(products)
     except ValueError as ve:
@@ -363,13 +416,175 @@ def list_products(
     max_price: Optional[float] = Query(None, description="最高售价 (ZAR)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
+    user_id: Optional[str] = Query(None, description="按员工用户ID过滤 (管理员可用, 支持 'unassigned')"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
+    if not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="请先登录系统以访问选品数据",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
     query = db.query(Product)
+
+    # 权限与用户数据隔离：普通员工只能看到自己名下的选品；管理员可查看全部或指定筛选某员工
+    filter_user_id = None
+    is_unassigned_filter = False
+    if current_user.role != "ADMIN":
+        filter_user_id = current_user.id
+    elif user_id is not None:
+        if str(user_id).lower() in ["unassigned", "none", "null"]:
+            is_unassigned_filter = True
+        else:
+            try:
+                filter_user_id = int(user_id)
+            except (ValueError, TypeError):
+                pass
+
+    if is_unassigned_filter:
+        query = query.filter(Product.user_id.is_(None))
+    elif filter_user_id is not None:
+        query = query.filter(Product.user_id == filter_user_id)
+
     if status:
         query = query.filter(Product.status == status)
     else:
         # 默认“全部商品”不展示已弃用的商品 (弃用商品展示在专门的弃用箱中)
+        query = query.filter(Product.status != "ABANDONED")
+
+    if compliance_status:
+        query = query.filter(Product.compliance_status == compliance_status)
+    if min_price is not None:
+        query = query.filter(Product.makro_selling_price >= min_price)
+    if max_price is not None:
+        query = query.filter(Product.makro_selling_price <= max_price)
+    if search:
+        s_clean = search.strip()
+        s = f"%{s_clean}%"
+        conds = [
+            Product.takealot_title.ilike(s),
+            Product.makro_title.ilike(s),
+            Product.group_code.ilike(s),
+            Product.takealot_id.ilike(s),
+            Product.sku_id.ilike(s),
+            Product.barcode.ilike(s),
+            Product.makro_sku_id.ilike(s),
+            Product.variants.any(ProductVariant.sku_id.ilike(s)),
+            Product.store_listings.any(ProductStoreListing.makro_sku_id.ilike(s))
+        ]
+        if s_clean.isdigit():
+            conds.append(Product.id == int(s_clean))
+        query = query.filter(or_(*conds))
+
+    total = query.count()
+    # 列表极速查询：预加载关联店铺与创建人记录，消除无用的变体关联查询与大字段解析 (DB 查询降低至 ~10ms)
+    items = (
+        query.options(
+            selectinload(Product.store_listings).joinedload(ProductStoreListing.store),
+            joinedload(Product.creator)
+        )
+        .order_by(Product.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    # 统计各流程状态商品数量 (必须与当前用户权限隔离范围保持一致)
+    counts_q = db.query(Product.status, func.count(Product.id))
+    if is_unassigned_filter:
+        counts_q = counts_q.filter(Product.user_id.is_(None))
+    elif filter_user_id is not None:
+        counts_q = counts_q.filter(Product.user_id == filter_user_id)
+    counts_raw = counts_q.group_by(Product.status).all()
+    status_counts = {k: 0 for k in ["PENDING_CLEAN", "CLEANED", "SUBMITTED", "FAILED", "ABANDONED"]}
+    total_valid = 0
+    for st, cnt in counts_raw:
+        if st in status_counts:
+            status_counts[st] = cnt
+        if st != "ABANDONED":
+            total_valid += cnt
+    status_counts["ALL"] = total_valid
+
+    # 统计各合规状态商品数量 (根据当前流程状态 status 与权限隔离动态联动，耗时 < 2ms)
+    comp_q = db.query(Product.compliance_status, func.count(Product.id))
+    if is_unassigned_filter:
+        comp_q = comp_q.filter(Product.user_id.is_(None))
+    elif filter_user_id is not None:
+        comp_q = comp_q.filter(Product.user_id == filter_user_id)
+
+    if status:
+        comp_q = comp_q.filter(Product.status == status)
+    else:
+        comp_q = comp_q.filter(Product.status != "ABANDONED")
+
+    comp_raw = comp_q.group_by(Product.compliance_status).all()
+    compliance_counts = {
+        "ALL": 0,
+        "DISPUTED": 0,
+        "SAFE": 0,
+        "RISK": 0,
+        "PROHIBITED": 0,
+        "PENDING_CHECK": 0
+    }
+    total_comp = 0
+    for cs, cnt in comp_raw:
+        cs_key = cs if cs in compliance_counts else "PENDING_CHECK"
+        compliance_counts[cs_key] = compliance_counts.get(cs_key, 0) + cnt
+        total_comp += cnt
+    compliance_counts["ALL"] = total_comp
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [_format_product_summary(p) for p in items],
+        "status_counts": status_counts,
+        "compliance_counts": compliance_counts
+    }
+
+@router.get("/ids", summary="获取当前过滤条件下的所有商品 ID 列表 (用于一键全选过滤项)")
+def list_product_ids(
+    status: Optional[str] = Query(None, description="状态: PENDING_CLEAN, CLEANED, SUBMITTED, FAILED"),
+    compliance_status: Optional[str] = Query(None, description="合规状态: PENDING_CHECK, SAFE, RISK, PROHIBITED"),
+    search: Optional[str] = Query(None, description="搜索关键词"),
+    min_price: Optional[float] = Query(None, description="最低售价 (ZAR)"),
+    max_price: Optional[float] = Query(None, description="最高售价 (ZAR)"),
+    user_id: Optional[str] = Query(None, description="按员工用户ID过滤 (管理员可用, 支持 'unassigned')"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="请先登录系统以访问选品数据",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    query = db.query(Product.id)
+
+    filter_user_id = None
+    is_unassigned_filter = False
+    if current_user.role != "ADMIN":
+        filter_user_id = current_user.id
+    elif user_id is not None:
+        if str(user_id).lower() in ["unassigned", "none", "null"]:
+            is_unassigned_filter = True
+        else:
+            try:
+                filter_user_id = int(user_id)
+            except (ValueError, TypeError):
+                pass
+
+    if is_unassigned_filter:
+        query = query.filter(Product.user_id.is_(None))
+    elif filter_user_id is not None:
+        query = query.filter(Product.user_id == filter_user_id)
+
+    if status:
+        query = query.filter(Product.status == status)
+    else:
         query = query.filter(Product.status != "ABANDONED")
 
     if compliance_status:
@@ -387,38 +602,60 @@ def list_products(
             Product.takealot_id.ilike(s) |
             Product.sku_id.ilike(s) |
             Product.barcode.ilike(s) |
-            Product.makro_sku_id.ilike(s)
+            Product.makro_sku_id.ilike(s) |
+            Product.store_listings.any(ProductStoreListing.makro_sku_id.ilike(s))
         )
 
-    total = query.count()
-    # 列表极速查询：预加载关联店铺记录，消除无用的变体关联查询与大字段解析 (DB 查询降低至 ~10ms)
-    items = (
-        query.options(
-            selectinload(Product.store_listings).joinedload(ProductStoreListing.store)
-        )
-        .order_by(Product.id.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
-
-    # 统计各流程状态商品数量
-    counts_raw = db.query(Product.status, func.count(Product.id)).group_by(Product.status).all()
-    status_counts = {k: 0 for k in ["PENDING_CLEAN", "CLEANED", "SUBMITTED", "FAILED", "ABANDONED"]}
-    total_valid = 0
-    for st, cnt in counts_raw:
-        if st in status_counts:
-            status_counts[st] = cnt
-        if st != "ABANDONED":
-            total_valid += cnt
-    status_counts["ALL"] = total_valid
-
+    rows = query.order_by(Product.id.desc()).all()
+    ids = [r[0] for r in rows]
     return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "items": [_format_product_summary(p) for p in items],
-        "status_counts": status_counts
+        "total": len(ids),
+        "ids": ids
+    }
+
+class BatchAssignUserRequest(BaseModel):
+    product_ids: List[int]
+    user_id: Optional[int] = None  # None 表示设置为未分配
+
+@router.post("/batch-assign-user", summary="批量变更商品归属员工 (管理员可用)")
+def batch_assign_user(
+    req: BatchAssignUserRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    if not current_user or current_user.role != "ADMIN":
+        raise HTTPException(status_code=403, detail="仅管理员有权限批量分配商品归属")
+
+    if not req.product_ids:
+        raise HTTPException(status_code=400, detail="请选择要分配归属的商品")
+
+    target_user = None
+    if req.user_id is not None:
+        target_user = db.query(User).filter(User.id == req.user_id).first()
+        if not target_user:
+            raise HTTPException(status_code=404, detail="指定的目标员工不存在")
+
+    updated_count = (
+        db.query(Product)
+        .filter(Product.id.in_(req.product_ids))
+        .update({"user_id": req.user_id}, synchronize_session=False)
+    )
+    db.commit()
+
+    target_name = (target_user.nickname or target_user.username) if target_user else "未分配"
+    record_audit_log(
+        task_type="BATCH_ASSIGN_USER",
+        status="SUCCESS",
+        message=f"管理员【{current_user.username}】批量指派了 {updated_count} 件商品归属至【{target_name}】",
+        detail_logs={"product_ids_count": len(req.product_ids), "target_user_id": req.user_id},
+        db=db
+    )
+    return {
+        "success": True,
+        "updated_count": updated_count,
+        "target_user_id": req.user_id,
+        "target_name": target_name,
+        "message": f"成功将 {updated_count} 件商品分配给【{target_name}】！"
     }
 
 IMAGE_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".image_cache")
@@ -530,6 +767,8 @@ def update_product(product_id: int, req: ProductUpdateRequest, db: Session = Dep
 
     if req.makro_vertical is not None: product.makro_vertical = req.makro_vertical
     if req.makro_title is not None: product.makro_title = req.makro_title
+    if req.takealot_title_zh is not None: product.takealot_title_zh = req.takealot_title_zh
+    if req.makro_title_zh is not None: product.makro_title_zh = req.makro_title_zh
     if req.makro_brand is not None: product.makro_brand = req.makro_brand
     if req.makro_selling_price is not None: product.makro_selling_price = req.makro_selling_price
     if req.makro_mrp is not None: product.makro_mrp = req.makro_mrp
@@ -559,6 +798,29 @@ def update_product(product_id: int, req: ProductUpdateRequest, db: Session = Dep
         db=db
     )
     return _format_product(product)
+
+@router.post("/{product_id}/translate", summary="按需实时重新翻译商品中英文标题")
+def translate_product_titles(
+    product_id: int,
+    db: Session = Depends(get_db)
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="商品未找到")
+
+    if product.takealot_title:
+        product.takealot_title_zh = TranslationService.translate_title(product.takealot_title, db=db, force_refresh=True)
+    if product.makro_title:
+        product.makro_title_zh = TranslationService.translate_title(product.makro_title, db=db, force_refresh=True)
+
+    db.commit()
+    db.refresh(product)
+    return {
+        "id": product.id,
+        "takealot_title_zh": product.takealot_title_zh,
+        "makro_title_zh": product.makro_title_zh,
+        "makro_vertical_zh": TranslationService.get_vertical_zh(product.makro_vertical) if product.makro_vertical else None
+    }
 
 @router.delete("/{product_id}", summary="删除商品 (普通状态移入弃用箱，弃用箱中执行则彻底删除)")
 def delete_product(product_id: int, db: Session = Depends(get_db)):

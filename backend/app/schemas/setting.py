@@ -27,14 +27,14 @@ class SystemSettingsSchema(BaseModel):
     default_pkg_weight: str = "0.5"
 
     # AI 配置
-    ai_provider: str = "qwen"
+    ai_provider: str = "deepseek"
     qwen_api_key: Optional[str] = ""
     qwen_base_url: Optional[str] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_model: Optional[str] = "qwen-plus"
     
     deepseek_api_key: Optional[str] = ""
     deepseek_base_url: Optional[str] = "https://api.deepseek.com"
-    deepseek_model: Optional[str] = "deepseek-flash"
+    deepseek_model: Optional[str] = "deepseek-chat"
     deepseek_vision_model: Optional[str] = "deepseek-flash"
 
     # 标题 SEO 关键词扩展增强
@@ -44,6 +44,15 @@ class SystemSettingsSchema(BaseModel):
     # AI 清洗双模式配置
     cleaner_mode: Optional[str] = "text"  # 'text' 或 'vision'
     qwen_vision_model: Optional[str] = "qwen-vl-plus"  # 'qwen-vl-plus' 或 'qwen-vl-max'
+
+    # 自定义类目同义词拓展 (JSON 格式: {"vertical_code": ["synonym1", "synonym2"]})
+    custom_category_synonyms: Optional[str] = "{}"
+
+    # Jev (TypeSafe AI) 决策模型配置
+    jev_api_key: Optional[str] = "apikey_2226d311fb43caa74686bbcff3d030298c62_74872cb4dab92e7fb84afdeb3d6ccf73d8aa28d4746e728543e42efafcf88e1c"
+    jev_base_url: Optional[str] = "https://api.typesafe.ai"
+    jev_model: Optional[str] = "jev-latest"
+    jev_enabled: bool = True
 
 class SyncCredentialsRequest(BaseModel):
     seller_id: Optional[str] = None

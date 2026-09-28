@@ -10,7 +10,7 @@ from ..models.product import Product
 from ..models.task import TaskLog
 from ..models.compliance_log import ComplianceArbitrationLog
 from ..schemas.product import BatchCleanRequest, ProductResponse
-from ..services.ai_cleaner_service import AICleanerService
+from ..services.ai_cleaner_service import AICleanerService, truncate_title_safely, format_title_with_specs, clean_spec_value
 from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
 from .products import _format_product
@@ -66,6 +66,9 @@ def clean_single_product(
         }, target_brand=product.makro_brand or "Beishi", clean_mode=mode)
 
         product.makro_title = cleaned.get("makro_title", product.takealot_title)
+        from ..services.translation_service import TranslationService
+        product.takealot_title_zh = cleaned.get("takealot_title_zh") or TranslationService.translate_title(product.takealot_title, db=db)
+        product.makro_title_zh = cleaned.get("makro_title_zh") or TranslationService.translate_title(product.makro_title, db=db)
         raw_seo_kw = cleaned.get("seo_keywords") or []
         if isinstance(raw_seo_kw, list) and raw_seo_kw:
             product.seo_keywords = json.dumps([str(x).strip() for x in raw_seo_kw if str(x).strip()][:6], ensure_ascii=False)
@@ -127,15 +130,42 @@ def clean_single_product(
         if cap:
             catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
 
-        # 确保 model_number 放入去除品牌名后的商品描述，防止触发限制
         target_b = product.makro_brand or "Beishi"
+        # 风格 B: 确保 makro_title 正确融合 (Color, Size) 规格
+        clean_c = product.colour or var_attrs.get("colour")
+        clean_s = product.size or var_attrs.get("size")
+        product.makro_title = format_title_with_specs(
+            product.makro_title,
+            brand=target_b,
+            color=clean_c,
+            size=clean_s,
+            max_len=ai_service.seo_title_max_len,
+            vertical=resolved_v
+        )
+
+        # 选项 1: 将去除品牌名后的完整标题写入 model_number 与 model_name (放宽至 120 字符)
         clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', product.makro_title or "", flags=re.I)
         clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
         catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{product.id}")[:250], "qualifier": None}]
+        catalog_attrs["model_name"] = [{"value": truncate_title_safely(clean_mn, 120) or f"STD-{product.id}", "qualifier": None}]
 
         product.clean_mode = cleaned.get("clean_mode", mode or "text")
         product.makro_catalog_attributes = json.dumps(catalog_attrs)
-        product.makro_submit_error = None
+
+        if cleaned.get("brand_nature"):
+            comp_d = json.loads(product.compliance_details) if product.compliance_details else {}
+            comp_d["brand_nature"] = cleaned.get("brand_nature")
+            comp_d["target_compatible_brand"] = cleaned.get("target_compatible_brand")
+            product.compliance_details = json.dumps(comp_d, ensure_ascii=False)
+
+        # 阶段 1 本地契约就地预检 (Pre-flight Check)
+        mandatories = cleaned.get("mandatory_names") or []
+        missing_mandatories = [m for m in mandatories if m not in catalog_attrs and m not in LISTING_ONLY_ATTRS]
+        if missing_mandatories:
+            product.makro_submit_error = f"⚠️ 缺少必填属性: {', '.join(missing_mandatories[:3])}"
+        else:
+            product.makro_submit_error = None
+
         product.status = "CLEANED"
         task.status = "SUCCESS"
         applied_mode_label = "图文多模态" if product.clean_mode == "vision" else "纯文本"
@@ -153,7 +183,7 @@ def clean_single_product(
         db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/batch-clean", summary="批量执行 AI 数据清洗 (后台异步多线程任务)")
+@router.post("/batch-clean", summary="批量执行 AI 数据清洗 (后台异步多线程任务，支持同SPU变体协同与软预检)")
 def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "errors": [], "message": "未选择商品"}
@@ -165,127 +195,248 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
     task = task_manager.create_task("BATCH_CLEAN", f"批量AI数据清洗 ({mode_label})", total, req.product_ids)
     task_id = task["id"]
 
+    # 阶段 2: 提取商品母体标识 (takealot_id 或 group_code) 实现 SPU 变体协同清洗
+    prods_meta = db.query(Product.id, Product.takealot_id, Product.group_code).filter(Product.id.in_(req.product_ids)).all()
+    spu_groups = {}  # spu_key -> list of pids
+    for pid, tid, gcode in prods_meta:
+        spu_key = tid or gcode or f"standalone_{pid}"
+        spu_groups.setdefault(spu_key, []).append(pid)
+
     def _worker(tm: TaskManager, tid: str):
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from ..database import SessionLocal
+        from ..services.vertical_service import VerticalService
+        from ..services.ai_cleaner_service import truncate_title_safely
 
-        def _do_one(pid: int):
+        def _clean_product_entity(prod: Product, cleaned: dict, applied_mode: str):
+            """统一将结构化清洗产物赋给 Product 模型并执行本地契约就地预检"""
+            target_b = prod.makro_brand or "Beishi"
+            prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
+            from ..services.translation_service import TranslationService
+            prod.takealot_title_zh = cleaned.get("takealot_title_zh") or TranslationService.translate_title(prod.takealot_title)
+            prod.makro_title_zh = cleaned.get("makro_title_zh") or TranslationService.translate_title(prod.makro_title)
+            raw_seo_kw = cleaned.get("seo_keywords") or []
+            if isinstance(raw_seo_kw, list) and raw_seo_kw:
+                prod.seo_keywords = json.dumps([str(x).strip() for x in raw_seo_kw if str(x).strip()][:6], ensure_ascii=False)
+
+            raw_desc = cleaned.get("description", prod.takealot_description)
+            prod.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
+
+            raw_v = cleaned.get("vertical", "")
+            resolved_batch_v, _ = VerticalService.resolve_vertical(raw_v)
+            if resolved_batch_v == "bath_towel" and "towel" not in (prod.takealot_title or "").lower():
+                specs_dict = json.loads(prod.takealot_specs) if prod.takealot_specs else {}
+                resolved_batch_v = VerticalService.predict_vertical(
+                    title=prod.takealot_title,
+                    category=prod.takealot_category or "",
+                    specs=specs_dict,
+                    description=prod.takealot_description or ""
+                )
+            prod.makro_vertical = resolved_batch_v
+
+            attrs = dict(cleaned.get("attributes", {}))
+            catalog_attrs = {}
+            for k, val in attrs.items():
+                if k in LISTING_ONLY_ATTRS:
+                    continue
+                qualifier = None
+                if k in ["width", "length"]:
+                    qualifier = "cm"
+                catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
+
+            var_attrs = json.loads(prod.variant_attributes) if prod.variant_attributes else {}
+            if cleaned.get("size"):
+                prod.size = str(cleaned.get("size"))
+            elif resolved_batch_v != "costume_wear" and prod.size == "均码":
+                prod.size = None
+
+            if cleaned.get("colour"):
+                prod.colour = str(cleaned.get("colour"))
+            elif resolved_batch_v != "costume_wear" and prod.colour == "多色":
+                prod.colour = None
+
+            if cleaned.get("pack_of"):
+                prod.pack_of = str(cleaned.get("pack_of"))
+
+            clean_c = prod.colour or var_attrs.get("colour")
+            if clean_c and str(clean_c) != "多色":
+                catalog_attrs["colour"] = [{"value": str(clean_c), "qualifier": None}]
+                catalog_attrs["brand_colour"] = [{"value": str(prod.brand_colour or clean_c), "qualifier": None}]
+
+            clean_s = prod.size or var_attrs.get("size")
+            if clean_s and (str(clean_s) != "均码" or resolved_batch_v == "costume_wear"):
+                catalog_attrs["size"] = [{"value": str(clean_s), "qualifier": None}]
+
+            clean_p = prod.pack_of or var_attrs.get("pack_of")
+            if clean_p:
+                catalog_attrs["pack_of"] = [{"value": str(clean_p), "qualifier": None}]
+
+            cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
+            if cap:
+                catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
+
+            clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', prod.makro_title or "", flags=re.I)
+            clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
+            catalog_attrs["model_number"] = [{"value": (f"{clean_mn[:230]}-{prod.id}")[:250], "qualifier": None}]
+            catalog_attrs["model_name"] = [{"value": truncate_title_safely(clean_mn, 120) or f"STD-{prod.id}", "qualifier": None}]
+            prod.clean_mode = applied_mode
+            prod.makro_catalog_attributes = json.dumps(catalog_attrs)
+
+            if cleaned.get("brand_nature"):
+                comp_d = json.loads(prod.compliance_details) if prod.compliance_details else {}
+                comp_d["brand_nature"] = cleaned.get("brand_nature")
+                comp_d["target_compatible_brand"] = cleaned.get("target_compatible_brand")
+                prod.compliance_details = json.dumps(comp_d, ensure_ascii=False)
+
+            # 阶段 1 本地契约就地预检 (Pre-flight Check)
+            mandatories = cleaned.get("mandatory_names") or []
+            missing_mandatories = [m for m in mandatories if m not in catalog_attrs and m not in LISTING_ONLY_ATTRS]
+            if missing_mandatories:
+                prod.makro_submit_error = f"⚠️ 缺少必填属性: {', '.join(missing_mandatories[:3])}"
+            else:
+                prod.makro_submit_error = None
+
+            prod.status = "CLEANED"
+
+        def _do_spu_group(skey: str, pids: list):
             if tm.is_cancelled(tid):
-                return pid, False, "任务已取消", ""
+                return [(p, False, "任务已取消", "") for p in pids]
+
+            group_results = []
+            anchor_pid = pids[0]
+            anchor_cleaned = None
+
+            # 1. 运行 Anchor 首变体全量清洗
             local_db = SessionLocal()
             try:
-                prod = local_db.query(Product).filter(Product.id == pid).first()
-                if not prod:
-                    return pid, False, f"商品 {pid} 不存在", ""
-                p_title = prod.takealot_title
+                anchor_prod = local_db.query(Product).filter(Product.id == anchor_pid).first()
+                if not anchor_prod:
+                    return [(p, False, f"商品 {p} 不存在", "") for p in pids]
 
-                specs = json.loads(prod.takealot_specs) if prod.takealot_specs else {}
-                var_attrs = json.loads(prod.variant_attributes) if prod.variant_attributes else {}
+                anchor_title = anchor_prod.takealot_title
+                specs = json.loads(anchor_prod.takealot_specs) if anchor_prod.takealot_specs else {}
+                var_attrs = json.loads(anchor_prod.variant_attributes) if anchor_prod.variant_attributes else {}
                 combined_specs = {**specs, **var_attrs}
 
-                cleaned = ai_service.clean_product_data({
-                    "takealot_title": prod.takealot_title,
-                    "takealot_brand": prod.takealot_brand,
-                    "takealot_category": prod.takealot_category,
+                anchor_cleaned = ai_service.clean_product_data({
+                    "takealot_title": anchor_prod.takealot_title,
+                    "takealot_brand": anchor_prod.takealot_brand,
+                    "takealot_category": anchor_prod.takealot_category,
                     "takealot_specs": combined_specs,
-                    "takealot_description": prod.takealot_description,
-                    "raw_images": prod.raw_images,
-                    "cover_image": prod.raw_images
-                }, target_brand=prod.makro_brand or "Beishi", clean_mode=clean_mode)
+                    "takealot_description": anchor_prod.takealot_description,
+                    "raw_images": anchor_prod.raw_images,
+                    "cover_image": anchor_prod.raw_images
+                }, target_brand=anchor_prod.makro_brand or "Beishi", clean_mode=clean_mode)
 
-                prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
-                raw_seo_kw = cleaned.get("seo_keywords") or []
-                if isinstance(raw_seo_kw, list) and raw_seo_kw:
-                    prod.seo_keywords = json.dumps([str(x).strip() for x in raw_seo_kw if str(x).strip()][:6], ensure_ascii=False)
-
-                raw_desc = cleaned.get("description", prod.takealot_description)
-                prod.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
-                
-                from ..services.vertical_service import VerticalService
-                raw_v = cleaned.get("vertical", "")
-                resolved_batch_v, _ = VerticalService.resolve_vertical(raw_v)
-                if resolved_batch_v == "bath_towel" and "towel" not in (prod.takealot_title or "").lower():
-                    resolved_batch_v = VerticalService.predict_vertical(
-                        title=prod.takealot_title,
-                        category=prod.takealot_category or "",
-                        specs=combined_specs,
-                        description=prod.takealot_description or ""
-                    )
-                prod.makro_vertical = resolved_batch_v
-
-                attrs = cleaned.get("attributes", {})
-                catalog_attrs = {}
-                for k, val in attrs.items():
-                    if k in LISTING_ONLY_ATTRS:
-                        continue  # 排除纯 Listing 级属性，严防混入 Catalog 导致 412
-                    qualifier = None
-                    if k in ["width", "length"]:
-                        qualifier = "cm"
-                    catalog_attrs[k] = [{"value": str(val), "qualifier": qualifier}]
-
-                # 同步更新商品主属性 (排除非服装下的假数据)
-                if cleaned.get("size"):
-                    prod.size = str(cleaned.get("size"))
-                elif resolved_batch_v != "costume_wear" and prod.size == "均码":
-                    prod.size = None
-
-                if cleaned.get("colour"):
-                    prod.colour = str(cleaned.get("colour"))
-                elif resolved_batch_v != "costume_wear" and prod.colour == "多色":
-                    prod.colour = None
-
-                if cleaned.get("pack_of"):
-                    prod.pack_of = str(cleaned.get("pack_of"))
-
-                clean_c = prod.colour or var_attrs.get("colour")
-                if clean_c and str(clean_c) != "多色":
-                    catalog_attrs["colour"] = [{"value": str(clean_c), "qualifier": None}]
-                    catalog_attrs["brand_colour"] = [{"value": str(prod.brand_colour or clean_c), "qualifier": None}]
-
-                clean_s = prod.size or var_attrs.get("size")
-                if clean_s and (str(clean_s) != "均码" or resolved_batch_v == "costume_wear"):
-                    catalog_attrs["size"] = [{"value": str(clean_s), "qualifier": None}]
-
-                clean_p = prod.pack_of or var_attrs.get("pack_of")
-                if clean_p:
-                    catalog_attrs["pack_of"] = [{"value": str(clean_p), "qualifier": None}]
-
-                cap = var_attrs.get("capacity") or var_attrs.get("storage_capacity")
-                if cap:
-                    catalog_attrs["storage_capacity"] = [{"value": str(cap), "qualifier": None}]
-
-                target_b = prod.makro_brand or "Beishi"
-                clean_mn = re.sub(rf'^\s*{re.escape(target_b)}\s*[-_:]*\s*', '', prod.makro_title or "", flags=re.I)
-                clean_mn = re.sub(rf'\b{re.escape(target_b)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
-                catalog_attrs["model_number"] = [{"value": (clean_mn or f"STD-{prod.id}")[:250], "qualifier": None}]
-                prod.clean_mode = cleaned.get("clean_mode", clean_mode or "text")
-                prod.makro_catalog_attributes = json.dumps(catalog_attrs)
-                prod.makro_submit_error = None
-                prod.status = "CLEANED"
+                _clean_product_entity(anchor_prod, anchor_cleaned, anchor_cleaned.get("clean_mode", clean_mode or "text"))
                 local_db.commit()
-                return pid, True, None, p_title
+                group_results.append((anchor_pid, True, None, anchor_title))
             except Exception as e:
-                return pid, False, f"商品 {pid} 清洗失败: {str(e)}", ""
+                group_results.append((anchor_pid, False, f"商品 {anchor_pid} 清洗失败: {str(e)}", ""))
             finally:
                 local_db.close()
 
-        max_workers = min(6, max(1, total))
+            # 2. 对同组后续兄弟变体进行 SPU 协同轻量衍生注入 (大幅节省 Token 并保证类目一致)
+            if len(pids) > 1 and anchor_cleaned:
+                for sib_pid in pids[1:]:
+                    if tm.is_cancelled(tid):
+                        group_results.append((sib_pid, False, "任务已取消", ""))
+                        continue
+                    sib_db = SessionLocal()
+                    try:
+                        sib_prod = sib_db.query(Product).filter(Product.id == sib_pid).first()
+                        if not sib_prod:
+                            group_results.append((sib_pid, False, f"变体 {sib_pid} 不存在", ""))
+                            continue
+                        sib_title = sib_prod.takealot_title
+
+                        # 复用 Anchor 类目与核心 SEO 骨架
+                        sib_cleaned = {
+                            "vertical": anchor_cleaned.get("vertical"),
+                            "brand": anchor_cleaned.get("brand"),
+                            "makro_title": anchor_cleaned.get("makro_title"),
+                            "seo_keywords": anchor_cleaned.get("seo_keywords"),
+                            "description": anchor_cleaned.get("description"),
+                            "attributes": dict(anchor_cleaned.get("attributes", {})),
+                            "mandatory_names": anchor_cleaned.get("mandatory_names", []),
+                            "clean_mode": f"{anchor_cleaned.get('clean_mode', clean_mode or 'text')}_harmonized"
+                        }
+                        # 变体专属差异微调标题 (风格 B: 括号规格注入)
+                        var_attrs = json.loads(sib_prod.variant_attributes) if sib_prod.variant_attributes else {}
+                        v_col = sib_prod.colour or var_attrs.get("colour")
+                        v_size = sib_prod.size or var_attrs.get("size")
+                        base_t = sib_cleaned["makro_title"] or sib_title
+                        sib_brand = anchor_cleaned.get("brand") or sib_prod.makro_brand or "Beishi"
+                        sib_cleaned["makro_title"] = format_title_with_specs(
+                            base_t,
+                            brand=sib_brand,
+                            color=v_col,
+                            size=v_size,
+                            max_len=ai_service.seo_title_max_len,
+                            vertical=anchor_cleaned.get("vertical") or ""
+                        )
+
+                        _clean_product_entity(sib_prod, sib_cleaned, sib_cleaned["clean_mode"])
+                        sib_db.commit()
+                        group_results.append((sib_pid, True, None, sib_title))
+                    except Exception as ex:
+                        group_results.append((sib_pid, False, f"变体 {sib_pid} 协同清洗失败: {str(ex)}", ""))
+                    finally:
+                        sib_db.close()
+            elif len(pids) > 1 and not anchor_cleaned:
+                # 若 Anchor 偶发异常，后续变体自动回退为独立单品清洗
+                for sib_pid in pids[1:]:
+                    sib_db = SessionLocal()
+                    try:
+                        sib_prod = sib_db.query(Product).filter(Product.id == sib_pid).first()
+                        if not sib_prod:
+                            group_results.append((sib_pid, False, f"商品 {sib_pid} 不存在", ""))
+                            continue
+                        sib_title = sib_prod.takealot_title
+                        specs = json.loads(sib_prod.takealot_specs) if sib_prod.takealot_specs else {}
+                        var_attrs = json.loads(sib_prod.variant_attributes) if sib_prod.variant_attributes else {}
+                        c_specs = {**specs, **var_attrs}
+                        cleaned = ai_service.clean_product_data({
+                            "takealot_title": sib_prod.takealot_title,
+                            "takealot_brand": sib_prod.takealot_brand,
+                            "takealot_category": sib_prod.takealot_category,
+                            "takealot_specs": c_specs,
+                            "takealot_description": sib_prod.takealot_description,
+                            "raw_images": sib_prod.raw_images,
+                            "cover_image": sib_prod.raw_images
+                        }, target_brand=sib_prod.makro_brand or "Beishi", clean_mode=clean_mode)
+                        _clean_product_entity(sib_prod, cleaned, cleaned.get("clean_mode", clean_mode or "text"))
+                        sib_db.commit()
+                        group_results.append((sib_pid, True, None, sib_title))
+                    except Exception as ex:
+                        group_results.append((sib_pid, False, f"商品 {sib_pid} 清洗失败: {str(ex)}", ""))
+                    finally:
+                        sib_db.close()
+
+            return group_results
+
+        # 阶段 1: 稳健提升并发 (纯文本模式扩至 12，图文多模态模式维持在 10 线程受控并发)
+        is_vision = (clean_mode == "vision")
+        worker_limit = 10 if is_vision else 12
+        max_workers = min(worker_limit, max(1, len(spu_groups)))
         completed_count = 0
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_do_one, pid): pid for pid in req.product_ids}
+            futures = {executor.submit(_do_spu_group, skey, p_list): skey for skey, p_list in spu_groups.items()}
             for fut in as_completed(futures):
                 if tm.is_cancelled(tid):
                     break
-                pid, ok, err, title = fut.result()
-                completed_count += 1
-                tm.update_progress(
-                    tid,
-                    current=completed_count,
-                    current_title=title or f"商品 ID {pid}",
-                    success_inc=1 if ok else 0,
-                    fail_inc=0 if ok else 1,
-                    error=err
-                )
+                group_res = fut.result()
+                for pid, ok, err, title in group_res:
+                    completed_count += 1
+                    tm.update_progress(
+                        tid,
+                        current=completed_count,
+                        current_title=title or f"商品 ID {pid}",
+                        success_inc=1 if ok else 0,
+                        fail_inc=0 if ok else 1,
+                        error=err
+                    )
 
         t_now = tm.get_task(tid)
         succ = t_now["success_count"] if t_now else 0

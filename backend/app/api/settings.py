@@ -63,6 +63,11 @@ def get_settings(db: Session = Depends(get_db)):
         seo_title_max_len=_get_int("seo_title_max_len", getattr(settings, "DEFAULT_SEO_TITLE_MAX_LEN", 120)),
         cleaner_mode=_get_str("cleaner_mode", getattr(settings, "DEFAULT_CLEANER_MODE", "text")),
         qwen_vision_model=_get_str("qwen_vision_model", getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")),
+        custom_category_synonyms=_get_str("custom_category_synonyms", "{}"),
+        jev_api_key=_get_str("jev_api_key", getattr(settings, "JEV_API_KEY", "")),
+        jev_base_url=_get_str("jev_base_url", getattr(settings, "JEV_BASE_URL", "https://api.typesafe.ai")),
+        jev_model=_get_str("jev_model", getattr(settings, "JEV_MODEL", "jev-latest")),
+        jev_enabled=_get_bool("jev_enabled", getattr(settings, "JEV_ENABLED", True)),
     )
 
 @router.post("", summary="保存或更新系统配置")
@@ -77,11 +82,16 @@ def save_settings(req: SystemSettingsSchema, db: Session = Depends(get_db)):
             db.add(SystemSetting(key=key, value=val_str))
 
     db.commit()
+
+    # 热重载自定义类目同义词到倒排索引
+    from ..services.vertical_service import VerticalSemanticRetriever
+    VerticalSemanticRetriever.sync_custom_synonyms_from_db(db)
+
     from ..services.audit_logger import record_audit_log
     record_audit_log(
         task_type="SETTINGS_UPDATE",
         status="SUCCESS",
-        message="更新系统全局配置 (包含定价规则、Makro凭据与AI模型配置)",
+        message="更新系统全局配置 (包含定价规则、Makro凭据、AI模型与类目同义词配置)",
         detail_logs={"updated_keys": list(data.keys())},
         db=db
     )
@@ -105,4 +115,11 @@ def get_network_config():
         "lan_direct_url": lan_direct_url,
         "localhost_url": localhost_url
     }
+
+@router.post("/test-jev", summary="测试 Jev (TypeSafe AI) 决策模型连通性与响应时延")
+def test_jev_connection(db: Session = Depends(get_db)):
+    from ..services.jev_service import JevService
+    res = JevService.test_connectivity(db=db)
+    return res
+
 

@@ -18,6 +18,7 @@ from ..services.vertical_service import VerticalService
 from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
 from ..services.compliance_service import PROTECTED_ENTERTAINMENT_IPS
+from ..services.ai_cleaner_service import truncate_title_safely
 from ..config import settings
 from .products import _format_product
 
@@ -214,10 +215,28 @@ def _build_makro_payload(
     pkg_height = str(pkg_dims.get("height", _get_setting_val(db, "default_pkg_height", "5")))
     pkg_weight = str(pkg_dims.get("weight", _get_setting_val(db, "default_pkg_weight", "0.5")))
 
-    # 目标变体 SKU 与价格 (确保 SKU 唯一以规避 SKU_ALREADY_USED 限制)
-    base_sku = (variant.sku_id if variant and variant.sku_id else None) or product.sku_id or f"BS-{product.id}"
-    ts_suffix = str(int(time.time()))[-4:]
-    sku_id = f"{base_sku}-{ts_suffix}" if not base_sku.endswith(ts_suffix) else base_sku
+    # 目标变体 SKU 与价格 (方案 A: 全店铺统一复用首次生成的 Makro SKU，杜绝多店铺互踩与时间戳漂移)
+    existing_makro_sku = (variant.makro_sku_id if variant and variant.makro_sku_id else None) or product.makro_sku_id
+    if not existing_makro_sku:
+        if hasattr(product, "store_listings") and product.store_listings:
+            for sl in product.store_listings:
+                if sl.makro_sku_id:
+                    existing_makro_sku = sl.makro_sku_id
+                    break
+
+    if existing_makro_sku:
+        sku_id = existing_makro_sku
+    else:
+        base_sku = (variant.sku_id if variant and variant.sku_id else None) or product.sku_id or f"BS-{product.id}"
+        ts_suffix = str(int(time.time()))[-4:]
+        sku_id = f"{base_sku}-{ts_suffix}" if not base_sku.endswith(ts_suffix) else base_sku
+        if variant:
+            variant.makro_sku_id = sku_id
+        product.makro_sku_id = sku_id
+        try:
+            db.commit()
+        except Exception:
+            pass
 
     var_selling = (variant.makro_selling_price if variant and variant.makro_selling_price else None) or product.makro_selling_price
     var_mrp = (variant.makro_mrp if variant and variant.makro_mrp else None) or product.makro_mrp
@@ -378,7 +397,7 @@ def _build_makro_payload(
         clean_model_title = re.sub(rf'\b{re.escape(ip)}\b', 'Party', clean_model_title, flags=re.I).strip(' -_,:;')
 
     smart_defaults = {
-        "model_name": (clean_model_title or f"Standard {vertical}")[:40],
+        "model_name": truncate_title_safely(clean_model_title or f"Standard {vertical}", 120),
         "model_number": (clean_model_title or f"STD-{product.id}")[:250],
         "brand_colour": "White" if "white" in full_text else ("Black" if "black" in full_text else ("Yellow" if "yellow" in full_text else "Multicolor")),
         "colour": "White" if "white" in full_text else ("Black" if "black" in full_text else "Multicolor"),
@@ -583,7 +602,7 @@ def _record_store_listing(
 
         listing.brand = brand or getattr(target_store, "default_brand", None) or "Beishi"
         listing.status = "SUBMITTED" if is_success else "FAILED"
-        if is_success and sku_id:
+        if sku_id and (is_success or not listing.makro_sku_id):
             listing.makro_sku_id = sku_id
         if request_id:
             listing.makro_request_id = request_id
@@ -765,7 +784,8 @@ def _publish_single_product(
 
     if is_success:
         product.status = "SUBMITTED"
-        product.makro_sku_id = payload.get("skuId")
+        if not product.makro_sku_id:
+            product.makro_sku_id = payload.get("skuId")
         product.makro_submit_error = None
     else:
         product.status = "FAILED"
@@ -874,7 +894,10 @@ def _publish_single_variant(
 
     if is_success:
         variant.status = "SUBMITTED"
-        variant.makro_sku_id = payload.get("skuId")
+        if not variant.makro_sku_id:
+            variant.makro_sku_id = payload.get("skuId")
+        if not product.makro_sku_id:
+            product.makro_sku_id = payload.get("skuId")
         variant.makro_submit_error = None
     else:
         variant.status = "FAILED"

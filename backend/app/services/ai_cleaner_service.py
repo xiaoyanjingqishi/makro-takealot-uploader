@@ -26,6 +26,286 @@ def truncate_title_safely(title: str, max_len: int = 120) -> str:
         truncated = truncated[:last_sep].rstrip(' -_,;:/')
     return truncated
 
+INVALID_SPEC_TOKENS = {
+    "多色", "multicolor", "multi-color", "various", "default", "none", "null",
+    "均码", "free size", "onesize", "one size", "n/a"
+}
+
+def clean_spec_value(val: Any) -> Optional[str]:
+    """清洗与校验规格值 (排除空值与'多色'/'均码'等非服装伪词)"""
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s or s.lower() in INVALID_SPEC_TOKENS:
+        return None
+    return s
+
+def is_pseudo_size(val: Any, vertical: str = "") -> bool:
+    """
+    检查是否属于非服装类目的纯数字/长宽高伪规格 (如手机壳或数码配件中混入的 15.8, 6.1 等物理尺寸)
+    此类数字在配件中买家并不认同为可选尺码，注入标题会导致混淆 (如 Pink, 15.8)
+    """
+    if not val:
+        return True
+    s = str(val).strip().lower()
+    # 纯浮点数或纯小数 (如 15.8, 6.1) 且不带明确容量/功率单位
+    if re.match(r'^\d+\.\d+$', s):
+        return True
+    # 纯数字且类目是数码配件、手机保护套、滤网等非服装鞋帽类目
+    non_apparel_cats = ["cases_covers", "usb", "cable", "protector", "filter", "holder", "mount", "charger", "electronic", "cellphone", "vacuum"]
+    v_lower = str(vertical or "").lower()
+    if any(k in v_lower for k in non_apparel_cats):
+        if re.match(r'^\d+(\.\d+)?(\s*(?:cm|mm|m|inch|in|\"))?$', s):
+            return True
+    return False
+
+def extract_device_model(raw_title: str, specs: Any = None, category: str = "") -> Optional[str]:
+    """
+    从 Takealot 原始规格参数与原始标题中智能提取精确目标设备型号 (如 Apple iPhone 11, Dyson V11, PS5 等)
+    确保清洗后的标题 100% 保留具体适用代际型号，杜绝被抽象品牌 (如 Apple, Dyson) 覆盖。
+    """
+    # 1. 优先从 specs 字典中读取官方兼容性声明 (Takealot 官方参数最精准)
+    if specs:
+        specs_dict = {}
+        if isinstance(specs, dict):
+            specs_dict = specs
+        elif isinstance(specs, str):
+            try:
+                specs_dict = json.loads(specs)
+            except Exception:
+                specs_dict = {}
+        
+        compat_keys = [
+            "Cellphone Compatibility", "Compatibility", "Compatible with", 
+            "Compatible Model", "Model Compatibility", "Suitable for", "Compatible Brand"
+        ]
+        for k in compat_keys:
+            val = specs_dict.get(k)
+            if val and isinstance(val, str) and len(val.strip()) > 1:
+                v = val.strip()
+                if v.lower() not in ["universal", "generic", "all", "none", "n/a", "other"]:
+                    m_sub = re.search(r'\b(iPhone\s+[0-9]{1,2}(?:\s*(?:Pro\s*Max|Pro|Plus|Mini))?|Galaxy\s+[S|A|Z|Note][0-9]{1,2}(?:\s*(?:Ultra|Plus|FE|\+))?|Dyson\s+V[0-9]{1,2}(?:\s*[A-Za-z0-9]+)?)\b', v, re.I)
+                    if m_sub:
+                        return m_sub.group(1).strip()
+                    return v
+
+    # 2. 从原始标题中使用正向精准正则匹配主流设备机型
+    title_text = str(raw_title or "")
+    
+    # 2.1 苹果生态 (iPhone / iPad / Apple Watch / AirPods / MacBook)
+    m_iphone = re.search(r'\b(iPhone\s+(?:SE|[0-9]{1,2}(?:\s*(?:Pro\s*Max|Pro|Plus|Mini))?))\b', title_text, re.I)
+    if m_iphone:
+        return m_iphone.group(1).strip()
+    
+    m_ipad = re.search(r'\b(iPad\s+(?:Air|Pro|Mini|[0-9]{1,2}(?:th|st|nd|rd)?\s*Gen[a-z]*|[0-9]{1,2}\.?[0-9]?\s*inch)?)\b', title_text, re.I)
+    if m_ipad:
+        return m_ipad.group(1).strip()
+
+    m_watch = re.search(r'\b(Apple\s*Watch\s*(?:Ultra|Series\s*[0-9]+|SE|[0-9]{2}mm)?)\b', title_text, re.I)
+    if m_watch:
+        return m_watch.group(1).strip()
+
+    m_airpods = re.search(r'\b(AirPods\s*(?:Pro\s*[0-9]?|Max|[0-9]+)?)\b', title_text, re.I)
+    if m_airpods:
+        return m_airpods.group(1).strip()
+
+    # 2.2 三星生态 (Galaxy S / A / Z / Note)
+    m_galaxy = re.search(r'\b(Galaxy\s+[S|A|Z|Note][0-9]{1,2}(?:\s*(?:Ultra|Plus|FE|\+))?)\b', title_text, re.I)
+    if m_galaxy:
+        return f"Samsung {m_galaxy.group(1).strip()}"
+
+    # 2.3 戴森生态 (Dyson V8 / V10 / V11 / V12 / V15 / Gen5 / Airwrap / Supersonic)
+    m_dyson = re.search(r'\b(Dyson\s+(?:V[0-9]{1,2}|SV[0-9]{2}|Gen5|Airwrap|Supersonic)(?:\s*(?:Absolute|Animal|Total\s*Clean|Motorhead|Slim))?)\b', title_text, re.I)
+    if m_dyson:
+        return m_dyson.group(1).strip()
+
+    # 2.4 索尼 PlayStation
+    m_sony = re.search(r'\b(PlayStation\s*[45]|PS[45](?:\s*Slim|\s*Pro)?)\b', title_text, re.I)
+    if m_sony:
+        return f"Sony {m_sony.group(1).strip()}"
+
+    # 2.5 任天堂 Switch
+    m_switch = re.search(r'\b(Nintendo\s+Switch(?:\s*OLED|\s*Lite)?)\b', title_text, re.I)
+    if m_switch:
+        return m_switch.group(1).strip()
+
+    # 3. 语法介词匹配提取 (Compatible with ... / for ...)
+    m_prep = re.search(r'(?:compatible with|for|suitable for|replacement for|fits?)\s+([A-Za-z0-9\s\+\-\.\/]+?)(?:\s+(?:case|cover|holder|protector|screen|lens|with|and|\-|,|\())', title_text, re.I)
+    if m_prep:
+        candidate = m_prep.group(1).strip()
+        if len(candidate) >= 3 and len(candidate) <= 30 and not any(k in candidate.lower() for k in ["men", "women", "kids", "home", "car", "quality"]):
+            return candidate
+
+    return None
+
+def reconstruct_accessory_title(
+    makro_title: str,
+    raw_title: str,
+    target_brand: str = "Beishi",
+    nature: str = "GENERIC_WHITE_LABEL",
+    target_famous: str = "NONE",
+    specs: Any = None,
+    vertical: str = "",
+    max_len: int = 120
+) -> str:
+    """
+    智能重构配件兼容标题：
+    1. 确保精确保留具体的设备型号 (如 iPhone 11、Dyson V11)，绝不被抽象品牌名 (Apple) 覆盖；
+    2. 解决 'for iPhon Compatible with Apple' 双重介词与语法冲突；
+    3. 彻底废除机械暴力切片 [:60]，在全词边界安全截断。
+    """
+    from .compliance_service import FAMOUS_BRANDS, ACCESSORY_KEYWORDS
+
+    full_text = f"{raw_title} {makro_title}".lower()
+    matched_brand = next((b for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', full_text)), None)
+    is_acc = (nature == "COMPATIBLE_ACCESSORY") or any(re.search(rf'\b{acc}\b', full_text) for acc in ACCESSORY_KEYWORDS)
+
+    if not is_acc:
+        return makro_title
+
+    # 1. 优先提取具体的目标设备型号
+    device_model = extract_device_model(raw_title, specs=specs, category=vertical)
+    
+    target_ref = device_model or (target_famous if (target_famous and target_famous != "NONE") else (matched_brand or ""))
+    if not target_ref:
+        return makro_title
+
+    target_display = target_ref.strip()
+    if target_display.isupper():
+        target_display = target_display.title()
+
+    title_curr = makro_title.strip()
+
+    # 1.5 强力预清洗：清除生硬的 "Third-Party" 前缀与残留的截断词
+    title_curr = re.sub(r'\bThird-Party\s+', '', title_curr, flags=re.I)
+    title_curr = re.sub(r'\biPhon\b', 'iPhone', title_curr, flags=re.I)
+    
+    # 消除紧邻兼容句式前的重复 for 介词短语 (例如 "Cover for iPhone 11 Compatible with Apple" -> "Cover Compatible with Apple")
+    title_curr = re.sub(
+        r'\s+for\s+[A-Za-z0-9\s]+(?=\s+(?:compatible\s+with|compatible\s+for|suitable\s+for|designed\s+for|fits?))',
+        '',
+        title_curr,
+        flags=re.I
+    )
+
+    # 2. 检查是否已经包含合规兼容声明关键字
+    m_comp = re.search(r'\b(compatible\s+with|compatible\s+for|replacement\s+for|suitable\s+for|designed\s+for)\s+([^()]+)', title_curr, re.I)
+    
+    abstract_brands = ["apple", "samsung", "dyson", "sony", "huawei", "xiaomi", "nintendo"]
+    if m_comp:
+        existing_target = m_comp.group(2).strip()
+        et_lower = existing_target.lower()
+        
+        # 精准判断是否需要将 existing_target 升级为 device_model (例如 Apple -> iPhone 11, iPhone -> iPhone 11)
+        should_upgrade = False
+        if device_model:
+            if et_lower in abstract_brands or et_lower in ["iphon", "iph", "sam", "dys"]:
+                should_upgrade = True
+            elif et_lower in ["iphone", "ipad", "apple watch", "airpods", "galaxy", "dyson"]:
+                should_upgrade = True
+            elif not any(c.isdigit() for c in existing_target) and any(c.isdigit() for c in device_model):
+                should_upgrade = True
+
+        if should_upgrade and device_model:
+            prefix = title_curr[:m_comp.start(2)]
+            suffix = title_curr[m_comp.end(2):]
+            title_curr = f"{prefix}{device_model}{suffix}".strip()
+
+        brand_str = str(target_brand or "").strip()
+        if brand_str and not title_curr.lower().startswith(brand_str.lower()):
+            title_curr = f"{brand_str} {title_curr}"
+        return title_curr
+
+    # 3. 检查是否有 "for [Device]" (如 "... Phone Case with Slide Camera Lens Cover for iPhone 11")
+    # 直接将 "for [Device]" 无损合规化重写为 "Compatible with [Device]"，避免双重介词
+    m_for = re.search(r'\s+for\s+([^()]+)$', title_curr, re.I)
+    if m_for:
+        for_target = m_for.group(1).strip()
+        core_part = title_curr[:m_for.start()].strip()
+        final_dev = device_model or for_target or target_display
+        res_t = f"{core_part} Compatible with {final_dev}".strip()
+        brand_str = str(target_brand or "").strip()
+        if brand_str and not res_t.lower().startswith(brand_str.lower()):
+            res_t = f"{brand_str} {res_t}"
+        return res_t
+
+    # 4. 若完全未包含兼容句式，安全在尾部追加 Compatible with {target_display}
+    clean_core = re.sub(rf'\b{re.escape(target_display)}\b', '', title_curr, flags=re.I)
+    clean_core = re.sub(rf'^\s*{re.escape(target_brand)}\s*', '', clean_core, flags=re.I).strip()
+    clean_core = re.sub(r'[-_:,/]+', ' ', clean_core)
+    clean_core = re.sub(r'\s+', ' ', clean_core).strip()
+
+    compat_suffix = f"Compatible with {target_display}"
+    max_core_len = max(35, max_len - len(target_brand) - len(compat_suffix) - 15)
+    safe_core = truncate_title_safely(clean_core, max_core_len)
+    
+    return f"{target_brand} {safe_core} {compat_suffix}".strip()
+
+def format_title_with_specs(
+    title: str,
+    brand: str = "Beishi",
+    color: Optional[str] = None,
+    size: Optional[str] = None,
+    max_len: int = 120,
+    vertical: str = ""
+) -> str:
+    """
+    将颜色与尺寸规范地以风格 B 括号格式 (Color, Size) 融入标题末尾，
+    并保证品牌前缀正确与总长安全截断。
+    自动识别并过滤非服装类目纯数字伪尺寸 (如手机壳 15.8cm)。
+    """
+    c_clean = clean_spec_value(color)
+    s_clean = clean_spec_value(size)
+
+    # 过滤非服装类目中出现的纯数字/长宽高尺寸 (如 15.8, 6.1)
+    if s_clean and is_pseudo_size(s_clean, vertical=vertical):
+        s_clean = None
+
+    # 构造规格后缀 (Style B: 括号包裹)
+    spec_part = ""
+    if c_clean and s_clean:
+        spec_part = f"({c_clean}, {s_clean})"
+    elif c_clean:
+        spec_part = f"({c_clean})"
+    elif s_clean:
+        spec_part = f"({s_clean})"
+
+    raw_title = re.sub(r'\s+', ' ', str(title or "")).strip()
+    # 检查末尾现有的括号规格如 (Black, XL) 或 (Multicolor)
+    m = re.search(r'\s*[\(\[]([^()\[\]]+)[\)\]]\s*$', raw_title)
+    if m:
+        inner_spec = m.group(1).strip()
+        # 如果即将注入新规格，或者现有括号本身是无效伪词 (如 Multicolor, 均码)，则剥离原括号
+        if spec_part or clean_spec_value(inner_spec) is None:
+            raw_title = raw_title[:m.start()].strip()
+
+    if spec_part:
+        # 移除末尾可能残留的连字符尾缀如 " - Black, XL"
+        base_title = re.sub(r'\s+-\s+[A-Za-z0-9\s,/]+$', '', raw_title).strip()
+        if not base_title:
+            base_title = raw_title
+    else:
+        # 即使无 spec_part，也要清理 " - Multicolor" 这类无效连字符尾缀
+        m_dash = re.search(r'\s+-\s+([A-Za-z0-9\s,/]+)$', raw_title)
+        if m_dash and clean_spec_value(m_dash.group(1).strip()) is None:
+            base_title = raw_title[:m_dash.start()].strip()
+        else:
+            base_title = raw_title
+
+    brand_str = str(brand or "").strip()
+    if brand_str and not base_title.lower().startswith(brand_str.lower()):
+        base_title = f"{brand_str} {base_title}"
+
+    if not spec_part:
+        return truncate_title_safely(base_title, max_len)
+
+    if spec_part.lower() in base_title.lower():
+        return truncate_title_safely(base_title, max_len)
+
+    allowed_base_len = max(40, max_len - len(spec_part) - 1)
+    safe_base = truncate_title_safely(base_title, allowed_base_len)
+    return f"{safe_base} {spec_part}".strip()
+
 class AICleanerService:
     """
     AI 数据清洗与属性规范化服务 (支持通义千问 Qwen 与 DeepSeek，支持纯文本与图文多模态双模式)
@@ -43,8 +323,10 @@ class AICleanerService:
         qwen_api_key: str = None,
         qwen_base_url: str = None,
         seo_title_enabled: bool = True,
-        seo_title_max_len: int = 120
+        seo_title_max_len: int = 120,
+        db: Optional[Session] = None
     ):
+        self.db = db
         self.provider = provider or settings.AI_PROVIDER
         self.cleaner_mode = cleaner_mode or getattr(settings, "DEFAULT_CLEANER_MODE", "text")
         self.qwen_vision_model = qwen_vision_model or getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")
@@ -77,6 +359,28 @@ class AICleanerService:
                 self.vision_client = OpenAI(api_key=self.qwen_api_key, base_url=self.qwen_base_url, timeout=45.0)
             except Exception as e:
                 logger.error(f"初始化 Qwen 视觉客户端失败: {e}")
+
+    def _call_llm_with_retry(self, client, **kwargs):
+        """带指数退避的大模型安全调用，针对 429 / TPM 限流与网络波动自动重试"""
+        import time
+        max_retries = 3
+        base_delay = 1.5
+        for attempt in range(max_retries):
+            try:
+                return client.chat.completions.create(**kwargs)
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = any(k in err_str for k in ["rate_limit", "429", "too many requests", "quota", "tpm", "rpm"])
+                if is_rate_limit and attempt < max_retries - 1:
+                    sleep_s = base_delay * (2 ** attempt)
+                    logger.warning(f"触发大模型速率限制 (429/TPM)，休眠 {sleep_s:.1f}s 后进行第 {attempt + 2} 次重试...")
+                    time.sleep(sleep_s)
+                elif attempt < max_retries - 1 and any(k in err_str for k in ["timeout", "connection", "remoteendclosed", "reset"]):
+                    sleep_s = 1.0 * (attempt + 1)
+                    logger.warning(f"大模型通信抖动，休眠 {sleep_s:.1f}s 后重试: {e}")
+                    time.sleep(sleep_s)
+                else:
+                    raise
 
     @classmethod
     def from_db(cls, db: Session):
@@ -129,7 +433,8 @@ class AICleanerService:
             qwen_api_key=qwen_api_key,
             qwen_base_url=qwen_base_url,
             seo_title_enabled=seo_title_enabled,
-            seo_title_max_len=seo_title_max_len
+            seo_title_max_len=seo_title_max_len,
+            db=db
         )
 
     def _fetch_primary_image_data_uri(self, raw_images_data: Any) -> Optional[str]:
@@ -221,15 +526,35 @@ class AICleanerService:
 
         verticals_map = VerticalService._load_verticals()
         formatted_candidates = []
+        candidate_info_map = {}
         for c in candidate_verticals:
             info = verticals_map.get(c)
             if info and isinstance(info, list) and info[0]:
                 disp = info[0].get("verticalDisplayName", c)
                 path = info[0].get("path", "")
                 formatted_candidates.append(f'"{c}" ({disp} | Path: {path})')
+                candidate_info_map[c] = f"{disp} (Path: {path})"
             else:
                 formatted_candidates.append(f'"{c}"')
+                candidate_info_map[c] = c
         candidates_str = "\n".join(formatted_candidates)
+
+        # 尝试由 Jev 进行候选类目快速裁决 (极速 ~200ms)
+        jev_vertical = None
+        try:
+            from .jev_service import JevService
+            jev_cat_res = JevService.match_category(
+                title=raw_title,
+                category=category,
+                candidate_verticals=candidate_verticals,
+                candidate_info_map=candidate_info_map,
+                db=self.db
+            )
+            if jev_cat_res and not jev_cat_res.get("is_fallback") and jev_cat_res.get("vertical"):
+                jev_vertical = jev_cat_res.get("vertical")
+                logger.info(f"Jev 类目初审推选: [{jev_vertical}] (置信度: {jev_cat_res.get('confidence', 0):.2f})")
+        except Exception as je:
+            logger.debug(f"Jev 类目裁决跳过或异常: {je}")
 
         prompt = f"""You are a professional e-commerce category taxonomy expert for Makro (Flipkart/Walmart SaaS).
 Select the SINGLE best matching Makro official vertical code from this candidate list (each item displays its code, display name, and category path):
@@ -270,7 +595,8 @@ Reply ONLY with a JSON object:
             active_model = self.model
 
         try:
-            resp = active_client.chat.completions.create(
+            resp = self._call_llm_with_retry(
+                active_client,
                 model=active_model,
                 messages=[
                     {"role": "system", "content": "You are a professional category classifier. Reply ONLY with valid JSON."},
@@ -288,23 +614,52 @@ Reply ONLY with a JSON object:
             if chosen == "costume_wear":
                 txt_check = f"{raw_title} {category}".lower()
                 if any(w in txt_check for w in ["bra", "underwear", "lingerie", "panties", "socks", "headlamp", "lamp", "torch", "foot", "heel", "fasciitis"]):
+                    if jev_vertical and jev_vertical != "costume_wear":
+                        return jev_vertical
                     return VerticalService.predict_vertical(title=raw_title, category=category, specs=specs, description=description)
 
+            # 裁决共识：若 LLM 结果与 Jev 判定一致，达成共识
             valid_v, _ = VerticalService.resolve_vertical(chosen)
             if valid_v in candidate_verticals or valid_v != "cases_covers":
                 return valid_v
+            elif jev_vertical and jev_vertical in candidate_verticals:
+                logger.info(f"LLM 结果未知或退回默认，采纳 Jev 类目判定: [{jev_vertical}]")
+                return jev_vertical
         except Exception as e:
             logger.warning(f"阶段 1 AI 类目定标异常: {e}")
+            if jev_vertical and jev_vertical in candidate_verticals:
+                logger.info(f"LLM 异常，自动采纳 Jev 类目判定: [{jev_vertical}]")
+                return jev_vertical
 
         return VerticalService.predict_vertical(title=raw_title, category=category, specs=specs, description=description)
 
     def _clean_with_llm(self, product: Dict[str, Any], target_brand: str, clean_mode: str = "text") -> Dict[str, Any]:
         """两阶段流水线：阶段1定标官方类目 -> 阶段2注入官方元数据Schema精准抽取属性与重写标题 (支持纯文本与图文双模式)"""
-        raw_title = product.get('takealot_title', '')
-        category = product.get('takealot_category', '')
-        specs = product.get('takealot_specs', {})
-        description = product.get('takealot_description', '')
-        preset_vertical = product.get('makro_vertical')
+        raw_title = product.get('takealot_title') or product.get('title') or ''
+        category = product.get('takealot_category') or product.get('category_path') or product.get('category') or ''
+        specs = product.get('takealot_specs') or product.get('specs') or {}
+        description = product.get('takealot_description') or product.get('description') or ''
+        preset_vertical = product.get('makro_vertical') or product.get('vertical')
+
+        # ★★★ Jev 品牌形态极速三元判定 (极速 ~200ms) ★★★
+        nature = "GENERIC_WHITE_LABEL"
+        target_famous = "NONE"
+        brand_nature_res = {}
+        try:
+            from .jev_service import JevService
+            brand_nature_res = JevService.decide_brand_nature(
+                title=raw_title,
+                brand=product.get('takealot_brand', ''),
+                category=category,
+                specs=specs,
+                description=description,
+                db=self.db
+            )
+            nature = brand_nature_res.get("nature", "GENERIC_WHITE_LABEL")
+            target_famous = brand_nature_res.get("target_brand", "NONE")
+            logger.info(f"Jev 品牌形态裁定: [{nature}], 目标品牌: [{target_famous}] (耗时: {brand_nature_res.get('latency_ms')}ms)")
+        except Exception as jbe:
+            logger.debug(f"Jev 品牌形态判定跳过或异常: {jbe}")
 
         applied_mode = "text"
         image_data_uri = None
@@ -339,7 +694,7 @@ Reply ONLY with a JSON object:
             )
 
         # ★★★ 阶段 2: 注入该类目的官方元数据 Schema 规范并深度清洗 ★★★
-        schema_summary = VerticalService.get_vertical_schema_summary(chosen_vertical)
+        schema_summary = VerticalService.get_vertical_schema_summary(chosen_vertical, db=self.db)
         guidelines_text = schema_summary.get("guidelines_text", "")
 
         vision_instructions = ""
@@ -357,27 +712,31 @@ Reply ONLY with a JSON object:
 1. 买家搜索意图挖掘 (Search Intent & Keyword Mining):
    - 深入分析该商品在南非电商平台 (Makro/Takealot) 买家最常使用的核心搜索词群、品类同义词、高意向长尾词与具体使用场景；
    - 挖掘 2~4 个精准的高相关性搜索关键词 (例如: "High Pressure", "Waterproof", "Garden Hose Sprayer", "Heavy Duty", "Car Wash", "Breathable Hooded" 等)。
-2. 结构化电商标题构建范式:
+2. 结构化电商标题构建范式 (风格 B 括号规格规范):
    - 严禁生硬逗号堆砌关键词！必须遵循成熟规范的电商高转化标题结构：
-     【{target_brand}】 + 【核心品名 Core Product Name】 + 【高频搜索长尾词/同义词】 + 【使用场景/目标对象 for ... / with ...】 + 【关键材质/颜色/规格】
-   - 示例参考:
-     * 工具类: "{target_brand} Multi-Function Spray Nozzle Cleaning Tool - High Pressure Water Sprayer Gun for Garden Hose & Car Wash"
-     * 雨具类: "{target_brand} Lightweight Waterproof Raincoat - Breathable Hooded Rain Poncho for Outdoor Hiking & Camping"
-     * 耗材类: "{target_brand} 12-Piece HSS Twist Drill Bit Set - High-Speed Steel Metal & Wood Hole Drilling Bits for Power Drills"
+     【{target_brand}】 + 【核心品名 Core Product Name】 + 【高频搜索长尾词/同义词】 + 【使用场景/目标对象 for ... / with ...】 + 【(颜色, 尺寸规格)】
+   - ★★★ 核心规格括号规范 (风格 B):
+     * 若该商品/变体具备明确颜色或尺寸/容量规格，必须统一在标题末尾以英文圆括号注明：
+       - 既有颜色又有尺码: "{target_brand} Dog Calming Vest Jacket - Breathable Anxiety Relief Wrap (Green, XL)"
+       - 仅有颜色: "{target_brand} Shockproof Protective Clear Phone Case (Black)"
+       - 仅有尺寸: "{target_brand} 12-Piece HSS Twist Drill Bit Set for Power Drills (10mm)"
+     * 严禁出现“均码”、“多色”等非服装伪词；若为通用标品无特定规格，则末尾无需括号。
 3. 字符长度控制:
-   - 标题总字符数 (包含品牌与空格) 请严格控制在 80 ~ {self.seo_title_max_len} 字符以内！
+   - 标题总字符数 (包含品牌、空格与末尾规格括号) 请严格控制在 80 ~ {self.seo_title_max_len} 字符以内！
    - 既要充分拓展搜索关键词增加曝光，又严禁超出 {self.seo_title_max_len} 字符以防平台截断！
 4. 品牌与侵权防护:
    - 标题必须且只能以授权品牌 "{target_brand}" 开头；
    - 严禁为了蹭流量在标题中捏造第三方大牌商标 (如 Samsung, Bosch, Nike 等)；若为知名品牌配件，必须保持第三方兼容声明格式:
-     "{target_brand} Third-Party [Item] Compatible with [Device]"；
+     "{target_brand} [Item] Compatible with [Device] (Color, Size)"；
 5. 严禁平台违规促销词:
    - 严禁出现 "Best", "Cheap", "Hot Sale", "Free Shipping", "100% Quality", "Deals", "Warranty" 等平台明令禁止的词汇。
 """
             output_schema = f"""{{
   "vertical": "{chosen_vertical}",
   "brand": "{target_brand}",
-  "makro_title": "{target_brand} 规范高权重英文商品标题 (自然融入搜索关键词, 长度80~{self.seo_title_max_len}字符)",
+  "makro_title": "{target_brand} 规范高权重英文商品标题 (自然融入搜索词, 末尾带括号规格如 (Black, XL), 长度80~{self.seo_title_max_len}字符)",
+  "makro_title_zh": "Makro 规范标题的精准中文翻译参考 (保留英文品牌/型号)",
+  "takealot_title_zh": "Takealot 原始标题的精准中文翻译参考 (保留英文品牌/型号)",
   "seo_keywords": ["高频搜索词1", "使用场景词2", "品类同义词3"],
   "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
   "attributes": {{
@@ -388,21 +747,49 @@ Reply ONLY with a JSON object:
             title_instructions = f"""
 【标题 (Title) 重写与品牌配件防侵权要求】:
 - 标题必须以品牌 "{target_brand}" 开头；
+- ★★★ 核心规格括号规范 (风格 B): 若商品具备明确颜色或尺寸规格，必须统一在标题末尾以英文圆括号注明 "(Color, Size)" 或 "(Color)" 或 "(Size)"；
 - 严禁包含 Takealot 促销词 (如 Deals, Sale, Warranty 等)；
 - 若为知名品牌配件（如 Apple/iPhone 保护套等），标题必须采用第三方兼容声明格式：
-  "{target_brand} Third-Party [Item] Compatible with [Device]"；
+  "{target_brand} [Item] Compatible with [Device] (Color, Size)"；
 - 标题长度控制在 60 ~ {self.seo_title_max_len} 字符。
 """
             output_schema = f"""{{
   "vertical": "{chosen_vertical}",
   "brand": "{target_brand}",
   "makro_title": "{target_brand} 规范英文商品标题",
+  "makro_title_zh": "Makro 规范标题的精准中文翻译参考 (保留英文品牌/型号)",
+  "takealot_title_zh": "Takealot 原始标题的精准中文翻译参考 (保留英文品牌/型号)",
   "seo_keywords": [],
   "description": "精炼且专业的英文商品卖点描述(4-6条特性)",
   "attributes": {{
     // 必须包含上述类目规范中声明的必填项与推荐项
   }}
 }}"""
+
+        if nature == "COMPATIBLE_ACCESSORY":
+            brand_nature_instructions = f"""
+【★★★ Jev 品牌形态裁定：知名品牌第三方兼容配件/耗材 (Ecosystem: {target_famous}) ★★★】:
+- 本商品已被 Jev 精确识别为知名品牌第三方配件/耗材 (如保护套/滤网/表带/线缆/手柄支架等)；
+- 必须严格遵循国际商标合理使用 (Nominative Fair Use) 规范：
+  1. 授权品牌 (Brand) 统一为 "{target_brand}"，严禁将原机主品牌 ({target_famous}) 填写为商品自有品牌；
+  2. ★★★【适用机型型号精准保全原则 (极其重要 - 严格遵守)】:
+     - 必须从原标题或规格参数中精准提取并完整保留具体的适用机型/代际（例如 iPhone 11、iPhone 15 Pro Max、Dyson V11、Galaxy S24 Ultra、PS5 等）！
+     - 严禁将具体型号省略为抽象品牌名（如严禁写成 Compatible with Apple 或 Compatible with Dyson，必须精确写成 Compatible with iPhone 11 或 Compatible with Dyson V11）！
+     - 标题必须严格采用标准兼容句式："{target_brand} [核心产品名] Compatible with [具体型号] (规格)"，严禁出现 "for ... Compatible with ..." 重复双介词冲突！
+  3. 严禁侵权拼接：严禁将第三方知名品牌直接置于产品词前 (如严禁 "{target_brand} Dyson Filter"，必须写 "{target_brand} Vacuum Filter Compatible with Dyson V11")！
+"""
+        elif nature == "ORIGINAL_BRAND":
+            brand_nature_instructions = f"""
+【★★★ Jev 品牌形态裁定：国际知名原装整机品牌 (Brand: {product.get('takealot_brand')}) ★★★】:
+- 本商品被识别为知名品牌原装整机；
+- 严禁强行使用自有品牌 "{target_brand}" 冒充原厂整机；标题应保留真实品名并规范表述。
+"""
+        else:
+            brand_nature_instructions = f"""
+【★★★ Jev 品牌形态裁定：纯中性白牌日用品 ★★★】:
+- 本商品为中性无牌商品，安全贴牌授权自有品牌 "{target_brand}"；
+- 标题以 "{target_brand} " 开头。
+"""
 
         prompt = f"""
 你是一名资深的跨境电商商品刊登专家，精通南非电商平台 Takealot 与 Makro (基于沃尔玛/Flipkart 规范) 的数据对齐。
@@ -411,6 +798,7 @@ Reply ONLY with a JSON object:
 【基本参数规范】:
 - 授权品牌: 必须强制使用指定的授权品牌 "{target_brand}"，所有原品牌一律替换为 "{target_brand}"。
 - 目标官方类目 (Vertical): "{chosen_vertical}"。
+{brand_nature_instructions}
 
 【Makro 官方类目 [{chosen_vertical}] 规格提取与字段规范 (极重要 - 严格遵守)】:
 {guidelines_text if guidelines_text else "请根据商品真实规格提取标准属性 (model_name, brand_colour, material, pack_of 等)。"}
@@ -459,7 +847,8 @@ Reply ONLY with a JSON object:
             active_client = self.client
             active_model = self.model
 
-        response = active_client.chat.completions.create(
+        response = self._call_llm_with_retry(
+            active_client,
             model=active_model,
             messages=[
                 {"role": "system", "content": "You are a professional e-commerce product catalog expert. Always reply with valid JSON."},
@@ -482,28 +871,54 @@ Reply ONLY with a JSON object:
 
         data["vertical"] = chosen_vertical
         data["clean_mode"] = applied_mode
+        data["mandatory_names"] = schema_summary.get("mandatory_names", [])
 
         # 代码保底：确保 Model Number 包含完整标题，并在配件命中知名品牌时兜底添加第三方兼容声明
         makro_title = data.get("makro_title") or raw_title
         attrs = data.get("attributes") or {}
 
-        # 检查是否涉及知名品牌且为配件
-        from .compliance_service import FAMOUS_BRANDS, ACCESSORY_KEYWORDS, COMPATIBILITY_KEYWORDS
-        full_text = f"{raw_title} {makro_title}".lower()
-        matched_brand = next((b for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', full_text)), None)
-        is_acc = any(re.search(rf'\b{acc}\b', full_text) for acc in ACCESSORY_KEYWORDS)
-        has_compat = any(kw in makro_title.lower() for kw in COMPATIBILITY_KEYWORDS)
+        # 智能重构配件兼容标题 (精准保留具体适用型号如 iPhone 11，彻底废弃 [:60] 硬截断与抽象品牌覆盖)
+        makro_title = reconstruct_accessory_title(
+            makro_title=makro_title,
+            raw_title=raw_title,
+            target_brand=target_brand,
+            nature=nature,
+            target_famous=target_famous,
+            specs=specs,
+            vertical=chosen_vertical,
+            max_len=self.seo_title_max_len
+        )
 
-        if matched_brand and is_acc and not has_compat:
-            brand_display = matched_brand.title()
-            clean_t = re.sub(rf'\b{matched_brand}\b', '', makro_title, flags=re.I).replace(target_brand, "").strip()
-            clean_t = re.sub(r'\s+', ' ', clean_t)
-            makro_title = f"{target_brand} Third-Party {clean_t[:60]} Compatible with {brand_display}"
-            data["makro_title"] = makro_title
+        data["brand_nature"] = nature
+        data["target_compatible_brand"] = target_famous
+        data["brand_nature_details"] = brand_nature_res
+        # 提取 clean size, colour 供规格融合与主字段更新 (严格排除'均码'/'多色'等非服装伪词)
+        extracted_color = clean_spec_value(attrs.get("colour") or attrs.get("brand_colour") or product.get("colour"))
+        extracted_size = clean_spec_value(attrs.get("size") or product.get("size"))
 
-        # 安全截断标题至最大字符限制
-        makro_title = truncate_title_safely(makro_title, self.seo_title_max_len)
+        if extracted_size:
+            data["size"] = extracted_size
+            attrs["size"] = extracted_size
+        if extracted_color:
+            data["colour"] = extracted_color
+            attrs["colour"] = extracted_color
+            attrs["brand_colour"] = extracted_color
+        if "pack_of" in attrs:
+            data["pack_of"] = str(attrs["pack_of"])
+
+        # 统一应用风格 B 括号规格规范: 将颜色/尺寸规范融入标题末尾 (Color, Size)
+        # 传入 vertical 参数，自动过滤数码配件类目中误入的纯数字长宽高伪尺寸 (如 15.8)
+        makro_title = format_title_with_specs(
+            makro_title,
+            brand=target_brand,
+            color=extracted_color,
+            size=extracted_size,
+            max_len=self.seo_title_max_len,
+            vertical=chosen_vertical
+        )
         data["makro_title"] = makro_title
+        data["title"] = makro_title
+        data["brand"] = target_brand
 
         # 提取与规整搜索关键词
         raw_seo_kw = data.get("seo_keywords") or []
@@ -512,46 +927,52 @@ Reply ONLY with a JSON object:
         else:
             data["seo_keywords"] = []
 
-        # 将去除品牌名后的规范标题注入 model_number 参数 (规避 Brand name should not be part of attribute value)
+        # 按照用户选项 1: 将去除品牌名后的完整标题 (包含括号规格) 写入 Model Name 与 Model Number
         clean_mn = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', makro_title, flags=re.I)
         clean_mn = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
         attrs["model_number"] = clean_mn[:250] if clean_mn else "STD-01"
-
-        if "model_name" in attrs:
-            clean_mname = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', str(attrs["model_name"]), flags=re.I)
-            clean_mname = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mname, flags=re.I).strip(' -_,:;')
-            attrs["model_name"] = clean_mname[:40] if clean_mname else "Standard"
-
-        # 提取 clean size, colour, pack_of 供商品主字段更新
-        if "size" in attrs:
-            clean_s = str(attrs["size"]).strip()
-            if clean_s and clean_s != "均码":
-                data["size"] = clean_s
-        if "colour" in attrs or "brand_colour" in attrs:
-            c = attrs.get("colour") or attrs.get("brand_colour")
-            if c and str(c) != "多色":
-                data["colour"] = str(c)
-        if "pack_of" in attrs:
-            data["pack_of"] = str(attrs["pack_of"])
+        attrs["model_name"] = truncate_title_safely(clean_mn, 120) if clean_mn else "Standard"
 
         data["attributes"] = attrs
+
+        # 确保双语中文翻译存在
+        from .translation_service import TranslationService
+        if not data.get("takealot_title_zh") and raw_title:
+            data["takealot_title_zh"] = TranslationService.translate_title(raw_title, db=self.db)
+        if not data.get("makro_title_zh") and makro_title:
+            data["makro_title_zh"] = TranslationService.translate_title(makro_title, db=self.db)
             
         return data
 
     def _fallback_rule_clean(self, product: Dict[str, Any], target_brand: str) -> Dict[str, Any]:
         """无大模型 API Key 时的智能全品类启发式清洗"""
-        raw_title = product.get("takealot_title", "")
-        raw_cat = product.get("takealot_category", "")
+        raw_title = product.get("takealot_title") or product.get("title") or ""
+        raw_cat = product.get("takealot_category") or product.get("category_path") or product.get("category") or ""
         clean_digits = re.sub(r'\D', '', raw_title)[:6] or '1001'
         model_number = f"BS-{int(clean_digits)}"
 
+        # 提取规格参数 (颜色、尺码等)
+        specs = product.get("takealot_specs") or product.get("specs") or {}
+        if isinstance(specs, str):
+            try:
+                specs = json.loads(specs)
+            except Exception:
+                specs = {}
+        if not isinstance(specs, dict):
+            specs = {}
+
+        spec_colour = clean_spec_value(specs.get("colour") or specs.get("color") or product.get("colour"))
+        spec_size = clean_spec_value(specs.get("size") or product.get("size"))
+
         # 提取颜色
-        colour = "Multicolor"
-        colors = ["Yellow", "Black", "Blue", "Red", "Green", "White", "Grey", "Orange", "Pink"]
-        for c in colors:
-            if re.search(rf"\b{c}\b", raw_title, re.I):
-                colour = c
-                break
+        colour = spec_colour
+        if not colour:
+            colors = ["Yellow", "Black", "Blue", "Red", "Green", "White", "Grey", "Orange", "Pink", "Purple", "Brown"]
+            for c in colors:
+                if re.search(rf"\b{c}\b", raw_title, re.I):
+                    colour = c
+                    break
+        attr_colour = colour or "Multicolor"
 
         # 判断品类
         title_lower = raw_title.lower()
@@ -762,43 +1183,82 @@ Reply ONLY with a JSON object:
             from .vertical_service import VerticalService
             vertical = VerticalService.predict_vertical(title=raw_title, category=raw_cat, description=product.get("takealot_description", ""))
             clean_t = re.sub(r'[^\w\s-]', '', raw_title)[:60]
-            makro_title = f"{target_brand} Premium Quality {clean_t} ({colour})"
+            makro_title = f"{target_brand} Premium Quality {clean_t}"
             attrs = {
                 "model_name": "Standard Series",
                 "model_number": model_number,
-                "brand_colour": colour,
-                "colour": colour,
+                "brand_colour": attr_colour,
+                "colour": attr_colour,
                 "material": "Standard Quality Material",
                 "packaging_type": "Pack",
                 "sales_package": "1 Unit",
                 "ideal_for": "All Users",
                 "design": "Standard"
             }
-        # 检查是否涉及知名品牌且为配件
-        from .compliance_service import FAMOUS_BRANDS, ACCESSORY_KEYWORDS, COMPATIBILITY_KEYWORDS
-        full_text = f"{raw_title} {makro_title}".lower()
-        matched_brand = next((b for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', full_text)), None)
-        is_acc = any(re.search(rf'\b{acc}\b', full_text) for acc in ACCESSORY_KEYWORDS)
-        has_compat = any(kw in makro_title.lower() for kw in COMPATIBILITY_KEYWORDS)
+            if spec_size:
+                attrs["size"] = spec_size
+        # 检查是否涉及知名品牌且为配件 (结合 Jev 判定与本地库)
+        nature = "GENERIC_WHITE_LABEL"
+        target_famous = "NONE"
+        brand_nature_res = {}
+        try:
+            from .jev_service import JevService
+            brand_nature_res = JevService.decide_brand_nature(
+                title=raw_title,
+                brand=product.get('takealot_brand', ''),
+                category=raw_cat,
+                specs=specs,
+                description=product.get("takealot_description", ""),
+                db=self.db
+            )
+            nature = brand_nature_res.get("nature", "GENERIC_WHITE_LABEL")
+            target_famous = brand_nature_res.get("target_brand", "NONE")
+        except Exception as jfe:
+            logger.debug(f"保底清洗 Jev 品牌形态判定跳过: {jfe}")
 
-        if matched_brand and is_acc and not has_compat:
-            brand_display = matched_brand.title()
-            clean_t = re.sub(rf'\b{matched_brand}\b', '', makro_title, flags=re.I).replace(target_brand, "").strip()
-            clean_t = re.sub(r'\s+', ' ', clean_t)
-            makro_title = f"{target_brand} Third-Party {clean_t[:60]} Compatible with {brand_display}"
+        # 智能重构配件兼容标题 (精准保留具体机型如 iPhone 11，避免硬截断与抽象品牌覆盖)
+        makro_title = reconstruct_accessory_title(
+            makro_title=makro_title,
+            raw_title=raw_title,
+            target_brand=target_brand,
+            nature=nature,
+            target_famous=target_famous,
+            specs=specs,
+            vertical=vertical,
+            max_len=self.seo_title_max_len
+        )
 
-        # 截断与安全长度保护
-        makro_title = truncate_title_safely(makro_title, self.seo_title_max_len)
+        # 截断与安全长度保护，并以风格 B 规范注入颜色/尺寸规格 (过滤纯数字伪尺寸)
+        clean_c = clean_spec_value(attrs.get("colour") or attrs.get("brand_colour") or product.get("colour") or spec_colour or colour)
+        clean_s = clean_spec_value(attrs.get("size") or product.get("size") or spec_size)
+        makro_title = format_title_with_specs(
+            makro_title,
+            brand=target_brand,
+            color=clean_c,
+            size=clean_s,
+            max_len=self.seo_title_max_len,
+            vertical=vertical
+        )
 
-        # 确保 model_number 绝不包含目标品牌名
+        # 确保 model_number 与 model_name 绝不包含目标品牌名 (选项 1: 去品牌后的完整标题)
         clean_mn = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', makro_title, flags=re.I)
         clean_mn = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean_mn, flags=re.I).strip(' -_,:;')
         attrs["model_number"] = clean_mn[:250] if clean_mn else model_number
+        attrs["model_name"] = truncate_title_safely(clean_mn, 120) if clean_mn else "Standard"
+
+        from .translation_service import TranslationService
+        takealot_zh = TranslationService.translate_title(raw_title, db=self.db) if raw_title else ""
+        makro_zh = TranslationService.translate_title(makro_title, db=self.db) if makro_title else ""
 
         return {
             "vertical": vertical,
             "brand": target_brand,
             "makro_title": makro_title,
+            "makro_title_zh": makro_zh,
+            "takealot_title_zh": takealot_zh,
+            "brand_nature": nature,
+            "target_compatible_brand": target_famous,
+            "brand_nature_details": brand_nature_res,
             "seo_keywords": [],
             "description": product.get("takealot_description") or f"{raw_title}. Premium quality provided by {target_brand}.",
             "attributes": attrs

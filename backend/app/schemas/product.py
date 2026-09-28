@@ -27,6 +27,8 @@ class TakealotCollectRequest(BaseModel):
     takealot_specs: Optional[Dict[str, Any]] = None
     raw_images: List[str] = []
     variants: List[VariantCreate] = []
+    user_id: Optional[int] = None
+    collector_username: Optional[str] = None
 
 class ProductVariantResponse(BaseModel):
     id: int
@@ -66,7 +68,10 @@ class ProductResponse(BaseModel):
     
     status: str
     makro_vertical: Optional[str] = "bath_towel"
+    makro_vertical_zh: Optional[str] = None
     makro_title: Optional[str] = None
+    takealot_title_zh: Optional[str] = None
+    makro_title_zh: Optional[str] = None
     seo_keywords: Optional[List[str]] = []
     clean_mode: Optional[str] = "text"
     makro_description: Optional[str] = None
@@ -104,6 +109,8 @@ class ProductResponse(BaseModel):
 class ProductUpdateRequest(BaseModel):
     makro_vertical: Optional[str] = None
     makro_title: Optional[str] = None
+    takealot_title_zh: Optional[str] = None
+    makro_title_zh: Optional[str] = None
     makro_brand: Optional[str] = None
     makro_selling_price: Optional[float] = None
     makro_mrp: Optional[float] = None

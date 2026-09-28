@@ -11,14 +11,27 @@ class Store(Base):
     seller_id = Column(String(100), nullable=False, index=True)  # Makro Seller ID
     fk_csrf_token = Column(String(255), nullable=True)  # CSRF Token
     cookie = Column(Text, nullable=True)  # 登录态 Cookie
+    default_location_id = Column(String(100), nullable=True)  # 默认仓库 Location ID (如 LOC8fe01...)
     default_brand = Column(String(100), default="Beishi")  # 店铺默认上架品牌
     is_active = Column(Boolean, default=True)  # 是否启用
     is_default = Column(Boolean, default=False)  # 是否为默认店铺
     notes = Column(String(255), nullable=True)  # 备注说明
+    
+    # 自动化登录凭据与多邮箱配置
+    login_email = Column(String(150), nullable=True)  # Makro 登录邮箱
+    login_password = Column(String(150), nullable=True)  # Makro 登录密码
+    imap_server = Column(String(100), nullable=True)  # IMAP 服务器地址 (如 imap.gmail.com, imap.163.com)
+    imap_port = Column(Integer, default=993)  # IMAP 端口 (默认 993)
+    imap_user = Column(String(150), nullable=True)  # IMAP 邮箱账号 (若空则默认同 login_email)
+    imap_password = Column(String(150), nullable=True)  # 邮箱应用专用密码 / 客户端授权码
+
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+    authorized_users = relationship("User", secondary="user_stores", back_populates="authorized_stores")
     listings = relationship("ProductStoreListing", back_populates="store", cascade="all, delete-orphan")
+    online_listings = relationship("MakroListing", back_populates="store", cascade="all, delete-orphan")
+    orders = relationship("MakroOrder", back_populates="store", cascade="all, delete-orphan")
 
 class ProductStoreListing(Base):
     __tablename__ = "product_store_listings"

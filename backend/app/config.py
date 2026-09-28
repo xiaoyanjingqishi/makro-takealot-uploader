@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     DEFAULT_PKG_WEIGHT: str = "0.5"
 
     # AI 大模型配置 (支持 通义千问 Qwen 与 DeepSeek)
-    AI_PROVIDER: str = "qwen"  # 'qwen' or 'deepseek'
+    AI_PROVIDER: str = "deepseek"  # 'qwen' or 'deepseek'
     
     # 通义千问 (DashScope OpenAI 兼容接口)
     QWEN_API_KEY: str = ""
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # DeepSeek
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_MODEL: str = "deepseek-flash"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
     DEEPSEEK_VISION_MODEL: str = "deepseek-flash"
 
     # 上品执行模式: 'backend' (后端发包) 或 'extension' (插件在浏览器上下文代发)
@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     # AI 清洗双模式配置: 'text' (纯文本快速清洗) 或 'vision' (图文多模态首图深度校准)
     DEFAULT_CLEANER_MODE: str = "text"
     DEFAULT_QWEN_VISION_MODEL: str = "qwen-vl-plus"
+
+    # Jev (TypeSafe AI) 决策模型配置
+    JEV_API_KEY: str = "apikey_2226d311fb43caa74686bbcff3d030298c62_74872cb4dab92e7fb84afdeb3d6ccf73d8aa28d4746e728543e42efafcf88e1c"
+    JEV_BASE_URL: str = "https://api.typesafe.ai"
+    JEV_MODEL: str = "jev-latest"
+    JEV_ENABLED: bool = True
 
     class Config:
         env_file = ".env"

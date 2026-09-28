@@ -6636,10 +6636,10 @@ function detectBrandInScope(scope) {
 }
 
 function showBrandConfirmBubble(targetBtn, riskReason) {
-  document.querySelectorAll('.tk-brand-bubble').forEach(b => b.remove());
+  document.querySelectorAll('.makro-brand-bubble').forEach(b => b.remove());
   const bubble = document.createElement('div');
-  bubble.className = 'tk-brand-bubble';
-  bubble.innerHTML = `⚠️ 检测到风险: <span class="tk-brand-name">${riskReason}</span>，请确认是否采集！`;
+  bubble.className = 'makro-brand-bubble';
+  bubble.innerHTML = `⚠️ 检测到风险: <span class="makro-brand-name">${riskReason}</span>，请确认是否采集！`;
   document.body.appendChild(bubble);
 
   const rect = targetBtn.getBoundingClientRect();
@@ -6661,33 +6661,33 @@ function showBrandConfirmBubble(targetBtn, riskReason) {
 function handleBrandConfirmGuard(btn, scope, defaultText) {
   const riskReason = detectBrandInScope(scope);
   if (!riskReason) {
-    delete btn.dataset.brandConfirmed;
+    delete btn.dataset.makroBrandConfirmed;
     return false;
   }
-  if (btn.dataset.brandConfirmed === '1') {
-    delete btn.dataset.brandConfirmed;
-    if (btn._brandConfirmTimer) { clearTimeout(btn._brandConfirmTimer); btn._brandConfirmTimer = null; }
-    btn.classList.remove('warning');
+  if (btn.dataset.makroBrandConfirmed === '1') {
+    delete btn.dataset.makroBrandConfirmed;
+    if (btn._makroBrandConfirmTimer) { clearTimeout(btn._makroBrandConfirmTimer); btn._makroBrandConfirmTimer = null; }
+    btn.classList.remove('warning', 'makro-warning');
     return false;
   }
-  btn.dataset.brandConfirmed = '1';
+  btn.dataset.makroBrandConfirmed = '1';
   btn.innerHTML = '⚠️ 确认采集';
-  btn.classList.add('warning');
+  btn.classList.add('warning', 'makro-warning');
   showBrandConfirmBubble(btn, riskReason);
 
-  if (btn._brandConfirmTimer) clearTimeout(btn._brandConfirmTimer);
-  btn._brandConfirmTimer = setTimeout(() => {
-    if (btn.dataset.brandConfirmed === '1') {
-      delete btn.dataset.brandConfirmed;
+  if (btn._makroBrandConfirmTimer) clearTimeout(btn._makroBrandConfirmTimer);
+  btn._makroBrandConfirmTimer = setTimeout(() => {
+    if (btn.dataset.makroBrandConfirmed === '1') {
+      delete btn.dataset.makroBrandConfirmed;
       btn.innerHTML = defaultText;
-      btn.classList.remove('warning');
+      btn.classList.remove('warning', 'makro-warning');
     }
-    btn._brandConfirmTimer = null;
+    btn._makroBrandConfirmTimer = null;
   }, 10000);
   return true;
 }
 
-window.TkBrandChecker = {
+const checkerObj = {
   checkTitle: checkTitleRisk,
   checkTitleForRestrictedBrand: checkTitleForRestrictedBrand,
   checkBlacklistKeywords: checkBlacklistKeywords,
@@ -6695,3 +6695,9 @@ window.TkBrandChecker = {
   showBubble: showBrandConfirmBubble,
   guard: handleBrandConfirmGuard
 };
+
+window.MakroBrandChecker = checkerObj;
+if (!window.TkBrandChecker) {
+  window.TkBrandChecker = checkerObj;
+}
+

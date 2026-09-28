@@ -77,7 +77,13 @@ class VerticalSemanticRetriever:
         "wrench_set": ["socket wrench", "ratchet wrench", "spanner set", "torque wrench", "hex key", "allen key"],
         "curtain_accessory": ["curtain tieback", "curtain rod", "curtain hook", "drapery holdback", "curtain clip"],
         "cleaning_cloth": ["nano cloth", "scratch remover cloth", "car cleaning cloth", "microfiber duster", "polishing rag"],
-        "car_seat_belt": ["seat belt buckle", "seatbelt extension", "safety belt clip", "car seatbelt buckle"]
+        "car_seat_belt": ["seat belt buckle", "seatbelt extension", "safety belt clip", "car seatbelt buckle"],
+        "lockset": ["door lock", "tailgate lock", "boot lock", "car lock", "door latch", "lock latch", "latch mechanism", "trunk lock", "automotive lock", "car door lock", "tailgate latch", "door lock actuator"],
+        "security_lock": ["laptop lock", "cable lock", "computer lock", "kensington lock", "pc lock", "device lock"],
+        "door_lock": ["room door lock", "entrance lock", "interior door lock", "mortise lock", "cylinder lock", "gate lock"],
+        "gear_lock": ["gear shift lock", "car gear lock", "transmission lock"],
+        "ignition_lock_cylinder": ["ignition lock", "ignition switch lock", "key cylinder"],
+        "latch_bolt": ["door latch bolt", "hasp latch", "door bolt", "barrel bolt"]
     }
 
     def __init__(self):
@@ -97,6 +103,47 @@ class VerticalSemanticRetriever:
             return []
         words = re.findall(r'[a-zA-Z0-9]+', str(text).lower())
         return [w for w in words if len(w) > 1 and w not in cls.STOP_WORDS]
+
+    def load_custom_synonyms(self, custom_synonyms_dict_or_json: Any):
+        """动态加载运营自定义同义词并增量热更新内存倒排索引"""
+        if not custom_synonyms_dict_or_json:
+            return
+        data = custom_synonyms_dict_or_json
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                return
+        if not isinstance(data, dict):
+            return
+
+        for v_name, syn_list in data.items():
+            if not isinstance(syn_list, list):
+                if isinstance(syn_list, str):
+                    syn_list = [syn_list]
+                else:
+                    continue
+            for s in syn_list:
+                s_toks = self.tokenize(s)
+                if v_name in self.vert_info:
+                    self.vert_info[v_name]["syn_tokens"].update(s_toks)
+                for tok in s_toks:
+                    if v_name not in self.index[tok]:
+                        self.index[tok].append(v_name)
+
+    @classmethod
+    def sync_custom_synonyms_from_db(cls, db=None):
+        """从数据库读取自定义同义词并热加载"""
+        if not db:
+            return
+        try:
+            from ..models.setting import SystemSetting
+            setting = db.query(SystemSetting).filter(SystemSetting.key == "custom_category_synonyms").first()
+            if setting and setting.value:
+                inst = cls.get_instance()
+                inst.load_custom_synonyms(setting.value)
+        except Exception as e:
+            logger.debug(f"加载自定义同义词跳过: {e}")
 
     def _build_index(self):
         if not VERTICALS_FILE.exists():
@@ -505,6 +552,10 @@ class VerticalService:
         return list(verticals.keys())
 
     @classmethod
+    def list_verticals(cls) -> list:
+        return cls.get_all_vertical_names()
+
+    @classmethod
     def predict_vertical(cls, title: str = "", category: str = "", specs: any = None, description: str = "") -> str:
         """
         基于标题、Takealot 类目树、规格参数与描述，智能推断最适合的 Makro 官方垂直类目 (Vertical)
@@ -806,6 +857,7 @@ class VerticalService:
         return {
             "vertical": vertical,
             "mandatory": mandatory_items,
+            "mandatory_names": [m["name"] for m in mandatory_items],
             "recommended": recommended_items,
             "allowed_names": list(allowed_attr_names),
             "guidelines_text": "\n".join(guidelines_lines)

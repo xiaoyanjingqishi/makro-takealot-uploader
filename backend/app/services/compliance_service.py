@@ -178,14 +178,14 @@ class ComplianceService:
           - 第二轮: 主图视觉与运输合规风控 (Qwen-VL + DeepSeek-Flash 视觉并发)
         比对两方结论: 一致自动合并，分歧标记为 DISPUTED
         """
-        title = product_data.get("takealot_title") or ""
+        title = product_data.get("takealot_title") or product_data.get("title") or ""
         makro_title = product_data.get("makro_title") or ""
-        desc = product_data.get("takealot_description") or ""
-        specs = product_data.get("takealot_specs") or ""
+        desc = product_data.get("takealot_description") or product_data.get("description") or ""
+        specs = product_data.get("takealot_specs") or product_data.get("specs") or ""
         specs_str = json.dumps(specs, ensure_ascii=False) if isinstance(specs, (dict, list)) else str(specs)
-        category = product_data.get("takealot_category") or ""
-        target_brand_name = product_data.get("makro_brand") or "Beishi"
-        raw_images = product_data.get("raw_images") or []
+        category = product_data.get("takealot_category") or product_data.get("category_path") or product_data.get("category") or ""
+        target_brand_name = product_data.get("makro_brand") or product_data.get("brand") or "Beishi"
+        raw_images = product_data.get("raw_images") or product_data.get("images") or []
         if isinstance(raw_images, str):
             try:
                 raw_images = json.loads(raw_images)
@@ -206,13 +206,14 @@ class ComplianceService:
         )
 
         # ----------------------------------------------------
-        # 第一轮: 标题与品牌合规检测 (双 AI 并发文本审查)
+        # 第一轮: 标题与品牌合规检测 (三 AI 并发文本审查: Qwen + DeepSeek + Jev)
         # ----------------------------------------------------
         qwen_title_res = {"tested": False, "risk_level": "SAFE", "summary": "未启用或未配置"}
         deepseek_title_res = {"tested": False, "risk_level": "SAFE", "summary": "未启用或未配置"}
+        jev_title_res = {"tested": False, "risk_level": "SAFE", "violation_score": 0.0, "confidence": 0.0, "summary": "未启用或未配置"}
 
         if check_ai_title:
-            qwen_title_res, deepseek_title_res = self._run_round1_text_audit(
+            qwen_title_res, deepseek_title_res, jev_title_res = self._run_round1_text_audit(
                 raw_title=title,
                 makro_title=makro_title,
                 brand=target_brand_name,
@@ -230,15 +231,10 @@ class ComplianceService:
         qwen_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "SAFE", "summary": "未执行视觉审查"}
         deepseek_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "SAFE", "summary": "未执行视觉审查"}
 
-        # 智能剪枝优化：若底层硬性规则已拦截绝对违禁 (蓝牙/WiFi/液体等)，商品不可上架，智能跳过视觉审查节约 ~1700 Tokens
-        is_hard_prohibited = bool(local_rules_res.get("prohibited_items"))
-        if is_hard_prohibited:
-            skip_msg = f"已触发平台硬性违禁拦截 ({', '.join(local_rules_res['prohibited_items'])})，智能跳过视觉审查以大幅节约 Token"
-            qwen_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "PROHIBITED", "summary": skip_msg}
-            deepseek_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "PROHIBITED", "summary": skip_msg}
-        elif check_image and first_img_url:
+        # 第二轮视觉审查全量执行 (已废弃底层死板硬拦截剪枝，100% 由双 AI 多模态视觉审查)
+        if check_image and first_img_url:
             all_known_brands = list(dict.fromkeys(
-                local_rules_res["detected_brands"] +
+                local_rules_res.get("detected_brands", []) +
                 qwen_title_res.get("detected_brands_or_ips", []) +
                 deepseek_title_res.get("detected_brands_or_ips", [])
             ))
@@ -247,8 +243,9 @@ class ComplianceService:
                 known_brands=all_known_brands
             )
 
+
         # ----------------------------------------------------
-        # 会审裁决与分歧聚合器 (Reconciliation Engine)
+        # 会审裁决与分歧聚合器 (Reconciliation Engine - 升级支持 3-AI 并发共识)
         # ----------------------------------------------------
         final_result = self._reconcile_dual_verdicts(
             local_rules=local_rules_res,
@@ -257,7 +254,8 @@ class ComplianceService:
             qwen_image=qwen_image_res,
             deepseek_image=deepseek_image_res,
             first_img_url=first_img_url,
-            target_brand_name=target_brand_name
+            target_brand_name=target_brand_name,
+            jev_title=jev_title_res
         )
 
         return final_result
@@ -272,10 +270,13 @@ class ComplianceService:
         brand: str,
         category: str,
         description: str
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """并发运行千问与 DeepSeek-Flash 的第一轮文本审查"""
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        """并发运行千问、DeepSeek-Flash 与 Jev (TypeSafe AI) 的第一轮文本审查 (3-AI 并行)"""
         qwen_res = {"tested": False, "risk_level": "SAFE", "reasons": [], "summary": "Qwen 客户端未配置"}
         deepseek_res = {"tested": False, "risk_level": "SAFE", "reasons": [], "summary": "DeepSeek 客户端未配置"}
+        jev_res = {"tested": False, "risk_level": "SAFE", "violation_score": 0.0, "confidence": 0.0, "summary": "Jev 未配置或停用"}
+
+        target_title = (makro_title or raw_title or "").strip()
 
         prompt = self._build_title_ip_prompt(
             raw_title=raw_title,
@@ -309,10 +310,57 @@ class ComplianceService:
                 makro_title=makro_title
             )
 
-        # 双 AI 并发推理 (两方约 0.6s~0.8s 异步同步完成)
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        def _call_jev():
+            try:
+                from .jev_service import JevService
+                res = JevService.evaluate_compliance(
+                    title=target_title,
+                    brand=brand,
+                    category=category,
+                    description=description
+                )
+                if res.get("is_fallback") and res.get("error"):
+                    return {
+                        "tested": False,
+                        "risk_level": "SAFE",
+                        "violation_score": 0.0,
+                        "confidence": 0.0,
+                        "summary": f"Jev 未启用或异常: {res.get('error')[:40]}"
+                    }
+                r_level = res.get("decision", "SAFE")
+                v_score = res.get("violation_score", 0.0)
+                conf = res.get("confidence", 1.0)
+                nature = res.get("nature", "GENERIC_WHITE_LABEL")
+                target_brand_res = res.get("target_brand", "NONE")
+                return {
+                    "tested": True,
+                    "ai_name": "Jev-Latest (TypeSafe)",
+                    "risk_level": r_level,
+                    "violation_score": v_score,
+                    "confidence": conf,
+                    "probabilities": res.get("probabilities", {}),
+                    "brand_nature": nature,
+                    "target_brand": target_brand_res,
+                    "nature_confidence": res.get("nature_confidence", 0.8),
+                    "nature_probabilities": res.get("nature_probabilities", {}),
+                    "latency_ms": res.get("latency_ms", 0),
+                    "summary": f"Jev 决策: [{r_level}], 形态: [{nature}], 违规分: {v_score:.2f}, 置信度: {conf*100:.0f}% ({res.get('latency_ms')}ms)"
+                }
+            except Exception as e:
+                logger.warning(f"Jev 合规评估异常: {e}")
+                return {
+                    "tested": False,
+                    "risk_level": "SAFE",
+                    "violation_score": 0.0,
+                    "confidence": 0.0,
+                    "summary": f"Jev 审查异常: {str(e)[:40]}"
+                }
+
+        # 三 AI 并发推理 (Jev 约 0.2s 极速返回，LLM 约 0.6s~1.2s，并行总耗时保持不变)
+        with ThreadPoolExecutor(max_workers=3) as executor:
             fut_q = executor.submit(_call_qwen)
             fut_d = executor.submit(_call_deepseek)
+            fut_j = executor.submit(_call_jev)
             try:
                 qwen_res = fut_q.result(timeout=40.0)
             except Exception as e:
@@ -323,8 +371,13 @@ class ComplianceService:
             except Exception as e:
                 logger.warning(f"DeepSeek 文本审查超时或异常: {e}")
                 deepseek_res = {"tested": False, "risk_level": "SAFE", "reasons": [f"DeepSeek 调用异常: {str(e)[:50]}"], "summary": "DeepSeek 审查异常"}
+            try:
+                jev_res = fut_j.result(timeout=15.0)
+            except Exception as e:
+                logger.warning(f"Jev 决策审查超时或异常: {e}")
+                jev_res = {"tested": False, "risk_level": "SAFE", "violation_score": 0.0, "confidence": 0.0, "summary": f"Jev 调用异常: {str(e)[:50]}"}
 
-        return qwen_res, deepseek_res
+        return qwen_res, deepseek_res, jev_res
 
     def _build_title_ip_prompt(
         self,
@@ -351,16 +404,16 @@ class ComplianceService:
         return f"""审查跨境电商商品标题合规与侵权风险，仅返回合法JSON，严禁输出思维过程与闲聊。
 【规则】:
 1. 商标侵权: 严查受保护大牌(如Apple,Stanley,Nike,Dyson等)。区分语境: 颜色/通用词(如apple green)合规，指代受保护品牌违规。
-2. 影视IP: 严禁未经授权蹭用知名动漫潮玩IP(如Sanrio,Disney,Marvel,Pokemon,Labubu等)。
+2. 影视IP: 严禁未经授权蹭用知名动漫潮玩/游戏IP(如Sanrio,Disney,Marvel,Pokemon,One Piece,Frozen,Labubu等)。注意区分语境: 商品件数/规格词(如1 piece, 2 pieces)属合规数量词，严禁误判为海贼王One Piece！冷冻甜品/冰块模具(如frozen mold)属合规用途词，严禁误判为冰雪奇缘Frozen！仅指代动漫角色/衍生周边才判定违规。
 3. 配件规范: 兼容大牌配件必须含'Compatible with'或'For'；严禁大牌开头冒充原厂；严禁连续堆砌>=3个大牌。
-4. 禁运技术: 严禁蓝牙(Bluetooth)、WiFi、红外线(Infrared)。
-5. 评级: SAFE(合规/通用品/规范配件), RISK(配件缺少Compatible with声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售技术)。{few_shot_block}
+4. 禁运技术与物品: 严禁蓝牙(Bluetooth)、WiFi、红外线(Infrared)等无线发射设备；严禁液体/香水/精油/乳液/膏霜/易燃化学品跨境航空禁运品。注意区分形态: 硅胶模具、空瓶容器、化妆刷/粉扑、刮痧板按摩石、喷头喷枪工具、无源转接线等实体用具均属合规SAFE；仅商品本身实际灌装/包含液体、膏体、化学药剂才判定为PROHIBITED违规禁运。
+5. 评级: SAFE(合规/通用品/规范配件/实体工具), RISK(配件缺少Compatible with声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售无线设备/灌装液体航空违禁品)。{few_shot_block}
 待审数据:
 - 标题: {target_title}
 - 授权自有品牌: {brand or "Beishi"}
 - 类目: {category or "通用"}{desc_line}
 返回JSON:
-{{"has_risk":false,"risk_level":"SAFE|RISK|PROHIBITED","detected_brands_or_ips":[],"violation_type":"NONE|TRADEMARK|COPYRIGHT_IP|BRAND_SPAMMING|MISSING_COMPATIBILITY|PROHIBITED_TECH","reasons":["简明中文理由(1句)"],"recommended_title":"合规英文建议标题"}}"""
+{{"has_risk":false,"risk_level":"SAFE|RISK|PROHIBITED","detected_brands_or_ips":[],"violation_type":"NONE|TRADEMARK|COPYRIGHT_IP|BRAND_SPAMMING|MISSING_COMPATIBILITY|PROHIBITED_TECH|PROHIBITED_LIQUID","reasons":["简明中文理由(1句)"],"recommended_title":"合规英文建议标题"}}"""
 
     def _invoke_text_model(
         self,
@@ -654,20 +707,16 @@ class ComplianceService:
         qwen_image: Dict[str, Any],
         deepseek_image: Dict[str, Any],
         first_img_url: Optional[str],
-        target_brand_name: str
+        target_brand_name: str,
+        jev_title: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         裁决聚合器 (Reconciliation Engine)：
         1. 计算 Qwen 综合评级 = max(Qwen 文本, Qwen 视觉)
         2. 计算 DeepSeek 综合评级 = max(DeepSeek 文本, DeepSeek 视觉)
-        3. 进行细粒度归因分析：
-           - 品牌检出归因：区分双方同时检出、DeepSeek 独家检出、千问独家检出
-           - 首图视觉归因：对比 Logo、违禁特征与双方各自评级
-           - 轮次级共识：分别评估第一轮（文本）与第二轮（首图）是否一致
-        4. 判定分歧机制与根因溯源 (Dispute Root Cause)：
-           - 精确指示分歧来源（第一轮文本 / 第二轮首图 / 双轮）
-           - 输出通俗易懂的仲裁参考建议
-        5. 本地规则硬性兜底：若本地规则检出绝对违禁 (蓝牙/WiFi)，提升至 PROHIBITED
+        3. 接入 Jev (TypeSafe AI) 决策模型，升级为【三 AI 并发交叉会审与加权仲裁】
+        4. 细粒度归因分析与分歧根因溯源
+        5. 本地规则硬性兜底防护
         """
         # 千问单方综合
         qwen_text_level = qwen_title.get("risk_level", "SAFE") if qwen_title.get("tested") else "SAFE"
@@ -678,6 +727,13 @@ class ComplianceService:
         deepseek_text_level = deepseek_title.get("risk_level", "SAFE") if deepseek_title.get("tested") else "SAFE"
         deepseek_img_level = deepseek_image.get("risk_level", "SAFE") if deepseek_image.get("tested") else "SAFE"
         deepseek_overall = get_higher_risk(deepseek_text_level, deepseek_img_level)
+
+        # Jev 评级与违规分 (System 1 独立裁判)
+        jev_tested = bool(jev_title and jev_title.get("tested"))
+        jev_level = str(jev_title.get("risk_level", "SAFE")).upper() if jev_tested else "SAFE"
+        jev_score = float(jev_title.get("violation_score", 0.0)) if jev_tested else 0.0
+        jev_conf = float(jev_title.get("confidence", 1.0)) if jev_tested else 0.0
+        jev_latency = jev_title.get("latency_ms", 0) if jev_tested else 0
 
         # 组装千问专属快照
         qwen_verdict = {
@@ -693,6 +749,24 @@ class ComplianceService:
             "overall_risk": deepseek_overall,
             "title_audit": deepseek_title,
             "image_audit": deepseek_image
+        }
+
+        # 组装 Jev 专属快照 (含品牌形态极速三元判定)
+        jev_brand_nature = jev_title.get("brand_nature", "GENERIC_WHITE_LABEL") if jev_title else "GENERIC_WHITE_LABEL"
+        jev_target_brand = jev_title.get("target_brand", "NONE") if jev_title else "NONE"
+        jev_verdict = {
+            "tested": jev_tested,
+            "ai_name": "Jev-Latest (TypeSafe)",
+            "risk_level": jev_level,
+            "violation_score": jev_score,
+            "confidence": jev_conf,
+            "probabilities": jev_title.get("probabilities", {}) if jev_title else {},
+            "brand_nature": jev_brand_nature,
+            "target_brand": jev_target_brand,
+            "nature_confidence": jev_title.get("nature_confidence", 0.8) if jev_title else 0.8,
+            "nature_probabilities": jev_title.get("nature_probabilities", {}) if jev_title else {},
+            "latency_ms": jev_latency,
+            "summary": jev_title.get("summary", "") if jev_title else "未测试"
         }
 
         # 品牌检出归因分析 (Brand Attribution Breakdown)
@@ -743,7 +817,9 @@ class ComplianceService:
             "deepseek_only_brands": deepseek_only_brands,
             "source_summary": brand_source_summary,
             "is_accessory": local_rules.get("brand_info", {}).get("is_accessory", True),
-            "recommended_title": recommended_title
+            "recommended_title": recommended_title,
+            "brand_nature": jev_brand_nature,
+            "target_compatible_brand": jev_target_brand
         }
 
         vision_breakdown = {
@@ -781,14 +857,13 @@ class ComplianceService:
             "summary": f"双方一致判定为 [{qwen_img_level}]" if round_2_match else f"分歧: 千问 [{qwen_img_level}] vs DeepSeek [{deepseek_img_level}]"
         }
 
-        prohibited_items = list(local_rules.get("prohibited_items", []))
-        risk_reasons = list(local_rules.get("risk_reasons", []))
-        suggestions = list(local_rules.get("suggestions", []))
+        prohibited_items = []
+        risk_reasons = []
+        suggestions = []
 
         if image_logos:
             risk_reasons.append(f"【首图 Logo 识别】画面检出商标/标志: [{', '.join(image_logos)}]")
         if image_prohibs:
-            prohibited_items.append("首图运输违禁特征")
             risk_reasons.append(f"【首图运输违禁】画面检出航空禁运形态: [{', '.join(image_prohibs)}]")
 
         if recommended_title and recommended_title not in suggestions:
@@ -800,11 +875,78 @@ class ComplianceService:
         reconciliation_summary = ""
         final_status = "SAFE"
         dispute_root_cause = None
+        consensus_ratio = "1:0"
 
-        if has_dual:
+        if has_dual and jev_tested:
+            # ★★★ 三 AI (Qwen + DeepSeek + Jev) 并发交叉仲裁 ★★★
+            if qwen_overall == deepseek_overall == jev_level:
+                final_status = qwen_overall
+                consensus_ratio = "3:0"
+                is_disputed = False
+                reconciliation_summary = f"三 AI 并发交叉会审达成 3:0 全票共识：千问、DeepSeek 与 Jev 全票判定为 [{final_status}] (Jev 违规分: {jev_score:.2f})"
+                for r in qwen_title.get("reasons", []) + deepseek_title.get("reasons", []):
+                    if r and r not in risk_reasons:
+                        risk_reasons.append(r)
+            elif qwen_overall == deepseek_overall:
+                consensus_ratio = "2:1"
+                # 安全一票否决检查：若 LLM 判安全但 Jev 极高置信度判定 PROHIBITED 且违规分>=0.85
+                if qwen_overall == "SAFE" and jev_level == "PROHIBITED" and jev_score >= 0.85:
+                    final_status = "PROHIBITED"
+                    is_disputed = False
+                    reconciliation_summary = f"Jev 高确信检出高危违禁/假冒侵权 (违规分: {jev_score:.2f})，触发一票阻断安全防护"
+                    risk_reasons.insert(0, f"Jev 独立决策引擎一票拦截：{jev_title.get('summary', '检出严重知识产权侵权或违禁品')}")
+                else:
+                    final_status = qwen_overall
+                    is_disputed = False
+                    reconciliation_summary = f"三 AI 交叉会审达成 2:1 多数决议：千问与 DeepSeek 共同判定为 [{final_status}] (Jev 独立参考: [{jev_level}], 违规分: {jev_score:.2f})"
+                    for r in qwen_title.get("reasons", []) + deepseek_title.get("reasons", []):
+                        if r and r not in risk_reasons:
+                            risk_reasons.append(r)
+            elif qwen_overall == jev_level:
+                # Qwen 与 Jev 达成一致，Jev 作为独立裁判打破 DeepSeek 分歧平局！
+                final_status = qwen_overall
+                consensus_ratio = "2:1"
+                is_disputed = False
+                reconciliation_summary = f"三 AI 交叉会审达成 2:1 多数决议：通义千问与 Jev 共同裁定为 [{final_status}] (Jev 独立打破 DeepSeek 分歧平局，违规分: {jev_score:.2f})"
+                for r in qwen_title.get("reasons", []):
+                    if r and r not in risk_reasons:
+                        risk_reasons.append(r)
+            elif deepseek_overall == jev_level:
+                # DeepSeek 与 Jev 达成一致，Jev 作为独立裁判打破 Qwen 分歧平局！
+                final_status = deepseek_overall
+                consensus_ratio = "2:1"
+                is_disputed = False
+                reconciliation_summary = f"三 AI 交叉会审达成 2:1 多数决议：DeepSeek 与 Jev 共同裁定为 [{final_status}] (Jev 独立打破千问分歧平局，违规分: {jev_score:.2f})"
+                for r in deepseek_title.get("reasons", []):
+                    if r and r not in risk_reasons:
+                        risk_reasons.append(r)
+            else:
+                # 三方各不相同 (SAFE, RISK, PROHIBITED) -> 彻底分歧
+                final_status = "DISPUTED"
+                consensus_ratio = "DISPUTED"
+                is_disputed = True
+                title_msg = "【三 AI 产生多元认知分歧】"
+                detail_msg = f"通义千问 [{qwen_overall}] vs DeepSeek [{deepseek_overall}] vs Jev [{jev_level}] (违规分: {jev_score:.2f})。"
+                rec_msg = "三家模型意见完全分散，请人工综合审查标题及首图，点击下方对应按钮进行终审裁决。"
+                dispute_root_cause = {
+                    "is_disputed": True,
+                    "stage": "THREE_AI_SPLIT",
+                    "title": title_msg,
+                    "detail": detail_msg,
+                    "recommendation": rec_msg,
+                    "qwen_overall": qwen_overall,
+                    "deepseek_overall": deepseek_overall,
+                    "jev_overall": jev_level,
+                    "jev_score": jev_score
+                }
+                reconciliation_summary = f"{title_msg} {detail_msg}"
+                risk_reasons.insert(0, reconciliation_summary)
+                suggestions.insert(0, f"分歧待仲裁：{rec_msg}")
+        elif has_dual:
             if qwen_overall == deepseek_overall:
                 final_status = qwen_overall
                 is_disputed = False
+                consensus_ratio = "2:0"
                 reconciliation_summary = f"双 AI 交叉会审达成一致：千问与 DeepSeek 共同判定为 [{final_status}]"
                 for r in qwen_title.get("reasons", []) + deepseek_title.get("reasons", []):
                     if r and r not in risk_reasons:
@@ -812,6 +954,7 @@ class ComplianceService:
             else:
                 final_status = "DISPUTED"
                 is_disputed = True
+                consensus_ratio = "1:1"
                 
                 # 精确归因：第一轮分歧、第二轮分歧、或双轮均分歧
                 if round_1_match and not round_2_match:
@@ -873,15 +1016,35 @@ class ComplianceService:
             for r in deepseek_title.get("reasons", []):
                 if r and r not in risk_reasons:
                     risk_reasons.append(r)
-        else:
-            final_status = local_rules.get("compliance_status", "SAFE")
-            reconciliation_summary = "本地规则引擎检测完成 (未启用/未配置大模型客户端)"
-
-        # 本地硬性规则兜底 (若检出蓝牙、WiFi 或绝对假冒，硬性拉至 PROHIBITED 消除漏网之鱼)
-        if local_rules.get("prohibited_items"):
-            final_status = "PROHIBITED"
+        elif jev_tested:
+            final_status = jev_level
             is_disputed = False
-            reconciliation_summary += f" [触发底层硬性规则违禁拦截: {', '.join(local_rules['prohibited_items'])}]"
+            reconciliation_summary = f"Jev 独立快决策引擎审查完成 (判定为 [{final_status}], 违规分: {jev_score:.2f})"
+        else:
+            final_status = "SAFE"
+            reconciliation_summary = "未启用/未配置大模型客户端"
+
+        # AI 违禁品特征归集 (仅当 AI 判定为 PROHIBITED 时提取 AI 识别出的具体违禁特征，彻底消除死板正则误杀)
+        if final_status == "PROHIBITED":
+            if image_prohibs:
+                for p in image_prohibs:
+                    prohibited_items.append(f"首图禁运形态 ({p})")
+            for t_res in [qwen_title, deepseek_title]:
+                v_type = t_res.get("violation_type", "")
+                r_lvl = t_res.get("risk_level", "SAFE")
+                if r_lvl == "PROHIBITED":
+                    if v_type == "PROHIBITED_TECH" and "受限无线通讯技术 (蓝牙/WiFi/红外)" not in prohibited_items:
+                        prohibited_items.append("受限无线通讯技术 (蓝牙/WiFi/红外)")
+                    elif v_type == "PROHIBITED_LIQUID" and "跨境航空禁运液体/化学品" not in prohibited_items:
+                        prohibited_items.append("跨境航空禁运液体/化学品")
+                    elif v_type == "COPYRIGHT_IP" and "影视/动漫IP严重侵权" not in prohibited_items:
+                        prohibited_items.append("影视/动漫IP严重侵权")
+                    elif v_type == "TRADEMARK" and "知名品牌假冒侵权" not in prohibited_items:
+                        prohibited_items.append("知名品牌假冒侵权")
+            if not prohibited_items:
+                prohibited_items.append("AI判定严重违规/禁售品")
+        else:
+            prohibited_items = []
 
         brand_info = local_rules.get("brand_info", {})
         brand_info["detected_brands"] = all_detected_brands
@@ -903,8 +1066,13 @@ class ComplianceService:
             "compliance_status": final_status,
             "is_disputed": is_disputed,
             "dual_ai_mode": has_dual,
+            "three_ai_mode": bool(has_dual and jev_tested),
+            "consensus_ratio": consensus_ratio,
+            "brand_nature": jev_brand_nature,
+            "target_compatible_brand": jev_target_brand,
             "qwen_verdict": qwen_verdict,
             "deepseek_verdict": deepseek_verdict,
+            "jev_verdict": jev_verdict,
             "reconciliation_summary": reconciliation_summary,
             "dispute_root_cause": dispute_root_cause,
             "brand_breakdown": brand_breakdown,
@@ -919,7 +1087,7 @@ class ComplianceService:
         }
 
     # =========================================================================
-    # 本地硬性规则排查 (兜底排查层)
+    # 辅助品牌词与配件特征提取器 (已废弃底层死板硬拦截，100% 由双 AI 语境化裁定合规与违禁)
     # =========================================================================
     def _check_local_rules(
         self,
@@ -929,46 +1097,13 @@ class ComplianceService:
         category: str,
         target_brand_name: str
     ) -> Dict[str, Any]:
-        prohibited_items_found = []
-        risk_reasons = []
-        suggestions = []
-
-        # 1. 蓝牙 (Bluetooth)
-        if re.search(r'\b(bluetooth|bt\s*[45]\.\d|ble|a2dp|wireless\s*audio)\b', full_text) or "蓝牙" in full_text:
-            prohibited_items_found.append("蓝牙 (Bluetooth)")
-            risk_reasons.append("商品包含蓝牙 (Bluetooth) 无线通讯技术，属于平台受限禁售品类。")
-            suggestions.append("不可在 Makro 平台销售含蓝牙功能的设备，建议下架。")
-
-        # 2. WiFi
-        if re.search(r'\b(wifi|wi-fi|802\.11|wlan|2\.4ghz\s*wifi|5ghz\s*wifi)\b', full_text) or "无线网络" in full_text:
-            prohibited_items_found.append("WiFi")
-            risk_reasons.append("商品包含 WiFi 无线通讯技术，属于平台受限禁售品类。")
-            suggestions.append("不可在 Makro 平台销售含 WiFi 功能的联网设备。")
-
-        # 3. 红外线 (Infrared)
-        if re.search(r'\b(infrared|ir\s*remote|ir\s*blaster|ir\s*control|ir\s*sensor|ir\s*emitter)\b', full_text) or "红外" in full_text:
-            prohibited_items_found.append("红外线 (Infrared)")
-            risk_reasons.append("商品包含红外线 (Infrared/IR) 遥控或发射功能，属于平台受限品类。")
-
-        # 4. 液体 (Liquid)
-        is_solid_gel = bool(
-            re.search(r'\b(flexible\s*gel|silica\s*gel|silicone\s*gel|tpu\s*gel|gel\s*case|gel\s*cover|gel\s*pen|gel\s*pad|gel\s*cushion|gel\s*insole|heel\s*gel|ice\s*gel|gel\s*grip)\b', full_text)
-            or any(c in category.lower() for c in ["case", "cover", "protector", "shoes", "apparel", "clothing", "tools", "stationery"])
-        )
-        liquid_regex = r'\b(liquid|fluid|essential\s*oil|lotion|perfume|cologne|fragrance|spray|serum|essence|shampoo|conditioner|lubricant|cleanser|beverage|edible|syrup|mouthwash|liquid\s*ink)\b'
-        has_liquid_words = bool(re.search(liquid_regex, full_text) or re.search(r'(液体|精油|香水|喷雾|乳液|膏霜|洗发水|沐浴露|口服液|润滑油)', full_text))
-        if not is_solid_gel:
-            has_liquid_words = has_liquid_words or bool(re.search(r'\b(oil|gel|cream|toner)\b', full_text) or "凝胶" in full_text)
-
-        is_liquid_cat = any(x in category.lower() for x in ["perfume", "fragrance", "essential oil", "liquid", "oils & fluids", "cosmetic", "skincare"])
-        if has_liquid_words or is_liquid_cat:
-            prohibited_items_found.append("液体 (Liquid)")
-            risk_reasons.append("商品属于液体/精油/香水/喷雾形态，跨境物流禁止航空运输。")
-            suggestions.append("液体类商品无法通过跨境物流和 Makro 平台审核，请停止刊登。")
-
-        # 5. 商标品牌与配件排查
+        """
+        辅助品牌词与配件特征提取器 (已彻底废弃底层死板正则硬拦截，100% 由双 AI 语境化裁定合规与违禁)
+        仅提取大牌候选词供 AI 提示词与前台参考，不再通过本地硬规则拦截或判定 PROHIBITED。
+        """
         eval_title = (makro_title or title).strip()
         eval_title_lower = eval_title.lower()
+
         title_detected_brands = [b.title() for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', eval_title_lower)]
         title_detected_brands = list(dict.fromkeys(title_detected_brands))
 
@@ -980,24 +1115,9 @@ class ComplianceService:
         recommended_title = None
         if title_detected_brands:
             first_b = title_detected_brands[0]
-            has_compat_clause = any(kw in eval_title_lower for kw in COMPATIBILITY_KEYWORDS)
-            first_word_match = re.match(r'^\s*([a-zA-Z0-9_\-]+)', eval_title)
-            starts_with_famous = False
-            if first_word_match:
-                fw = first_word_match.group(1).lower()
-                starts_with_famous = any(b == fw for b in FAMOUS_BRANDS)
-
-            if len(title_detected_brands) >= 3:
-                risk_reasons.append(f"【标题关键词堆砌】堆砌了多个品牌商标 ({', '.join(title_detected_brands)})！")
-            elif not is_accessory:
-                prohibited_items_found.append(f"商标侵权 ({first_b})")
-                risk_reasons.append(f"【品牌侵权拦截】包含受保护品牌 [{first_b}] 且非配件，涉嫌售卖受限品牌或假冒正品！")
-            elif starts_with_famous and not has_compat_clause:
-                prohibited_items_found.append(f"冒充原装配件 ({first_b})")
-                risk_reasons.append(f"【标题侵权】开头直接以品牌 [{first_b}] 命名，冒充原厂配件！")
-            elif not has_compat_clause:
-                risk_reasons.append(f"【合规提示】配件标题包含 [{first_b}]，缺少 'Compatible with' 第三方声明。")
-
+            from .ai_cleaner_service import extract_device_model, truncate_title_safely
+            dev = extract_device_model(eval_title, category=category)
+            target_device = dev or first_b
             clean_core = eval_title
             for b_item in title_detected_brands:
                 clean_core = re.sub(rf'\b{b_item}\b', '', clean_core, flags=re.IGNORECASE)
@@ -1006,28 +1126,16 @@ class ComplianceService:
             clean_core = re.sub(rf'\b{re.escape(target_brand_name)}\b', '', clean_core, flags=re.IGNORECASE)
             clean_core = re.sub(r'[-_:,/]+', ' ', clean_core)
             clean_core = re.sub(r'\s+', ' ', clean_core).strip()
-            recommended_title = f"{target_brand_name} Third-Party {clean_core[:50]} Compatible with {first_b}"
-
-        # 6. 知名动漫影视 IP 词库排查
-        detected_ips = []
-        for ip in PROTECTED_ENTERTAINMENT_IPS:
-            if re.search(rf'\b{re.escape(ip)}\b', full_text) or re.search(rf'\b{re.escape(ip)}\b', eval_title_lower):
-                detected_ips.append(ip.title())
-        detected_ips = list(dict.fromkeys(detected_ips))
-
-        if detected_ips:
-            first_ip = detected_ips[0]
-            prohibited_items_found.append(f"影视/动漫IP侵权 ({first_ip})")
-            risk_reasons.append(f"【知名IP版权拦截】检测到受严格保护的影视/动漫IP [{', '.join(detected_ips)}]！")
-
-        status = "PROHIBITED" if prohibited_items_found else ("RISK" if risk_reasons else "SAFE")
+            compat_suffix = f"Compatible with {target_device}"
+            safe_core = truncate_title_safely(clean_core, max(35, 120 - len(target_brand_name) - len(compat_suffix) - 15))
+            recommended_title = f"{target_brand_name} {safe_core} {compat_suffix}".strip()
 
         return {
-            "compliance_status": status,
-            "prohibited_items": prohibited_items_found,
+            "compliance_status": "SAFE",
+            "prohibited_items": [],
             "detected_brands": all_detected_brands,
-            "risk_reasons": risk_reasons,
-            "suggestions": suggestions,
+            "risk_reasons": [],
+            "suggestions": [],
             "brand_info": {
                 "detected_brands": all_detected_brands,
                 "title_detected_brands": title_detected_brands,

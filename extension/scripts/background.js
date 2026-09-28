@@ -1,4 +1,4 @@
-const DEFAULT_BACKEND_URL = "http://localhost:8001";
+const DEFAULT_BACKEND_URL = "https://makro.superll.top";
 
 // 动态获取中台后端地址 (优先从本地存储读取用户自定义或局域网反代地址)
 async function getBackendUrl() {
@@ -74,12 +74,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 1. PLID 极速采集到后端（后端直接爬取全量数据）
   if (request.action === "COLLECT_PLID" || request.action === "COLLECT_PRODUCT" || request.action === "SCRAPE_PRODUCT") {
-    getBackendUrl().then((backendUrl) => {
+    Promise.all([
+      getBackendUrl(),
+      new Promise(resolve => chrome.storage.local.get(["makro_collector_user"], res => resolve(res ? res.makro_collector_user : null)))
+    ]).then(([backendUrl, collectorUser]) => {
       const isPlidRequest = request.action === "COLLECT_PLID" || request.action === "SCRAPE_PRODUCT" || (request.data && (request.data.plid || typeof request.data === "string"));
       const endpoint = isPlidRequest ? `${backendUrl}/api/products/collect-by-plid` : `${backendUrl}/api/products/collect`;
-      const payload = isPlidRequest 
-        ? (typeof request.data === "string" ? { plid: request.data } : request.data) 
-        : request.data;
+      let payload = isPlidRequest 
+        ? (typeof request.data === "string" ? { plid: request.data } : { ...request.data }) 
+        : (typeof request.data === "object" && request.data !== null ? { ...request.data } : {});
+
+      // 注入采集归属员工标识 (方案 A)
+      if (collectorUser && collectorUser.id) {
+        payload.user_id = collectorUser.id;
+        payload.collector_user_id = collectorUser.id;
+        payload.collector_username = collectorUser.username;
+      }
 
       fetch(endpoint, {
         method: "POST",

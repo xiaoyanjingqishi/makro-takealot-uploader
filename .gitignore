@@ -68,3 +68,8 @@ scratch_*.js
 .tempmediaStorage/
 .image_cache/
 backend/.image_cache/
+*.png
+test_protocols.py
+请求协议/
+服务器秘钥/
+*.pem

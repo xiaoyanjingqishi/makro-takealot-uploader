@@ -7,9 +7,16 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models.store import Store, ProductStoreListing
-from ..schemas.store import StoreCreate, StoreUpdate, StoreResponse
+from ..models.user import User
+from ..schemas.store import (
+    StoreCreate, StoreUpdate, StoreResponse,
+    AutoLoginRequest, SendOtpRequest, VerifyOtpRequest, TestEmailRequest
+)
 from ..services.makro_client import MakroClient
+from ..services.makro_auth_service import MakroAuthService
+from ..services.email_otp_service import EmailOtpService
 from ..services.audit_logger import record_audit_log
+from ..utils.auth import get_current_user, get_current_admin, get_user_authorized_stores
 
 router = APIRouter(prefix="/stores", tags=["多店铺管理"])
 logger = logging.getLogger(__name__)
@@ -32,6 +39,12 @@ def _format_store(store: Store, db: Session) -> dict:
         "is_active": store.is_active,
         "is_default": store.is_default,
         "notes": store.notes,
+        "login_email": store.login_email,
+        "has_login_password": bool(store.login_password and len(store.login_password) > 0),
+        "imap_server": store.imap_server,
+        "imap_port": store.imap_port or 993,
+        "imap_user": store.imap_user,
+        "has_imap_password": bool(store.imap_password and len(store.imap_password) > 0),
         "has_cookie": has_cookie,
         "cookie_preview": cookie_prev,
         "listings_count": cnt,
@@ -39,13 +52,23 @@ def _format_store(store: Store, db: Session) -> dict:
         "updated_at": store.updated_at
     }
 
-@router.get("", summary="获取所有店铺列表")
-def list_stores(db: Session = Depends(get_db)):
-    stores = db.query(Store).order_by(Store.is_default.desc(), Store.id.asc()).all()
+@router.get("", summary="获取店铺列表 (按用户权限过滤)")
+def list_stores(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role == "ADMIN":
+        stores = db.query(Store).order_by(Store.is_default.desc(), Store.id.asc()).all()
+    else:
+        stores = get_user_authorized_stores(current_user, db)
     return [_format_store(s, db) for s in stores]
 
-@router.post("", summary="添加新店铺")
-def create_store(req: StoreCreate, db: Session = Depends(get_db)):
+@router.post("", summary="添加新店铺 (仅管理员)")
+def create_store(
+    req: StoreCreate,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
     # 检查是否有同名店铺
     existing = db.query(Store).filter(Store.name == req.name.strip()).first()
     if existing:
@@ -66,7 +89,13 @@ def create_store(req: StoreCreate, db: Session = Depends(get_db)):
         default_brand=req.default_brand.strip() if req.default_brand else "Beishi",
         is_active=req.is_active if req.is_active is not None else True,
         is_default=is_default,
-        notes=req.notes.strip() if req.notes else None
+        notes=req.notes.strip() if req.notes else None,
+        login_email=req.login_email.strip() if req.login_email else None,
+        login_password=req.login_password.strip() if req.login_password else None,
+        imap_server=req.imap_server.strip() if req.imap_server else None,
+        imap_port=req.imap_port or 993,
+        imap_user=req.imap_user.strip() if req.imap_user else None,
+        imap_password=req.imap_password.strip() if req.imap_password else None
     )
     db.add(store)
     db.commit()
@@ -82,8 +111,13 @@ def create_store(req: StoreCreate, db: Session = Depends(get_db)):
 
     return _format_store(store, db)
 
-@router.put("/{store_id}", summary="修改店铺配置")
-def update_store(store_id: int, req: StoreUpdate, db: Session = Depends(get_db)):
+@router.put("/{store_id}", summary="修改店铺配置 (仅管理员)")
+def update_store(
+    store_id: int,
+    req: StoreUpdate,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
         raise HTTPException(status_code=404, detail="店铺未找到")
@@ -107,6 +141,18 @@ def update_store(store_id: int, req: StoreUpdate, db: Session = Depends(get_db))
         store.is_active = req.is_active
     if req.notes is not None:
         store.notes = req.notes.strip() if req.notes else None
+    if req.login_email is not None:
+        store.login_email = req.login_email.strip() if req.login_email else None
+    if req.login_password is not None and req.login_password.strip():
+        store.login_password = req.login_password.strip()
+    if req.imap_server is not None:
+        store.imap_server = req.imap_server.strip() if req.imap_server else None
+    if req.imap_port is not None:
+        store.imap_port = req.imap_port or 993
+    if req.imap_user is not None:
+        store.imap_user = req.imap_user.strip() if req.imap_user else None
+    if req.imap_password is not None and req.imap_password.strip():
+        store.imap_password = req.imap_password.strip()
 
     if req.is_default is True:
         db.query(Store).filter(Store.id != store_id).update({Store.is_default: False})
@@ -125,8 +171,12 @@ def update_store(store_id: int, req: StoreUpdate, db: Session = Depends(get_db))
 
     return _format_store(store, db)
 
-@router.delete("/{store_id}", summary="删除店铺")
-def delete_store(store_id: int, db: Session = Depends(get_db)):
+@router.delete("/{store_id}", summary="删除店铺 (仅管理员)")
+def delete_store(
+    store_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
         raise HTTPException(status_code=404, detail="店铺未找到")
@@ -157,8 +207,12 @@ def delete_store(store_id: int, db: Session = Depends(get_db)):
 
     return {"message": f"店铺 {store_name} 已成功删除"}
 
-@router.post("/{store_id}/set-default", summary="设置默认店铺")
-def set_default_store(store_id: int, db: Session = Depends(get_db)):
+@router.post("/{store_id}/set-default", summary="设置默认店铺 (仅管理员)")
+def set_default_store(
+    store_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
         raise HTTPException(status_code=404, detail="店铺未找到")
@@ -209,3 +263,112 @@ def sync_store_credentials(store_id: int, payload: dict, db: Session = Depends(g
 
     db.commit()
     return {"message": f"店铺【{store.name}】凭据同步成功"}
+
+@router.post("/test-email", summary="测试邮箱 IMAP 连接与授权码有效性")
+def test_email_account(req: TestEmailRequest):
+    res = EmailOtpService.test_connection(
+        email_address=req.email,
+        password=req.password,
+        server=req.imap_server,
+        port=req.imap_port or 993
+    )
+    return res
+
+@router.post("/{store_id}/auto-login", summary="全自动登录指定店铺 (自动发码+多邮箱自动提取OTP+回写凭据)")
+def auto_login_store(
+    store_id: int,
+    req: Optional[AutoLoginRequest] = None,
+    db: Session = Depends(get_db)
+):
+    override_u = req.username if req else None
+    override_p = req.password if req else None
+    override_ip = req.imap_password if req else None
+    max_wait = (req.max_wait_seconds if req and req.max_wait_seconds else 60)
+
+    res = MakroAuthService.run_full_auto_login(
+        store_id=store_id,
+        db=db,
+        override_username=override_u,
+        override_password=override_p,
+        override_imap_password=override_ip,
+        max_wait_seconds=max_wait
+    )
+    if not res.get("success") and not res.get("need_manual_otp"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+@router.post("/{store_id}/send-login-otp", summary="为店铺发起登录请求 (获取 session_id 并触发邮箱验证码)")
+def send_store_login_otp(
+    store_id: int,
+    req: Optional[SendOtpRequest] = None,
+    db: Session = Depends(get_db)
+):
+    store = db.query(Store).filter(Store.id == store_id).first()
+    if not store:
+        raise HTTPException(status_code=404, detail="店铺未找到")
+
+    username = (req.username if req and req.username else None) or store.login_email
+    password = (req.password if req and req.password else None) or store.login_password
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="请提供 Makro 登录邮箱和密码")
+
+    res = MakroAuthService.send_login_request(username=username, password=password, store_id=store_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+@router.post("/{store_id}/verify-login-otp", summary="为店铺提交验证码完成登录并自动更新凭据")
+def verify_store_login_otp(
+    store_id: int,
+    req: VerifyOtpRequest,
+    db: Session = Depends(get_db)
+):
+    store = db.query(Store).filter(Store.id == store_id).first()
+    if not store:
+        raise HTTPException(status_code=404, detail="店铺未找到")
+
+    ok, creds, msg = MakroAuthService.verify_otp(session_id=req.session_id, otp=req.otp)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+
+    seller_id = creds.get("seller_id") or store.seller_id
+    csrf_token = creds.get("fk_csrf_token")
+    cookie_str = creds.get("cookie")
+
+    MakroAuthService.sync_to_store_db(
+        store_id=store.id,
+        seller_id=seller_id,
+        csrf_token=csrf_token,
+        cookie=cookie_str,
+        db=db,
+        login_email=creds.get("email")
+    )
+
+    return {
+        "success": True,
+        "message": f"店铺【{store.name}】验证码核验成功，凭据已自动同步！",
+        "store": _format_store(store, db),
+        "credentials": creds
+    }
+
+@router.post("/quick-login-send-otp", summary="独立自动登录第1步：发送账号密码触发验证码")
+def quick_login_send_otp(req: SendOtpRequest):
+    if not req.username or not req.password:
+        raise HTTPException(status_code=400, detail="请填写 Makro 登录邮箱和密码")
+
+    res = MakroAuthService.send_login_request(username=req.username, password=req.password)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
+
+@router.post("/quick-login-verify-otp", summary="独立自动登录第2步：提交验证码提取凭据")
+def quick_login_verify_otp(req: VerifyOtpRequest):
+    ok, creds, msg = MakroAuthService.verify_otp(session_id=req.session_id, otp=req.otp)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {
+        "success": True,
+        "message": "登录成功，已取得凭据",
+        "credentials": creds
+    }

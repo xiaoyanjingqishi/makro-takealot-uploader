@@ -1,21 +1,21 @@
 /* =======================================================
-   Takealot 智能自动采集与翻页助手 - 页面内嵌样式
+   Takealot 智能自动采集与翻页助手 - Makro 页面内嵌样式 (独立命名空间版)
    ======================================================= */
 
-/* 1. 页面右侧常驻浮动胶囊入口按钮 */
-#tk-auto-capsule {
+/* 1. 页面右侧常驻浮动胶囊入口按钮 (位于 ERP 胶囊上方，避免物理重叠) */
+#makro-auto-capsule {
   position: fixed;
   right: 20px;
-  bottom: 85px;
+  bottom: 140px;
   z-index: 999990;
   display: flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(135deg, #ff6600, #ff3300);
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
   color: #ffffff;
   padding: 10px 16px;
   border-radius: 30px;
-  box-shadow: 0 4px 18px rgba(255, 102, 0, 0.38);
+  box-shadow: 0 4px 18px rgba(37, 99, 235, 0.4);
   cursor: pointer;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   font-size: 13px;
@@ -24,33 +24,33 @@
   user-select: none;
 }
 
-#tk-auto-capsule:hover {
+#makro-auto-capsule:hover {
   transform: translateY(-2px) scale(1.03);
-  box-shadow: 0 6px 22px rgba(255, 102, 0, 0.48);
+  box-shadow: 0 6px 22px rgba(37, 99, 235, 0.55);
 }
 
-#tk-auto-capsule .capsule-icon {
+#makro-auto-capsule .makro-capsule-icon {
   font-size: 16px;
-  animation: tk-pulse 2s infinite;
+  animation: makro-pulse 2s infinite;
 }
 
-#tk-auto-capsule .capsule-badge {
+#makro-auto-capsule .makro-capsule-badge {
   background: #ffffff;
-  color: #ff4500;
+  color: #1d4ed8;
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 10px;
   font-weight: 800;
 }
 
-@keyframes tk-pulse {
+@keyframes makro-pulse {
   0% { transform: scale(1); }
   50% { transform: scale(1.15); }
   100% { transform: scale(1); }
 }
 
 /* 2. 核心主控制悬浮面板 */
-#tk-auto-panel {
+#makro-auto-panel {
   position: fixed;
   right: 24px;
   bottom: 80px;
@@ -69,30 +69,30 @@
   transition: all 0.25s ease;
 }
 
-#tk-auto-panel.minimized {
+#makro-auto-panel.minimized {
   width: 48px;
   height: 48px;
   border-radius: 50%;
   overflow: hidden;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-  background: #ff5500;
+  background: #2563eb;
 }
 
-#tk-auto-panel.minimized .tk-auto-header {
+#makro-auto-panel.minimized .makro-auto-header {
   height: 100%;
   padding: 0;
   justify-content: center;
 }
 
-#tk-auto-panel.minimized .tk-auto-title,
-#tk-auto-panel.minimized .tk-auto-body {
+#makro-auto-panel.minimized .makro-auto-title,
+#makro-auto-panel.minimized .makro-auto-body {
   display: none !important;
 }
 
 /* 面板头部 */
-.tk-auto-header {
-  background: linear-gradient(135deg, #ff6600, #ff3300);
+.makro-auto-header {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
   color: #ffffff;
   padding: 11px 14px;
   display: flex;
@@ -102,7 +102,7 @@
   user-select: none;
 }
 
-.tk-auto-title {
+.makro-auto-title {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -110,13 +110,13 @@
   font-weight: 700;
 }
 
-.tk-auto-controls {
+.makro-auto-controls {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.tk-auto-btn-icon {
+.makro-auto-btn-icon {
   background: rgba(255, 255, 255, 0.2);
   border: none;
   color: #ffffff;
@@ -131,12 +131,12 @@
   transition: background 0.15s;
 }
 
-.tk-auto-btn-icon:hover {
+.makro-auto-btn-icon:hover {
   background: rgba(255, 255, 255, 0.35);
 }
 
 /* 面板主体内容区 */
-.tk-auto-body {
+.makro-auto-body {
   padding: 12px 14px;
   max-height: 78vh;
   overflow-y: auto;
@@ -144,7 +144,7 @@
 }
 
 /* 模块卡片区块 */
-.tk-auto-section {
+.makro-auto-section {
   background: #ffffff;
   border: 1px solid #edf2f7;
   border-radius: 8px;
@@ -153,7 +153,7 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-.tk-auto-sec-title {
+.makro-auto-sec-title {
   font-weight: 700;
   font-size: 12px;
   color: #1a202c;
@@ -163,18 +163,18 @@
   justify-content: space-between;
 }
 
-.tk-auto-row {
+.makro-auto-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
 }
 
-.tk-auto-row:last-child {
+.makro-auto-row:last-child {
   margin-bottom: 0;
 }
 
-.tk-auto-label {
+.makro-auto-label {
   font-size: 11px;
   color: #4a5568;
   font-weight: 600;
@@ -182,14 +182,14 @@
   flex-shrink: 0;
 }
 
-.tk-auto-input-group {
+.makro-auto-input-group {
   display: flex;
   align-items: center;
   gap: 4px;
   flex: 1;
 }
 
-.tk-auto-input {
+.makro-auto-input {
   width: 100%;
   padding: 5px 8px;
   font-size: 12px;
@@ -200,24 +200,24 @@
   transition: border-color 0.15s;
 }
 
-.tk-auto-input:focus {
+.makro-auto-input:focus {
   outline: none;
-  border-color: #ff6600;
+  border-color: #2563eb;
 }
 
-.tk-auto-input-short {
+.makro-auto-input-short {
   width: 75px;
   text-align: center;
 }
 
-.tk-auto-sep {
+.makro-auto-sep {
   color: #a0aec0;
   font-size: 12px;
   flex-shrink: 0;
 }
 
 /* 复选框行 */
-.tk-auto-checkbox-row {
+.makro-auto-checkbox-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -228,19 +228,19 @@
   margin-top: 4px;
 }
 
-.tk-auto-checkbox-row input {
+.makro-auto-checkbox-row input {
   cursor: pointer;
-  accent-color: #ff6600;
+  accent-color: #2563eb;
 }
 
 /* 操作按钮区 */
-.tk-auto-actions {
+.makro-auto-actions {
   display: flex;
   gap: 8px;
   margin-top: 10px;
 }
 
-.tk-auto-btn {
+.makro-auto-btn {
   flex: 1;
   padding: 8px 12px;
   font-size: 12px;
@@ -255,50 +255,50 @@
   transition: all 0.15s ease;
 }
 
-.tk-auto-btn-primary {
-  background: linear-gradient(135deg, #ff6600, #ff3300);
+.makro-auto-btn-primary {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
   color: #ffffff;
-  box-shadow: 0 2px 6px rgba(255, 102, 0, 0.3);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
 }
 
-.tk-auto-btn-primary:hover {
-  background: linear-gradient(135deg, #ff771a, #e62e00);
+.makro-auto-btn-primary:hover {
+  background: linear-gradient(135deg, #1d4ed8, #1e40af);
   transform: translateY(-1px);
 }
 
-.tk-auto-btn-danger {
+.makro-auto-btn-danger {
   background: #e53e3e;
   color: #ffffff;
 }
 
-.tk-auto-btn-danger:hover {
+.makro-auto-btn-danger:hover {
   background: #c53030;
 }
 
-.tk-auto-btn-secondary {
+.makro-auto-btn-secondary {
   background: #edf2f7;
   color: #4a5568;
 }
 
-.tk-auto-btn-secondary:hover {
+.makro-auto-btn-secondary:hover {
   background: #e2e8f0;
 }
 
-.tk-auto-btn:disabled {
+.makro-auto-btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
   transform: none !important;
 }
 
 /* 运行状态仪表盘 */
-.tk-auto-stats-grid {
+.makro-auto-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
   margin-top: 6px;
 }
 
-.tk-auto-stat-box {
+.makro-auto-stat-box {
   background: #f7fafc;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
@@ -306,24 +306,24 @@
   text-align: center;
 }
 
-.tk-auto-stat-num {
+.makro-auto-stat-num {
   font-size: 14px;
   font-weight: 800;
   color: #1a202c;
   font-family: monospace;
 }
 
-.tk-auto-stat-label {
+.makro-auto-stat-label {
   font-size: 10px;
   color: #718096;
 }
 
-.tk-auto-stat-box.success .tk-auto-stat-num { color: #38a169; }
-.tk-auto-stat-box.filter .tk-auto-stat-num { color: #e53e3e; }
-.tk-auto-stat-box.page .tk-auto-stat-num { color: #3182ce; }
+.makro-auto-stat-box.success .makro-auto-stat-num { color: #10b981; }
+.makro-auto-stat-box.filter .makro-auto-stat-num { color: #ef4444; }
+.makro-auto-stat-box.page .makro-auto-stat-num { color: #2563eb; }
 
 /* 进度条 */
-.tk-auto-progress-bar {
+.makro-auto-progress-bar {
   width: 100%;
   height: 6px;
   background: #edf2f7;
@@ -332,15 +332,15 @@
   margin: 8px 0;
 }
 
-.tk-auto-progress-fill {
+.makro-auto-progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #ff9900, #ff3300);
+  background: linear-gradient(90deg, #3b82f6, #1d4ed8);
   transition: width 0.3s ease;
 }
 
 /* 实时日志控制台 */
-.tk-auto-log-box {
+.makro-auto-log-box {
   background: #1a202c;
   color: #a0aec0;
   border-radius: 6px;
@@ -354,39 +354,39 @@
   word-break: break-all;
 }
 
-.tk-auto-log-line {
+.makro-auto-log-line {
   margin-bottom: 3px;
 }
 
-.tk-auto-log-line.success { color: #48bb78; }
-.tk-auto-log-line.warn { color: #ed8936; }
-.tk-auto-log-line.error { color: #f56565; }
-.tk-auto-log-line.info { color: #63b3ed; }
+.makro-auto-log-line.success { color: #48bb78; }
+.makro-auto-log-line.warn { color: #ed8936; }
+.makro-auto-log-line.error { color: #f56565; }
+.makro-auto-log-line.info { color: #63b3ed; }
 
-/* 3. 商品卡片视觉高亮反馈 */
-.tk-card-matched {
-  outline: 2px solid #38a169 !important;
+/* 3. 商品卡片视觉高亮反馈 (Makro 专属打标) */
+.makro-card-matched {
+  outline: 2px solid #2563eb !important;
   outline-offset: -2px;
   position: relative;
   transition: all 0.2s;
 }
 
-.tk-card-skipped {
-  opacity: 0.55 !important;
-  filter: grayscale(20%);
+.makro-card-skipped {
+  opacity: 0.65 !important;
+  filter: grayscale(15%);
   position: relative;
   transition: all 0.2s;
 }
 
-.tk-card-restricted {
-  outline: 2px dashed #e53e3e !important;
+.makro-card-restricted {
+  outline: 2px dashed #dc2626 !important;
   outline-offset: -2px;
   position: relative;
-  opacity: 0.55 !important;
+  opacity: 0.65 !important;
 }
 
 /* 卡片角标反馈 */
-.tk-card-status-badge {
+.makro-card-status-badge {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -400,17 +400,17 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-.tk-card-status-badge.ok {
-  background: #2e7d32;
+.makro-card-status-badge.ok {
+  background: #2563eb;
   color: #ffffff;
 }
 
-.tk-card-status-badge.skip {
-  background: #546e7a;
+.makro-card-status-badge.skip {
+  background: #64748b;
   color: #ffffff;
 }
 
-.tk-card-status-badge.danger {
-  background: #c62828;
+.makro-card-status-badge.danger {
+  background: #dc2626;
   color: #ffffff;
 }

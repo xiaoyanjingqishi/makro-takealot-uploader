@@ -9,14 +9,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const backendUrlInput = document.getElementById("backend-url-input");
   const saveBackendBtn = document.getElementById("save-backend-btn");
+  const presetCloud = document.getElementById("preset-cloud");
   const presetLocal = document.getElementById("preset-local");
   const presetLan = document.getElementById("preset-lan");
   const presetLan8001 = document.getElementById("preset-lan-8001");
   const connFeedback = document.getElementById("conn-feedback");
   const pingIndicator = document.getElementById("ping-indicator");
+  const operatorSelect = document.getElementById("operator-select");
+  const operatorIndicator = document.getElementById("operator-indicator");
+  const operatorFeedback = document.getElementById("operator-feedback");
 
   let detectedLanIp = "192.168.110.145";
-  let currentBackendUrl = "http://localhost:8001";
+  let currentBackendUrl = "https://makro.superll.top";
 
   function showFeedback(msg, isSuccess = true) {
     if (!connFeedback) return;
@@ -29,12 +33,96 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 4000);
   }
 
+  // 加载系统员工列表并同步选中状态 (方案 A)
+  function loadOperatorsAndSync(targetUrl) {
+    if (!operatorSelect) return;
+    targetUrl = (targetUrl || currentBackendUrl).replace(/\/+$/, "");
+
+    fetch(`${targetUrl}/api/users/operators`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data || !Array.isArray(data.operators)) return;
+        chrome.storage.local.get(["makro_collector_user"], (sRes) => {
+          const savedUser = sRes?.makro_collector_user || null;
+          operatorSelect.innerHTML = '<option value="">-- 请选择当前操作员工 --</option>';
+
+          let matched = false;
+          data.operators.forEach(op => {
+            const opt = document.createElement("option");
+            opt.value = op.id;
+            opt.setAttribute("data-username", op.username);
+            opt.setAttribute("data-nickname", op.nickname || op.username);
+            opt.innerText = `${op.nickname || op.username} (${op.username}) [${op.role === 'ADMIN' ? '管理员' : '员工'}]`;
+            if (savedUser && String(savedUser.id) === String(op.id)) {
+              opt.selected = true;
+              matched = true;
+            }
+            operatorSelect.appendChild(opt);
+          });
+
+          if (matched && savedUser) {
+            if (operatorIndicator) {
+              operatorIndicator.innerText = `已绑定: ${savedUser.nickname || savedUser.username}`;
+              operatorIndicator.style.color = "#10b981";
+            }
+          } else {
+            if (operatorIndicator) {
+              operatorIndicator.innerText = "未选择";
+              operatorIndicator.style.color = "#f59e0b";
+            }
+          }
+        });
+      })
+      .catch(err => {
+        console.warn("加载员工列表失败:", err);
+        if (operatorSelect) {
+          operatorSelect.innerHTML = '<option value="">❌ 无法连接服务器获取员工</option>';
+        }
+      });
+  }
+
+  if (operatorSelect) {
+    operatorSelect.onchange = () => {
+      const val = operatorSelect.value;
+      if (!val) {
+        chrome.storage.local.remove(["makro_collector_user"]);
+        if (operatorIndicator) {
+          operatorIndicator.innerText = "未选择";
+          operatorIndicator.style.color = "#f59e0b";
+        }
+        if (operatorFeedback) {
+          operatorFeedback.innerText = "⚠️ 未指定采集员工，采集将记录为未分配";
+          operatorFeedback.style.color = "#f59e0b";
+        }
+        return;
+      }
+      const selectedOption = operatorSelect.options[operatorSelect.selectedIndex];
+      const username = selectedOption.getAttribute("data-username");
+      const nickname = selectedOption.getAttribute("data-nickname");
+      const userObj = { id: parseInt(val, 10), username, nickname };
+
+      chrome.storage.local.set({ makro_collector_user: userObj }, () => {
+        if (operatorIndicator) {
+          operatorIndicator.innerText = `已绑定: ${nickname || username}`;
+          operatorIndicator.style.color = "#10b981";
+        }
+        if (operatorFeedback) {
+          operatorFeedback.innerText = `✅ 已绑定采集归属：${nickname || username}，后续采集自动归属此账号`;
+          operatorFeedback.style.color = "#10b981";
+        }
+      });
+    };
+  }
+
   // 1. 检查指定地址连通性并拉取核心指标
   function checkConnectionAndRefresh(targetUrl) {
     if (!targetUrl) targetUrl = currentBackendUrl;
     targetUrl = targetUrl.replace(/\/+$/, "");
 
     if (pingIndicator) pingIndicator.innerText = "正在探测...";
+
+    // 同步拉取员工列表
+    loadOperatorsAndSync(targetUrl);
 
     fetch(`${targetUrl}/api/settings`)
       .then(res => {
@@ -81,7 +169,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 2. 初始化加载存储的后端 URL 配置
   chrome.storage.local.get(["backend_url"], (res) => {
-    let savedUrl = (res && res.backend_url) ? res.backend_url.trim() : "http://localhost:8001";
+    let savedUrl = (res && res.backend_url) ? res.backend_url.trim() : "https://makro.superll.top";
     currentBackendUrl = savedUrl;
     if (backendUrlInput) backendUrlInput.value = savedUrl;
     if (openDashboardBtn) openDashboardBtn.href = savedUrl;
@@ -91,7 +179,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 3. 保存并测试后端地址配置
   function saveAndApplyUrl(newUrl) {
     newUrl = (newUrl || "").trim();
-    if (!newUrl) newUrl = "http://localhost:8001";
+    if (!newUrl) newUrl = "https://makro.superll.top";
     if (!/^https?:\/\//i.test(newUrl)) {
       newUrl = "http://" + newUrl;
     }
@@ -121,6 +209,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 4. 预设快捷按钮绑定
+  if (presetCloud) {
+    presetCloud.onclick = () => {
+      saveAndApplyUrl("https://makro.superll.top");
+    };
+  }
+
   if (presetLocal) {
     presetLocal.onclick = () => {
       saveAndApplyUrl("http://localhost:8001");
@@ -152,16 +246,16 @@ document.addEventListener("DOMContentLoaded", () => {
       if (autoCollectorBtn) {
         autoCollectorBtn.style.display = "block";
         autoCollectorBtn.onclick = () => {
-          chrome.tabs.sendMessage(currentTab.id, { action: "OPEN_AUTO_COLLECTOR" });
+          chrome.tabs.sendMessage(currentTab.id, { action: "OPEN_MAKRO_AUTO_COLLECTOR" });
           window.close();
         };
       }
 
       if (isPlp) {
-        actionBtn.innerText = "🤖 启动自动筛选采集面板";
+        actionBtn.innerText = "📦 启动 Makro 自动采集面板";
         actionBtn.disabled = false;
         actionBtn.onclick = () => {
-          chrome.tabs.sendMessage(currentTab.id, { action: "OPEN_AUTO_COLLECTOR" });
+          chrome.tabs.sendMessage(currentTab.id, { action: "OPEN_MAKRO_AUTO_COLLECTOR" });
           window.close();
         };
       } else {

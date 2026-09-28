@@ -27,6 +27,31 @@ try:
 except Exception:
     pass
 
+# 确保 products 表具备 takealot_title_zh 与 makro_title_zh 中文对照字段
+try:
+    from sqlalchemy import text
+    with engine.connect() as _conn:
+        cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(products)")).fetchall()]
+        if "takealot_title_zh" not in cols:
+            _conn.execute(text("ALTER TABLE products ADD COLUMN takealot_title_zh VARCHAR(500)"))
+        if "makro_title_zh" not in cols:
+            _conn.execute(text("ALTER TABLE products ADD COLUMN makro_title_zh VARCHAR(500)"))
+        _conn.commit()
+except Exception:
+    pass
+
+# 确保 makro_orders 表具备 delivered_date 字段 (支持买家签收时间展示)
+try:
+    from sqlalchemy import text
+    with engine.connect() as _conn:
+        cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(makro_orders)")).fetchall()]
+        if "delivered_date" not in cols:
+            _conn.execute(text("ALTER TABLE makro_orders ADD COLUMN delivered_date DATETIME"))
+            _conn.commit()
+except Exception:
+    pass
+
+
 # 确保多店铺初始数据迁移 (如果 stores 为空，从现有系统配置无缝迁移首个默认店铺)
 try:
     from app.database import SessionLocal
@@ -112,6 +137,20 @@ try:
 except Exception as _ve:
     print(f"[INIT] 商品类目巡检跳过: {_ve}")
 
+# 初始化多用户 RBAC 权限与店铺在线表
+try:
+    from app.init_db import init_and_migrate_db
+    init_and_migrate_db()
+except Exception as _m_err:
+    print(f"[INIT] 数据库与权限迁移异常: {_m_err}")
+
+# 启动订单与商品 30 分钟静默后台自动同步引擎
+try:
+    from app.services.order_sync_scheduler import order_sync_scheduler
+    order_sync_scheduler.start()
+except Exception as _sched_err:
+    print(f"[INIT] 启动后台定时同步失败: {_sched_err}")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
@@ -132,7 +171,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, FileResponse
+import os
 from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "app" / "templates" / "index.html"
@@ -144,6 +184,32 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return Response(status_code=204)
+
+@app.get("/api/download/extension", summary="下载 Chrome 搬品浏览器插件安装包")
+@app.get("/download/extension.zip", include_in_schema=False)
+def download_extension():
+    zip_path = Path(__file__).resolve().parent / "app" / "static" / "makro-extension.zip"
+    if not zip_path.exists():
+        import zipfile
+        ext_dir = Path(__file__).resolve().parent.parent / "extension"
+        if not ext_dir.exists():
+            ext_dir = Path(__file__).resolve().parent / "extension"
+        if ext_dir.exists():
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+                for root, dirs, files in os.walk(ext_dir):
+                    for file in files:
+                        full_path = Path(root) / file
+                        arc_name = full_path.relative_to(ext_dir.parent)
+                        z.write(full_path, arc_name)
+    if not zip_path.exists():
+        return Response(content="Extension package not found", status_code=404)
+    return FileResponse(
+        path=str(zip_path),
+        filename="makro-extension-v1.0.0.zip",
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=makro-extension-v1.0.0.zip"}
+    )
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)

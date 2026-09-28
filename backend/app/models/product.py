@@ -10,6 +10,7 @@ class Product(Base):
     takealot_id = Column(String(100), index=True, nullable=True)
     takealot_url = Column(String(500), nullable=True)
     takealot_title = Column(String(500), nullable=False)
+    takealot_title_zh = Column(String(500), nullable=True)  # Takealot 原始标题中文翻译对照
     takealot_price = Column(Float, default=0.0)
     takealot_brand = Column(String(100), nullable=True)
     takealot_category = Column(String(255), nullable=True)
@@ -24,6 +25,7 @@ class Product(Base):
     # AI 清洗与规范化后的 Makro 属性
     makro_vertical = Column(String(100), default="bath_towel", index=True)
     makro_title = Column(String(500), nullable=True)
+    makro_title_zh = Column(String(500), nullable=True)  # Makro 规范标题中文翻译对照
     seo_keywords = Column(Text, nullable=True)  # JSON: 搜索意图长尾词列表 ["garden hose nozzle", "car wash gun"]
     clean_mode = Column(String(20), default="text")  # 清洗模式: 'text' (纯文本快速) 或 'vision' (图文多模态深度校准)
     makro_description = Column(Text, nullable=True)
@@ -56,13 +58,20 @@ class Product(Base):
     compliance_status = Column(String(50), default="PENDING_CHECK", index=True)
     compliance_details = Column(Text, nullable=True)  # 存储结构化双 AI 会审检测结果与首图分析 JSON
 
+    # 归属用户 (员工账号严格数据隔离)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+    # 关联归属用户
+    creator = relationship("User", back_populates="products")
     # 关联变体 (保持向下兼容)
     variants = relationship("ProductVariant", back_populates="product", cascade="all, delete-orphan")
     # 关联多店铺上架记录 (支持一品多店铺独立上架)
     store_listings = relationship("ProductStoreListing", back_populates="product", cascade="all, delete-orphan")
+    # 关联店铺在线 Listing
+    online_listings = relationship("MakroListing", back_populates="local_product")
 
 
 class ProductVariant(Base):

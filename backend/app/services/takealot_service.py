@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class TakealotService:
     @staticmethod
-    def save_collected_product(db: Session, req: TakealotCollectRequest) -> List[Product]:
+    def save_collected_product(db: Session, req: TakealotCollectRequest, user_id: Optional[int] = None) -> List[Product]:
         """
         接收 Takealot 采集数据并扁平化入库：
         每个变体均作为一条独立的 Product 记录生成入库，拥有独立的标题、专属图组、价格与规格，清洗/上品全流程相互独立。
@@ -75,6 +75,7 @@ class TakealotService:
                     combined_specs.update(v.specs)
 
                 product = Product(
+                    user_id=user_id,
                     takealot_id=var_takealot_id,
                     group_code=root_plid,
                     takealot_url=req.takealot_url,
@@ -107,6 +108,7 @@ class TakealotService:
             sku_id = f"SKU-{uuid.uuid4().hex[:8].upper()}"
             selling_price, mrp = calculate_prices(req.takealot_price, db)
             product = Product(
+                user_id=user_id,
                 takealot_id=root_plid,
                 group_code=root_plid,
                 takealot_url=req.takealot_url,
@@ -514,6 +516,7 @@ class TakealotService:
         )
 
     @classmethod
-    def fetch_and_save_by_plid(cls, plid_or_url: str, db: Session, custom_url: Optional[str] = None) -> List[Product]:
+    def fetch_and_save_by_plid(cls, plid_or_url: str, db: Session, custom_url: Optional[str] = None, user_id: Optional[int] = None) -> List[Product]:
         req = cls.fetch_product_by_plid(plid_or_url, custom_url=custom_url)
-        return cls.save_collected_product(db, req)
+        return cls.save_collected_product(db, req, user_id=user_id)
+

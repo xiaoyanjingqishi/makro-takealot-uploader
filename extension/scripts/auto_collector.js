@@ -1,5 +1,5 @@
 // =======================================================
-// Takealot 智能自动筛选与翻页采集引擎 (Auto Collector)
+// Takealot 智能自动筛选与翻页采集引擎 (Makro Auto Collector - 独立命名空间版)
 // =======================================================
 
 (function () {
@@ -40,19 +40,19 @@
   let capsuleEl = null;
   let logBoxEl = null;
 
-  // 1. 初始化 DOM 界面
+  // 1. 初始化 DOM 界面 (全面采用专属 makro- 前缀)
   function initUI() {
-    if (document.getElementById('tk-auto-capsule')) return;
+    if (document.getElementById('makro-auto-capsule')) return;
 
-    // A. 悬浮胶囊入口按钮
+    // A. 悬浮胶囊入口按钮 (科技蓝，位于 bottom: 140px，避免与跟价胶囊 bottom: 85px 物理重叠)
     capsuleEl = document.createElement('div');
-    capsuleEl.id = 'tk-auto-capsule';
+    capsuleEl.id = 'makro-auto-capsule';
     capsuleEl.innerHTML = `
-      <span class="capsule-icon">🤖</span>
-      <span>智能自动采集</span>
-      <span class="capsule-badge" id="tkCapsuleCount" style="display:none;">0</span>
+      <span class="makro-capsule-icon">📦</span>
+      <span>Makro批量采集</span>
+      <span class="makro-capsule-badge" id="makroCapsuleCount" style="display:none;">0</span>
     `;
-    capsuleEl.title = '打开 Takealot 自动筛选与批量翻页采集面板';
+    capsuleEl.title = '打开 Makro 自动筛选与批量翻页采集面板';
     capsuleEl.addEventListener('click', () => {
       togglePanel(true);
     });
@@ -60,145 +60,145 @@
 
     // B. 主控制面板
     panelEl = document.createElement('div');
-    panelEl.id = 'tk-auto-panel';
+    panelEl.id = 'makro-auto-panel';
     panelEl.style.display = 'none';
     panelEl.innerHTML = `
-      <div class="tk-auto-header" id="tkAutoHeader">
-        <div class="tk-auto-title">
-          <span>🤖</span>
-          <span>自动筛选与翻页采集</span>
+      <div class="makro-auto-header" id="makroAutoHeader">
+        <div class="makro-auto-title">
+          <span>📦</span>
+          <span>Makro 自动筛选与批量采集</span>
         </div>
-        <div class="tk-auto-controls">
-          <button type="button" class="tk-auto-btn-icon" id="tkAutoMinBtn" title="最小化">−</button>
-          <button type="button" class="tk-auto-btn-icon" id="tkAutoCloseBtn" title="关闭">✕</button>
+        <div class="makro-auto-controls">
+          <button type="button" class="makro-auto-btn-icon" id="makroAutoMinBtn" title="最小化">−</button>
+          <button type="button" class="makro-auto-btn-icon" id="makroAutoCloseBtn" title="关闭">✕</button>
         </div>
       </div>
 
-      <div class="tk-auto-body">
+      <div class="makro-auto-body">
         <!-- 筛选预设条件 -->
-        <div class="tk-auto-section">
-          <div class="tk-auto-sec-title">
+        <div class="makro-auto-section">
+          <div class="makro-auto-sec-title">
             <span>🎯 过滤与筛选条件</span>
             <span style="font-size:10px; color:#a0aec0; font-weight:normal;">留空表示不限</span>
           </div>
 
           <!-- 价格区间 -->
-          <div class="tk-auto-row">
-            <span class="tk-auto-label">价格区间:</span>
-            <div class="tk-auto-input-group">
-              <input type="number" id="tkMinPrice" class="tk-auto-input tk-auto-input-short" placeholder="最低 R" min="0">
-              <span class="tk-auto-sep">~</span>
-              <input type="number" id="tkMaxPrice" class="tk-auto-input tk-auto-input-short" placeholder="最高 R" min="0">
+          <div class="makro-auto-row">
+            <span class="makro-auto-label">价格区间:</span>
+            <div class="makro-auto-input-group">
+              <input type="number" id="makroMinPrice" class="makro-auto-input makro-auto-input-short" placeholder="最低 R" min="0">
+              <span class="makro-auto-sep">~</span>
+              <input type="number" id="makroMaxPrice" class="makro-auto-input makro-auto-input-short" placeholder="最高 R" min="0">
             </div>
           </div>
 
           <!-- 评论数量 -->
-          <div class="tk-auto-row">
-            <span class="tk-auto-label">评论数量:</span>
-            <div class="tk-auto-input-group">
-              <input type="number" id="tkMinReviews" class="tk-auto-input tk-auto-input-short" placeholder="最少条数" min="0">
-              <span class="tk-auto-sep">~</span>
-              <input type="number" id="tkMaxReviews" class="tk-auto-input tk-auto-input-short" placeholder="最多条数" min="0">
+          <div class="makro-auto-row">
+            <span class="makro-auto-label">评论数量:</span>
+            <div class="makro-auto-input-group">
+              <input type="number" id="makroMinReviews" class="makro-auto-input makro-auto-input-short" placeholder="最少条数" min="0">
+              <span class="makro-auto-sep">~</span>
+              <input type="number" id="makroMaxReviews" class="makro-auto-input makro-auto-input-short" placeholder="最多条数" min="0">
             </div>
           </div>
 
           <!-- 星级要求 -->
-          <div class="tk-auto-row">
-            <span class="tk-auto-label">最低星级:</span>
-            <div class="tk-auto-input-group">
-              <input type="number" id="tkMinRating" class="tk-auto-input tk-auto-input-short" placeholder="如 4.0" step="0.1" min="0" max="5" value="4.0">
+          <div class="makro-auto-row">
+            <span class="makro-auto-label">最低星级:</span>
+            <div class="makro-auto-input-group">
+              <input type="number" id="makroMinRating" class="makro-auto-input makro-auto-input-short" placeholder="如 4.0" step="0.1" min="0" max="5" value="4.0">
               <span style="font-size:11px; color:#718096; margin-left:6px;">⭐ 星以上</span>
             </div>
           </div>
 
           <!-- 采集上限 & 翻页上限 -->
-          <div class="tk-auto-row">
-            <span class="tk-auto-label">采集目标:</span>
-            <div class="tk-auto-input-group">
-              <input type="number" id="tkMaxCollect" class="tk-auto-input tk-auto-input-short" value="50" min="1" max="1000">
+          <div class="makro-auto-row">
+            <span class="makro-auto-label">采集目标:</span>
+            <div class="makro-auto-input-group">
+              <input type="number" id="makroMaxCollect" class="makro-auto-input makro-auto-input-short" value="50" min="1" max="1000">
               <span style="font-size:11px; color:#718096; margin-left:4px;">件</span>
-              <span class="tk-auto-label" style="min-width:45px; text-align:right; margin-left:6px;">最多翻:</span>
-              <input type="number" id="tkMaxPages" class="tk-auto-input tk-auto-input-short" value="10" min="1" max="50">
+              <span class="makro-auto-label" style="min-width:45px; text-align:right; margin-left:6px;">最多翻:</span>
+              <input type="number" id="makroMaxPages" class="makro-auto-input makro-auto-input-short" value="10" min="1" max="50">
               <span style="font-size:11px; color:#718096; margin-left:4px;">页</span>
             </div>
           </div>
 
           <!-- 安全过滤开关 -->
-          <div class="tk-auto-checkbox-row">
-            <input type="checkbox" id="tkFilterAlreadyCollected" checked>
-            <label for="tkFilterAlreadyCollected">📦 自动跳过已在选品箱中的商品 (取消则重新采集覆盖)</label>
+          <div class="makro-auto-checkbox-row">
+            <input type="checkbox" id="makroFilterAlreadyCollected" checked>
+            <label for="makroFilterAlreadyCollected">📦 自动跳过已在选品箱中的商品 (取消则重新采集覆盖)</label>
           </div>
 
-          <div class="tk-auto-checkbox-row">
-            <input type="checkbox" id="tkFilterRestricted" checked>
-            <label for="tkFilterRestricted">🛡️ 智能排除受限/独立品牌与选品黑名单 (假发/液体/3C等)</label>
+          <div class="makro-auto-checkbox-row">
+            <input type="checkbox" id="makroFilterRestricted" checked>
+            <label for="makroFilterRestricted">🛡️ 智能排除受限/独立品牌与选品黑名单 (假发/液体/3C等)</label>
           </div>
 
-          <div class="tk-auto-checkbox-row">
-            <input type="checkbox" id="tkFilterSponsored" checked>
-            <label for="tkFilterSponsored">🚫 排除 Sponsored 赞助广告品</label>
+          <div class="makro-auto-checkbox-row">
+            <input type="checkbox" id="makroFilterSponsored" checked>
+            <label for="makroFilterSponsored">🚫 排除 Sponsored 赞助广告品</label>
           </div>
 
-          <div class="tk-auto-checkbox-row">
-            <input type="checkbox" id="tkAutoList">
-            <label for="tkAutoList">⚡ 采集后立即直上到店铺 (直上跟卖模式)</label>
+          <div class="makro-auto-checkbox-row" style="display:none;">
+            <input type="checkbox" id="makroAutoList">
+            <label for="makroAutoList">⚡ 采集后立即直上到店铺</label>
           </div>
         </div>
 
         <!-- 操作按钮 -->
-        <div class="tk-auto-actions">
-          <button type="button" class="tk-auto-btn tk-auto-btn-primary" id="tkAutoStartBtn">
+        <div class="makro-auto-actions">
+          <button type="button" class="makro-auto-btn makro-auto-btn-primary" id="makroAutoStartBtn">
             <span>🚀</span> <span>开始自动采集</span>
           </button>
-          <button type="button" class="tk-auto-btn tk-auto-btn-secondary" id="tkAutoPauseBtn" style="display:none;">
+          <button type="button" class="makro-auto-btn makro-auto-btn-secondary" id="makroAutoPauseBtn" style="display:none;">
             <span>⏸</span> <span>暂停</span>
           </button>
-          <button type="button" class="tk-auto-btn tk-auto-btn-danger" id="tkAutoStopBtn" style="display:none;">
+          <button type="button" class="makro-auto-btn makro-auto-btn-danger" id="makroAutoStopBtn" style="display:none;">
             <span>⏹</span> <span>停止</span>
           </button>
         </div>
 
         <!-- 进度与统计 -->
-        <div class="tk-auto-section" style="margin-top:10px;">
-          <div class="tk-auto-sec-title">
+        <div class="makro-auto-section" style="margin-top:10px;">
+          <div class="makro-auto-sec-title">
             <span>📊 采集与过滤进度</span>
-            <span id="tkRunStatusText" style="font-size:11px; font-weight:normal; color:#718096;">就绪</span>
+            <span id="makroRunStatusText" style="font-size:11px; font-weight:normal; color:#718096;">就绪</span>
           </div>
 
-          <div class="tk-auto-progress-bar">
-            <div class="tk-auto-progress-fill" id="tkProgressFill"></div>
+          <div class="makro-auto-progress-bar">
+            <div class="makro-auto-progress-fill" id="makroProgressFill"></div>
           </div>
 
-          <div class="tk-auto-stats-grid">
-            <div class="tk-auto-stat-box success">
-              <div class="tk-auto-stat-num" id="tkStatSuccess">0</div>
-              <div class="tk-auto-stat-label">符合入库</div>
+          <div class="makro-auto-stats-grid">
+            <div class="makro-auto-stat-box success">
+              <div class="makro-auto-stat-num" id="makroStatSuccess">0</div>
+              <div class="makro-auto-stat-label">符合入库</div>
             </div>
-            <div class="tk-auto-stat-box filter">
-              <div class="tk-auto-stat-num" id="tkStatSkip">0</div>
-              <div class="tk-auto-stat-label">条件过滤</div>
+            <div class="makro-auto-stat-box filter">
+              <div class="makro-auto-stat-num" id="makroStatSkip">0</div>
+              <div class="makro-auto-stat-label">条件过滤</div>
             </div>
-            <div class="tk-auto-stat-box page">
-              <div class="tk-auto-stat-num" id="tkStatPage">1</div>
-              <div class="tk-auto-stat-label">当前页/批次</div>
+            <div class="makro-auto-stat-box page">
+              <div class="makro-auto-stat-num" id="makroStatPage">1</div>
+              <div class="makro-auto-stat-label">当前页/批次</div>
             </div>
           </div>
         </div>
 
         <!-- 实时日志 -->
-        <div class="tk-auto-section" style="margin-bottom:0;">
-          <div class="tk-auto-sec-title">
+        <div class="makro-auto-section" style="margin-bottom:0;">
+          <div class="makro-auto-sec-title">
             <span>📜 实时运行日志</span>
-            <a href="javascript:void(0)" id="tkClearLogBtn" style="font-size:10px; color:#3182ce; text-decoration:none;">清空</a>
+            <a href="javascript:void(0)" id="makroClearLogBtn" style="font-size:10px; color:#2563eb; text-decoration:none;">清空</a>
           </div>
-          <div class="tk-auto-log-box" id="tkLogBox">
-            <div class="tk-auto-log-line info">[系统就绪] 请在上方预设筛选条件，点击「开始自动采集」。</div>
+          <div class="makro-auto-log-box" id="makroLogBox">
+            <div class="makro-auto-log-line info">[系统就绪] 请在上方预设筛选条件，点击「开始自动采集」。</div>
           </div>
         </div>
       </div>
     `;
     document.body.appendChild(panelEl);
-    logBoxEl = document.getElementById('tkLogBox');
+    logBoxEl = document.getElementById('makroLogBox');
 
     // 绑定事件
     bindUIEvents();
@@ -221,21 +221,21 @@
   // 绑定界面交互事件
   function bindUIEvents() {
     // 最小化 / 关闭
-    document.getElementById('tkAutoCloseBtn').addEventListener('click', () => togglePanel(false));
-    document.getElementById('tkAutoMinBtn').addEventListener('click', () => {
+    document.getElementById('makroAutoCloseBtn').addEventListener('click', () => togglePanel(false));
+    document.getElementById('makroAutoMinBtn').addEventListener('click', () => {
       panelEl.classList.toggle('minimized');
     });
 
     // 拖拽面板头部
-    makeDraggable(document.getElementById('tkAutoHeader'), panelEl);
+    makeDraggable(document.getElementById('makroAutoHeader'), panelEl);
 
     // 清空日志
-    document.getElementById('tkClearLogBtn').addEventListener('click', () => {
+    document.getElementById('makroClearLogBtn').addEventListener('click', () => {
       if (logBoxEl) logBoxEl.innerHTML = '';
     });
 
     // 实时保存配置
-    const inputs = ['tkMinPrice', 'tkMaxPrice', 'tkMinReviews', 'tkMaxReviews', 'tkMinRating', 'tkMaxCollect', 'tkMaxPages', 'tkFilterAlreadyCollected', 'tkFilterRestricted', 'tkFilterSponsored', 'tkAutoList'];
+    const inputs = ['makroMinPrice', 'makroMaxPrice', 'makroMinReviews', 'makroMaxReviews', 'makroMinRating', 'makroMaxCollect', 'makroMaxPages', 'makroFilterAlreadyCollected', 'makroFilterRestricted', 'makroFilterSponsored', 'makroAutoList'];
     inputs.forEach(id => {
       const el = document.getElementById(id);
       if (el) {
@@ -244,13 +244,13 @@
     });
 
     // 开始采集
-    document.getElementById('tkAutoStartBtn').addEventListener('click', startAutoCollect);
+    document.getElementById('makroAutoStartBtn').addEventListener('click', startAutoCollect);
 
     // 暂停/恢复
-    document.getElementById('tkAutoPauseBtn').addEventListener('click', () => {
+    document.getElementById('makroAutoPauseBtn').addEventListener('click', () => {
       if (!state.running) return;
       state.paused = !state.paused;
-      const pauseBtn = document.getElementById('tkAutoPauseBtn');
+      const pauseBtn = document.getElementById('makroAutoPauseBtn');
       if (state.paused) {
         pauseBtn.innerHTML = '<span>▶</span> <span>继续</span>';
         updateStatusText('已暂停');
@@ -263,25 +263,25 @@
     });
 
     // 停止采集
-    document.getElementById('tkAutoStopBtn').addEventListener('click', stopAutoCollect);
+    document.getElementById('makroAutoStopBtn').addEventListener('click', stopAutoCollect);
   }
 
   // 从 UI 读取配置并保存
   function saveSettingsFromUI() {
-    state.minPrice = document.getElementById('tkMinPrice').value.trim();
-    state.maxPrice = document.getElementById('tkMaxPrice').value.trim();
-    state.minReviews = document.getElementById('tkMinReviews').value.trim();
-    state.maxReviews = document.getElementById('tkMaxReviews').value.trim();
-    state.minRating = document.getElementById('tkMinRating').value.trim();
-    state.maxCollectItems = parseInt(document.getElementById('tkMaxCollect').value, 10) || 50;
-    state.maxScanPages = parseInt(document.getElementById('tkMaxPages').value, 10) || 10;
-    state.filterAlreadyCollected = document.getElementById('tkFilterAlreadyCollected') ? document.getElementById('tkFilterAlreadyCollected').checked : true;
-    state.filterRestricted = document.getElementById('tkFilterRestricted').checked;
-    state.filterSponsored = document.getElementById('tkFilterSponsored').checked;
-    state.autoList = document.getElementById('tkAutoList').checked;
+    state.minPrice = document.getElementById('makroMinPrice').value.trim();
+    state.maxPrice = document.getElementById('makroMaxPrice').value.trim();
+    state.minReviews = document.getElementById('makroMinReviews').value.trim();
+    state.maxReviews = document.getElementById('makroMaxReviews').value.trim();
+    state.minRating = document.getElementById('makroMinRating').value.trim();
+    state.maxCollectItems = parseInt(document.getElementById('makroMaxCollect').value, 10) || 50;
+    state.maxScanPages = parseInt(document.getElementById('makroMaxPages').value, 10) || 10;
+    state.filterAlreadyCollected = document.getElementById('makroFilterAlreadyCollected') ? document.getElementById('makroFilterAlreadyCollected').checked : true;
+    state.filterRestricted = document.getElementById('makroFilterRestricted').checked;
+    state.filterSponsored = document.getElementById('makroFilterSponsored').checked;
+    state.autoList = document.getElementById('makroAutoList') ? document.getElementById('makroAutoList').checked : false;
 
     const savedData = {
-      autoCollector: {
+      makro_auto_collector: {
         minPrice: state.minPrice,
         maxPrice: state.maxPrice,
         minReviews: state.minReviews,
@@ -298,54 +298,53 @@
     chrome.storage.local.set(savedData);
   }
 
-  // 加载已保存配置
+  // 加载已保存配置 (优先从专属存储加载，兼容历史键)
   function loadSavedSettings() {
-    chrome.storage.local.get(['autoCollector', 'autoList'], (res) => {
-      const c = res?.autoCollector || {};
-      if (c.minPrice !== undefined) {
-        document.getElementById('tkMinPrice').value = c.minPrice;
+    chrome.storage.local.get(['makro_auto_collector', 'autoCollector', 'autoList'], (res) => {
+      const c = res?.makro_auto_collector || res?.autoCollector || {};
+      if (c.minPrice !== undefined && document.getElementById('makroMinPrice')) {
+        document.getElementById('makroMinPrice').value = c.minPrice;
         state.minPrice = c.minPrice;
       }
-      if (c.maxPrice !== undefined) {
-        document.getElementById('tkMaxPrice').value = c.maxPrice;
+      if (c.maxPrice !== undefined && document.getElementById('makroMaxPrice')) {
+        document.getElementById('makroMaxPrice').value = c.maxPrice;
         state.maxPrice = c.maxPrice;
       }
-      if (c.minReviews !== undefined) {
-        document.getElementById('tkMinReviews').value = c.minReviews;
+      if (c.minReviews !== undefined && document.getElementById('makroMinReviews')) {
+        document.getElementById('makroMinReviews').value = c.minReviews;
         state.minReviews = c.minReviews;
       }
-      if (c.maxReviews !== undefined) {
-        document.getElementById('tkMaxReviews').value = c.maxReviews;
+      if (c.maxReviews !== undefined && document.getElementById('makroMaxReviews')) {
+        document.getElementById('makroMaxReviews').value = c.maxReviews;
         state.maxReviews = c.maxReviews;
       }
-      if (c.minRating !== undefined) {
-        document.getElementById('tkMinRating').value = c.minRating;
+      if (c.minRating !== undefined && document.getElementById('makroMinRating')) {
+        document.getElementById('makroMinRating').value = c.minRating;
         state.minRating = c.minRating;
       }
-      if (c.maxCollectItems !== undefined) {
-        document.getElementById('tkMaxCollect').value = c.maxCollectItems;
+      if (c.maxCollectItems !== undefined && document.getElementById('makroMaxCollect')) {
+        document.getElementById('makroMaxCollect').value = c.maxCollectItems;
         state.maxCollectItems = c.maxCollectItems;
       }
-      if (c.maxScanPages !== undefined) {
-        document.getElementById('tkMaxPages').value = c.maxScanPages;
+      if (c.maxScanPages !== undefined && document.getElementById('makroMaxPages')) {
+        document.getElementById('makroMaxPages').value = c.maxScanPages;
         state.maxScanPages = c.maxScanPages;
       }
-      if (c.filterAlreadyCollected !== undefined && document.getElementById('tkFilterAlreadyCollected')) {
-        document.getElementById('tkFilterAlreadyCollected').checked = !!c.filterAlreadyCollected;
+      if (c.filterAlreadyCollected !== undefined && document.getElementById('makroFilterAlreadyCollected')) {
+        document.getElementById('makroFilterAlreadyCollected').checked = !!c.filterAlreadyCollected;
         state.filterAlreadyCollected = !!c.filterAlreadyCollected;
       }
-      if (c.filterRestricted !== undefined) {
-        document.getElementById('tkFilterRestricted').checked = !!c.filterRestricted;
+      if (c.filterRestricted !== undefined && document.getElementById('makroFilterRestricted')) {
+        document.getElementById('makroFilterRestricted').checked = !!c.filterRestricted;
         state.filterRestricted = !!c.filterRestricted;
       }
-      if (c.filterSponsored !== undefined) {
-        document.getElementById('tkFilterSponsored').checked = !!c.filterSponsored;
+      if (c.filterSponsored !== undefined && document.getElementById('makroFilterSponsored')) {
+        document.getElementById('makroFilterSponsored').checked = !!c.filterSponsored;
         state.filterSponsored = !!c.filterSponsored;
       }
-      if (c.autoList !== undefined || res?.autoList !== undefined) {
-        const al = c.autoList !== undefined ? !!c.autoList : !!res?.autoList;
-        document.getElementById('tkAutoList').checked = al;
-        state.autoList = al;
+      if (c.autoList !== undefined && document.getElementById('makroAutoList')) {
+        document.getElementById('makroAutoList').checked = !!c.autoList;
+        state.autoList = !!c.autoList;
       }
     });
   }
@@ -355,23 +354,23 @@
     if (!logBoxEl) return;
     const timeStr = new Date().toTimeString().slice(0, 8);
     const line = document.createElement('div');
-    line.className = `tk-auto-log-line ${type}`;
+    line.className = `makro-auto-log-line ${type}`;
     line.textContent = `[${timeStr}] ${msg}`;
     logBoxEl.appendChild(line);
     logBoxEl.scrollTop = logBoxEl.scrollHeight;
   }
 
   function updateStatusText(txt) {
-    const el = document.getElementById('tkRunStatusText');
+    const el = document.getElementById('makroRunStatusText');
     if (el) el.textContent = txt;
   }
 
   function updateDashboard() {
-    const sSucc = document.getElementById('tkStatSuccess');
-    const sSkip = document.getElementById('tkStatSkip');
-    const sPage = document.getElementById('tkStatPage');
-    const pFill = document.getElementById('tkProgressFill');
-    const capCount = document.getElementById('tkCapsuleCount');
+    const sSucc = document.getElementById('makroStatSuccess');
+    const sSkip = document.getElementById('makroStatSkip');
+    const sPage = document.getElementById('makroStatPage');
+    const pFill = document.getElementById('makroProgressFill');
+    const capCount = document.getElementById('makroCapsuleCount');
 
     if (sSucc) sSucc.textContent = state.collectedCount;
     if (sSkip) sSkip.textContent = state.skippedCount;
@@ -463,10 +462,11 @@
 
     // 检测受限品牌、独立品牌与选品黑名单
     let hitBrand = null;
-    if (window.TkBrandChecker) {
-      hitBrand = window.TkBrandChecker.detectInScope(card);
+    const brandChecker = window.MakroBrandChecker || window.TkBrandChecker;
+    if (brandChecker) {
+      hitBrand = brandChecker.detectInScope(card);
       if (!hitBrand && title && title.toLowerCase() !== 'go to product details') {
-        hitBrand = window.TkBrandChecker.checkTitle(title);
+        hitBrand = brandChecker.checkTitle(title);
       }
     }
 
@@ -541,21 +541,21 @@
     return { pass: true, reason: '符合条件', type: 'ok' };
   }
 
-  // 4. 卡片状态打标装饰
+  // 4. 卡片状态打标装饰 (独立 Makro 专属类名)
   function markCardBadge(card, text, type) {
     if (!card) return;
-    card.classList.remove('tk-card-matched', 'tk-card-skipped', 'tk-card-restricted');
-    if (type === 'ok') card.classList.add('tk-card-matched');
-    else if (type === 'danger') card.classList.add('tk-card-restricted');
-    else card.classList.add('tk-card-skipped');
+    card.classList.remove('makro-card-matched', 'makro-card-skipped', 'makro-card-restricted');
+    if (type === 'ok') card.classList.add('makro-card-matched');
+    else if (type === 'danger') card.classList.add('makro-card-restricted');
+    else card.classList.add('makro-card-skipped');
 
-    let badge = card.querySelector('.tk-card-status-badge');
+    let badge = card.querySelector('.makro-card-status-badge');
     if (!badge) {
       badge = document.createElement('div');
-      badge.className = `tk-card-status-badge ${type}`;
+      badge.className = `makro-card-status-badge ${type}`;
       card.appendChild(badge);
     } else {
-      badge.className = `tk-card-status-badge ${type}`;
+      badge.className = `makro-card-status-badge ${type}`;
     }
     badge.textContent = text;
   }
@@ -589,14 +589,14 @@
     state.currentPage = 1;
     state.processedPlids.clear();
 
-    document.getElementById('tkAutoStartBtn').style.display = 'none';
-    document.getElementById('tkAutoPauseBtn').style.display = 'inline-flex';
-    document.getElementById('tkAutoStopBtn').style.display = 'inline-flex';
+    document.getElementById('makroAutoStartBtn').style.display = 'none';
+    document.getElementById('makroAutoPauseBtn').style.display = 'inline-flex';
+    document.getElementById('makroAutoStopBtn').style.display = 'inline-flex';
 
     updateStatusText('正在运行...');
     updateDashboard();
 
-    addLog(`🚀 启动自动采集: 价格[${state.minPrice || '不限'}~${state.maxPrice || '不限'}] 评论>=${state.minReviews || '不限'} 评分>=${state.minRating || '不限'}⭐`, 'info');
+    addLog(`🚀 启动 Makro 自动采集: 价格[${state.minPrice || '不限'}~${state.maxPrice || '不限'}] 评论>=${state.minReviews || '不限'} 评分>=${state.minRating || '不限'}⭐`, 'info');
     addLog(`🎯 目标采集上限: ${state.maxCollectItems} 件, 最大翻页数: ${state.maxScanPages} 页, 跳过已采商品: ${state.filterAlreadyCollected ? '开启' : '关闭(覆盖)'}`, 'info');
 
     try {
@@ -646,7 +646,7 @@
             }
           }
         } catch (e) {
-          console.warn('[AutoCollector] 批量存在性检查失败:', e);
+          console.warn('[MakroAutoCollector] 批量存在性检查失败:', e);
         }
       }
 
@@ -791,7 +791,7 @@
   function scrapeSingleProduct(item) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({
-        action: 'SCRAPE_PRODUCT',
+        action: 'COLLECT_PLID',
         data: {
           plid: item.plid,
           title: item.title,
@@ -801,10 +801,10 @@
           auto_list: state.autoList
         }
       }, (res) => {
-        if (res && res.ok) {
+        if (res && (res.ok || res.success)) {
           resolve(true);
         } else {
-          addLog(`[PLID ${item.plid}] 采集失败: ${res?.message || '网络异常'}`, 'error');
+          addLog(`[PLID ${item.plid}] 采集失败: ${res?.message || res?.error || '网络异常'}`, 'error');
           resolve(false);
         }
       });
@@ -816,9 +816,9 @@
     state.running = false;
     state.paused = false;
 
-    const startBtn = document.getElementById('tkAutoStartBtn');
-    const pauseBtn = document.getElementById('tkAutoPauseBtn');
-    const stopBtn = document.getElementById('tkAutoStopBtn');
+    const startBtn = document.getElementById('makroAutoStartBtn');
+    const pauseBtn = document.getElementById('makroAutoPauseBtn');
+    const stopBtn = document.getElementById('makroAutoStopBtn');
 
     if (startBtn) startBtn.style.display = 'inline-flex';
     if (pauseBtn) pauseBtn.style.display = 'none';
@@ -864,15 +864,15 @@
     }
   }
 
-  // 监听来自 Popup 的指令
+  // 监听来自 Popup 的指令 (支持专属与通用两种 Action)
   chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
-    if (req.action === 'OPEN_AUTO_COLLECTOR') {
+    if (req.action === 'OPEN_MAKRO_AUTO_COLLECTOR' || req.action === 'OPEN_AUTO_COLLECTOR') {
       initUI();
       togglePanel(true);
       sendResponse({ ok: true });
       return true;
     }
-    if (req.action === 'START_AUTO_COLLECT') {
+    if (req.action === 'START_MAKRO_AUTO_COLLECT' || req.action === 'START_AUTO_COLLECT') {
       initUI();
       togglePanel(true);
       if (!state.running) {
@@ -881,12 +881,12 @@
       sendResponse({ ok: true });
       return true;
     }
-    if (req.action === 'STOP_AUTO_COLLECT') {
+    if (req.action === 'STOP_MAKRO_AUTO_COLLECT' || req.action === 'STOP_AUTO_COLLECT') {
       stopAutoCollect();
       sendResponse({ ok: true });
       return true;
     }
-    if (req.action === 'GET_AUTO_COLLECT_STATE') {
+    if (req.action === 'GET_MAKRO_AUTO_COLLECT_STATE' || req.action === 'GET_AUTO_COLLECT_STATE') {
       sendResponse({ ok: true, state });
       return true;
     }

@@ -1,5 +1,5 @@
 /**
- * Takealot 前台商品选品与采集注入脚本 (极简轻量版)
+ * Takealot 前台商品选品与采集注入脚本 (极简轻量版 - 独立命名空间与跟卖插件无冲突共存)
  * 职责：仅负责从当前详情页精准提取商品 PLID 并投递给后端，后端统一执行官方 API 高速爬取、变体独立图组隔离与全参数入库。
  */
 (function () {
@@ -123,7 +123,7 @@
     }
     badge.innerHTML = `<span>✓ 已在选品箱中 (${info.count} 个独立变体)</span>`;
 
-    if (btn.dataset.reconfirmArmed !== '1') {
+    if (btn.dataset.makroReconfirmArmed !== '1') {
       btn.innerHTML = `<span>🔄 重新采集覆盖旧数据</span>`;
       btn.style.background = "linear-gradient(135deg, #0284c7, #0369a1)";
     }
@@ -143,39 +143,40 @@
 
     // 1. 已采集商品二次点击确认守卫
     if (currentCollectedInfo && currentCollectedInfo.collected) {
-      if (btn && btn.dataset.reconfirmArmed !== '1') {
-        btn.dataset.reconfirmArmed = '1';
+      if (btn && btn.dataset.makroReconfirmArmed !== '1') {
+        btn.dataset.makroReconfirmArmed = '1';
         btn.innerText = "⚠️ 再次点击确认重新采集 (覆盖)";
-        btn.classList.add("reconfirm-warning");
+        btn.classList.add("reconfirm-warning", "makro-reconfirm-warning");
         showToast(`💡 该商品已在选品箱中 (${currentCollectedInfo.count} 个变体)，再次点击确认重新拉取并覆盖！`, false);
 
-        if (btn._reconfirmTimer) clearTimeout(btn._reconfirmTimer);
-        btn._reconfirmTimer = setTimeout(() => {
-          if (btn.dataset.reconfirmArmed === '1') {
-            delete btn.dataset.reconfirmArmed;
-            btn.classList.remove("reconfirm-warning");
+        if (btn._makroReconfirmTimer) clearTimeout(btn._makroReconfirmTimer);
+        btn._makroReconfirmTimer = setTimeout(() => {
+          if (btn.dataset.makroReconfirmArmed === '1') {
+            delete btn.dataset.makroReconfirmArmed;
+            btn.classList.remove("reconfirm-warning", "makro-reconfirm-warning");
             btn.innerText = defaultText;
           }
-          btn._reconfirmTimer = null;
+          btn._makroReconfirmTimer = null;
         }, 10000);
         return;
       } else if (btn) {
         // 第二次点击已确认
-        delete btn.dataset.reconfirmArmed;
-        btn.classList.remove("reconfirm-warning");
-        if (btn._reconfirmTimer) {
-          clearTimeout(btn._reconfirmTimer);
-          btn._reconfirmTimer = null;
+        delete btn.dataset.makroReconfirmArmed;
+        btn.classList.remove("reconfirm-warning", "makro-reconfirm-warning");
+        if (btn._makroReconfirmTimer) {
+          clearTimeout(btn._makroReconfirmTimer);
+          btn._makroReconfirmTimer = null;
         }
       }
     }
     
     // 2. 品牌侵权风控与二次确认守卫
-    if (btn && window.TkBrandChecker && window.TkBrandChecker.guard(btn, document, defaultText)) {
+    const brandChecker = window.MakroBrandChecker || window.TkBrandChecker;
+    if (btn && brandChecker && brandChecker.guard(btn, document, defaultText)) {
       return;
     }
 
-    const hitBrand = window.TkBrandChecker ? window.TkBrandChecker.detectInScope(document) : null;
+    const hitBrand = brandChecker ? brandChecker.detectInScope(document) : null;
 
     if (btn) {
       btn.innerText = `⏳ 后端正在采集 (${plid})...`;
@@ -225,6 +226,38 @@
     }
   });
 
+  // 支持拖拽卡片
+  function makeCardDraggable(handle, target) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+    handle.onmousedown = dragMouseDown;
+
+    function dragMouseDown(e) {
+      if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
+      e.preventDefault();
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      document.onmouseup = closeDragElement;
+      document.onmousemove = elementDrag;
+    }
+
+    function elementDrag(e) {
+      e.preventDefault();
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      target.style.top = (target.offsetTop - pos2) + "px";
+      target.style.left = (target.offsetLeft - pos1) + "px";
+      target.style.bottom = 'auto';
+      target.style.right = 'auto';
+    }
+
+    function closeDragElement() {
+      document.onmouseup = null;
+      document.onmousemove = null;
+    }
+  }
+
   // 注入详情页悬浮采集卡片
   function injectDetailButton() {
     if (document.getElementById("makro-collect-floating-card")) return;
@@ -245,34 +278,41 @@
       flex-direction: column;
       gap: 8px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-width: 250px;
+      transition: all 0.2s ease;
     `;
 
     card.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div id="makro-card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:move;user-select:none;">
         <span style="font-weight:700;color:#1e293b;font-size:14px;display:flex;align-items:center;gap:6px;">
           <span style="display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:50%;"></span>
           Makro 搬品助手
         </span>
-        <a id="makro-card-open-dashboard" href="javascript:void(0)" style="color:#2563eb;font-size:12px;text-decoration:none;cursor:pointer;">打开中台 &rarr;</a>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <a id="makro-card-open-dashboard" href="javascript:void(0)" style="color:#2563eb;font-size:12px;text-decoration:none;cursor:pointer;">中台 &rarr;</a>
+          <button id="makro-card-min-btn" type="button" style="background:#f1f5f9;border:none;color:#64748b;width:20px;height:20px;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;" title="折叠/展开">−</button>
+        </div>
       </div>
-      <button id="makro-collect-btn" style="
-        background: linear-gradient(135deg, #2563eb, #1d4ed8);
-        color: white;
-        border: none;
-        padding: 10px 18px;
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 14px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
-        transition: all 0.2s ease;
-      ">
-        📦 极速采集本商品入库
-      </button>
+      <div id="makro-card-body" style="display:flex;flex-direction:column;gap:8px;">
+        <button id="makro-collect-btn" style="
+          background: linear-gradient(135deg, #2563eb, #1d4ed8);
+          color: white;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 8px;
+          font-weight: 600;
+          font-size: 14px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+          transition: all 0.2s ease;
+        ">
+          📦 极速采集本商品入库
+        </button>
+      </div>
     `;
 
     const dashLink = card.querySelector("#makro-card-open-dashboard");
@@ -281,6 +321,22 @@
         e.preventDefault();
         chrome.runtime.sendMessage({ action: "OPEN_DASHBOARD" });
       };
+    }
+
+    const minBtn = card.querySelector("#makro-card-min-btn");
+    const cardBody = card.querySelector("#makro-card-body");
+    if (minBtn && cardBody) {
+      minBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isCollapsed = cardBody.style.display === "none";
+        cardBody.style.display = isCollapsed ? "flex" : "none";
+        minBtn.textContent = isCollapsed ? "−" : "+";
+      };
+    }
+
+    const cardHeader = card.querySelector("#makro-card-header");
+    if (cardHeader) {
+      makeCardDraggable(cardHeader, card);
     }
 
     document.body.appendChild(card);
