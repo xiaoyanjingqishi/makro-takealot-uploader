@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from typing import Optional
 from ..database import get_db
 from ..models.setting import SystemSetting
+from ..models.user import User
 from ..schemas.setting import SystemSettingsSchema
 from ..config import settings
+from ..utils.auth import get_current_admin, get_optional_current_user
+from ..services.auto_login_scheduler import auto_login_scheduler
 
 router = APIRouter(prefix="/settings", tags=["系统配置"])
 
 @router.get("", response_model=SystemSettingsSchema, summary="获取所有系统配置与定价规则")
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     all_settings = db.query(SystemSetting).all()
     setting_dict = {s.key: s.value for s in all_settings}
 
@@ -34,14 +41,32 @@ def get_settings(db: Session = Depends(get_db)):
             return default
         return str(val).lower() in ["true", "1", "yes", "y"]
 
+    is_admin = bool(current_user and current_user.role == "ADMIN")
+
+    qwen_k = _get_str("qwen_api_key", settings.QWEN_API_KEY)
+    deepseek_k = _get_str("deepseek_api_key", settings.DEEPSEEK_API_KEY)
+    jev_k = _get_str("jev_api_key", getattr(settings, "JEV_API_KEY", ""))
+    ck = _get_str("cookie", "")
+    csrf = _get_str("fk_csrf_token", settings.DEFAULT_FK_CSRF_TOKEN)
+
+    # 普通员工访问时强制对高危密钥与 Cookie 做脱敏遮罩，严防凭据泄露
+    if not is_admin:
+        qwen_k = "******" if qwen_k else ""
+        deepseek_k = "******" if deepseek_k else ""
+        jev_k = "******" if jev_k else ""
+        ck = "******" if ck else ""
+        csrf = "******" if csrf else ""
+
     return SystemSettingsSchema(
         markup_ratio=_get_float("markup_ratio", settings.DEFAULT_MARKUP_RATIO),
         fixed_markup=_get_float("fixed_markup", settings.DEFAULT_FIXED_MARKUP),
         mrp_ratio=_get_float("mrp_ratio", settings.DEFAULT_MRP_RATIO),
         publish_concurrency=_get_int("publish_concurrency", getattr(settings, "DEFAULT_PUBLISH_CONCURRENCY", 2)),
+        auto_login_check_enabled=_get_bool("auto_login_check_enabled", True),
+        auto_login_check_interval_hours=_get_float("auto_login_check_interval_hours", 21.0),
         seller_id=_get_str("seller_id", settings.DEFAULT_SELLER_ID),
-        fk_csrf_token=_get_str("fk_csrf_token", settings.DEFAULT_FK_CSRF_TOKEN),
-        cookie=_get_str("cookie", ""),
+        fk_csrf_token=csrf,
+        cookie=ck,
         default_brand=_get_str("default_brand", settings.DEFAULT_BRAND),
         shipping_days=_get_str("shipping_days", settings.DEFAULT_SHIPPING_DAYS),
         country_of_origin=_get_str("country_of_origin", settings.DEFAULT_COUNTRY_OF_ORIGIN),
@@ -52,10 +77,10 @@ def get_settings(db: Session = Depends(get_db)):
         default_pkg_height=_get_str("default_pkg_height", settings.DEFAULT_PKG_HEIGHT),
         default_pkg_weight=_get_str("default_pkg_weight", settings.DEFAULT_PKG_WEIGHT),
         ai_provider=_get_str("ai_provider", settings.AI_PROVIDER),
-        qwen_api_key=_get_str("qwen_api_key", settings.QWEN_API_KEY),
+        qwen_api_key=qwen_k,
         qwen_base_url=_get_str("qwen_base_url", settings.QWEN_BASE_URL),
         qwen_model=_get_str("qwen_model", settings.QWEN_MODEL),
-        deepseek_api_key=_get_str("deepseek_api_key", settings.DEEPSEEK_API_KEY),
+        deepseek_api_key=deepseek_k,
         deepseek_base_url=_get_str("deepseek_base_url", settings.DEEPSEEK_BASE_URL),
         deepseek_model=_get_str("deepseek_model", settings.DEEPSEEK_MODEL),
         deepseek_vision_model=_get_str("deepseek_vision_model", getattr(settings, "DEEPSEEK_VISION_MODEL", "deepseek-flash")),
@@ -64,14 +89,18 @@ def get_settings(db: Session = Depends(get_db)):
         cleaner_mode=_get_str("cleaner_mode", getattr(settings, "DEFAULT_CLEANER_MODE", "text")),
         qwen_vision_model=_get_str("qwen_vision_model", getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")),
         custom_category_synonyms=_get_str("custom_category_synonyms", "{}"),
-        jev_api_key=_get_str("jev_api_key", getattr(settings, "JEV_API_KEY", "")),
+        jev_api_key=jev_k,
         jev_base_url=_get_str("jev_base_url", getattr(settings, "JEV_BASE_URL", "https://api.typesafe.ai")),
         jev_model=_get_str("jev_model", getattr(settings, "JEV_MODEL", "jev-latest")),
         jev_enabled=_get_bool("jev_enabled", getattr(settings, "JEV_ENABLED", True)),
     )
 
-@router.post("", summary="保存或更新系统配置")
-def save_settings(req: SystemSettingsSchema, db: Session = Depends(get_db)):
+@router.post("", summary="保存或更新系统配置 (仅限系统管理员)")
+def save_settings(
+    req: SystemSettingsSchema,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
     data = req.dict()
     for key, value in data.items():
         val_str = str(value) if value is not None else ""
@@ -83,6 +112,12 @@ def save_settings(req: SystemSettingsSchema, db: Session = Depends(get_db)):
 
     db.commit()
 
+    # 热重载自动保活定时调度器周期配置
+    auto_login_scheduler.set_interval_hours(
+        hours=req.auto_login_check_interval_hours,
+        enabled=req.auto_login_check_enabled
+    )
+
     # 热重载自定义类目同义词到倒排索引
     from ..services.vertical_service import VerticalSemanticRetriever
     VerticalSemanticRetriever.sync_custom_synonyms_from_db(db)
@@ -91,8 +126,8 @@ def save_settings(req: SystemSettingsSchema, db: Session = Depends(get_db)):
     record_audit_log(
         task_type="SETTINGS_UPDATE",
         status="SUCCESS",
-        message="更新系统全局配置 (包含定价规则、Makro凭据、AI模型与类目同义词配置)",
-        detail_logs={"updated_keys": list(data.keys())},
+        message=f"管理员【{current_admin.username}】更新系统全局配置 (保活周期: {req.auto_login_check_interval_hours}h, 启用状态={req.auto_login_check_enabled})",
+        detail_logs={"updated_keys": list(data.keys()), "admin": current_admin.username},
         db=db
     )
     return {"message": "配置更新成功"}

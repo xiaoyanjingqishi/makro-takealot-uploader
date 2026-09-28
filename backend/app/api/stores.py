@@ -40,11 +40,15 @@ def _format_store(store: Store, db: Session) -> dict:
         "is_default": store.is_default,
         "notes": store.notes,
         "login_email": store.login_email,
+        "login_password": store.login_password,
         "has_login_password": bool(store.login_password and len(store.login_password) > 0),
         "imap_server": store.imap_server,
         "imap_port": store.imap_port or 993,
         "imap_user": store.imap_user,
+        "imap_password": store.imap_password,
         "has_imap_password": bool(store.imap_password and len(store.imap_password) > 0),
+        "last_auto_login_at": store.last_auto_login_at,
+        "last_auto_login_status": store.last_auto_login_status,
         "has_cookie": has_cookie,
         "cookie_preview": cookie_prev,
         "listings_count": cnt,
@@ -377,4 +381,17 @@ def quick_login_verify_otp(req: VerifyOtpRequest):
         "success": True,
         "message": "登录成功，已取得凭据",
         "credentials": creds
+    }
+
+@router.post("/trigger-auto-login-all", summary="立即触发所有店铺全自动登录与凭据保活 (仅管理员)")
+def trigger_auto_login_all_stores(
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    from ..services.auto_login_scheduler import auto_login_scheduler
+    res = auto_login_scheduler.trigger_all_stores()
+    return {
+        "success": True,
+        "message": f"全店铺自动登录保活轮询已执行完成 (共检测 {res.get('total', 0)} 个店铺)",
+        "data": res
     }

@@ -10,6 +10,10 @@ class SystemSettingsSchema(BaseModel):
     # 并发与性能调度
     publish_concurrency: int = 2  # 批量上品并发线程数 (推荐 2~3，支持店铺间并发)
 
+    # 全自动登录保活与凭据定时检测配置
+    auto_login_check_enabled: bool = True  # 是否开启全自动登录与凭据定时保活检测
+    auto_login_check_interval_hours: float = 21.0  # 定时保活检测执行周期 (小时，管理员可自定义，默认每 21 小时)
+
     # Makro 凭据与店铺配置
     seller_id: str = "cb80491bf0a34dc5"
     fk_csrf_token: str = "FbvXzXEP-45o5eUtkeX8Wo6LCq9GBWDg9Rcg"

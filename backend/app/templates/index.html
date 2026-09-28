@@ -2209,14 +2209,32 @@
                   <span class="text-slate-500">已刊登/提交商品:</span>
                   <span class="font-bold text-indigo-700 font-mono tabular-nums">{{ s.listings_count }} 件</span>
                 </div>
-                <!-- 自动登录配置状态 -->
-                <div class="flex items-center justify-between pt-1 border-t border-slate-100/80">
-                  <span class="text-slate-500">自动化登录:</span>
-                  <div class="flex items-center space-x-1">
-                    <span v-if="s.login_email" class="text-[11px] font-mono text-slate-700 truncate max-w-[120px]" :title="s.login_email">{{ s.login_email }}</span>
-                    <span v-if="s.has_imap_password" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">自动收码</span>
-                    <span v-else-if="s.login_email" class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">手动收码</span>
-                    <span v-else class="text-[11px] text-slate-400">未配置</span>
+                <!-- 自动登录与保活状态 -->
+                <div class="space-y-1.5 pt-2 border-t border-slate-100/80">
+                  <div class="flex items-center justify-between">
+                    <span class="text-slate-500">账密缓存状态:</span>
+                    <div class="flex items-center space-x-1">
+                      <span v-if="s.has_login_password" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="已缓存 Makro 登录密码">🔑 密码已存</span>
+                      <span v-else class="px-1.5 py-0.2 rounded text-[10px] text-slate-400 bg-slate-100">密码未存</span>
+                      <span v-if="s.has_imap_password" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="已配置邮箱授权码，支持自动收信">📬 授权码已存</span>
+                      <span v-else class="px-1.5 py-0.2 rounded text-[10px] text-slate-400 bg-slate-100">未配授权码</span>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-500">登录账号:</span>
+                    <span v-if="s.login_email" class="font-mono text-slate-700 font-medium truncate max-w-[140px]" :title="s.login_email">{{ s.login_email }}</span>
+                    <span v-else class="text-slate-400">未设置</span>
+                  </div>
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-500">定时保活状态:</span>
+                    <div class="flex items-center space-x-1">
+                      <span v-if="s.last_auto_login_at" class="font-mono text-[10px] text-slate-600">
+                        {{ formatDateTime(s.last_auto_login_at) }}
+                      </span>
+                      <span v-if="s.last_auto_login_status === 'SUCCESS'" class="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">✓ 成功</span>
+                      <span v-else-if="s.last_auto_login_status && s.last_auto_login_status.startsWith('FAILED')" class="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200" :title="s.last_auto_login_status">✕ 异常</span>
+                      <span v-else class="text-slate-400 text-[10px]">待轮询</span>
+                    </div>
                   </div>
                 </div>
                 <div v-if="s.notes" class="text-[11px] text-slate-400 italic">
@@ -2430,7 +2448,7 @@
       </div>
 
       <!-- ================= Tab 4: 系统设置 ================= -->
-      <div v-if="currentTab === 'settings'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 max-w-4xl space-y-4 custom-scrollbar">
+      <div v-if="currentTab === 'settings' && currentUser && currentUser.role === 'ADMIN'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 max-w-4xl space-y-4 custom-scrollbar">
         <div class="bg-white p-5 sm:p-6 rounded-xl border border-slate-200/80 shadow-xs space-y-6">
           <div class="border-b border-slate-100 pb-3 flex items-center justify-between">
             <div>
@@ -2708,6 +2726,73 @@
                 <div class="leading-relaxed">
                   <strong>受控并发与店铺隔离机制</strong>：
                   系统采用店铺间交替并行调度，同一时刻不同店铺并行发布，同店铺内部保持平稳节流，既成倍提速又避免触发 Makro 平台并发风控 (HTTP 429 限流)。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 店铺全自动登录保活与定时刷新 (每21小时) -->
+          <div class="border-t border-slate-100 pt-4">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
+                  <span>🔄 5. 店铺全自动登录保活与定时刷新</span>
+                  <span class="px-2 py-0.5 text-[10px] font-bold rounded-full" :class="settings.auto_login_check_enabled ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'">
+                    {{ settings.auto_login_check_enabled ? '后台定时引擎已启用' : '已停用' }}
+                  </span>
+                </h3>
+                <p class="text-[11px] text-slate-500 mt-0.5">每隔指定周期在后台静默为已配置账密的店铺自动登录并刷新 Cookie / CSRF 凭据，确保持久在线不掉线。</p>
+              </div>
+              <button 
+                type="button"
+                @click="triggerAutoLoginAllStores" 
+                :disabled="triggeringAutoLoginAll"
+                class="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 transition active:scale-95 disabled:opacity-50"
+                title="立即检测并对全部配置了账密的店铺执行自动登录"
+              >
+                <span>{{ triggeringAutoLoginAll ? '⏳ 正在检测刷新中...' : '⚡ 立即触发全店铺自动保活' }}</span>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-3.5 bg-slate-50/70 border border-slate-200/70 rounded-xl">
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="text-xs font-semibold text-slate-700 block">自动保活总开关</label>
+                    <span class="text-[10.5px] text-slate-400">开启后守护线程将按周期静默自动登录</span>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="settings.auto_login_check_enabled" class="sr-only peer">
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-700 mb-1">自动检测与刷新周期 (小时)</label>
+                  <div class="flex items-center space-x-2">
+                    <input v-model.number="settings.auto_login_check_interval_hours" type="number" step="1" min="1" max="168" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                    <span class="text-xs text-slate-500 shrink-0 font-medium">小时 / 次</span>
+                  </div>
+                  <div class="flex items-center space-x-1.5 mt-2">
+                    <span class="text-[10px] text-slate-400">快捷预设:</span>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 12" class="px-2 py-0.5 text-[10px] font-medium bg-white hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer text-slate-600">12小时</button>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 18" class="px-2 py-0.5 text-[10px] font-medium bg-white hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer text-slate-600">18小时</button>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 21" class="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md cursor-pointer">21小时 (推荐)</button>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 24" class="px-2 py-0.5 text-[10px] font-medium bg-white hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer text-slate-600">24小时</button>
+                  </div>
+                </div>
+              </div>
+              <div class="p-3 bg-white border border-slate-200/80 rounded-lg text-[11px] text-slate-600 flex flex-col justify-between">
+                <div>
+                  <div class="font-bold text-slate-800 mb-1 flex items-center space-x-1">
+                    <span>🛡️</span>
+                    <span>全自动保活工作机制</span>
+                  </div>
+                  <p class="leading-relaxed text-slate-500">
+                    Makro 登录会话通常在 24 小时左右失效。系统后台定时守护引擎每隔 <strong>{{ settings.auto_login_check_interval_hours || 21 }} 小时</strong> 将自动检索启用的店铺，使用已缓存的 Makro 账密与邮箱授权码自动收发 OTP，全程静默续签凭据，彻底消除 Cookie 过期导致的商品上架或订单同步中断。
+                  </p>
+                </div>
+                <div class="mt-2 text-[10px] text-slate-400 font-mono">
+                  店铺之间自动加入 15 秒安全延迟，避免频繁发信风控。
                 </div>
               </div>
             </div>
@@ -4812,12 +4897,21 @@
                   />
                 </div>
                 <div>
-                  <label class="block font-medium text-slate-700 mb-1">
-                    Makro 登录密码 
-                    <span v-if="storeForm.id && storeForm.has_login_password" class="text-[10px] text-emerald-600 font-normal">(已保存，留空保持原密码)</span>
-                  </label>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block font-medium text-slate-700">
+                      Makro 登录密码 
+                      <span v-if="storeForm.id && storeForm.has_login_password" class="text-[10px] text-emerald-600 font-normal">(已保存，留空保持原密码)</span>
+                    </label>
+                    <button 
+                      type="button" 
+                      @click="showStoreLoginPassword = !showStoreLoginPassword" 
+                      class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {{ showStoreLoginPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                    </button>
+                  </div>
                   <input 
-                    type="password" 
+                    :type="showStoreLoginPassword ? 'text' : 'password'" 
                     v-model="storeForm.login_password" 
                     placeholder="Makro 卖家中心密码" 
                     class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
@@ -4853,12 +4947,21 @@
 
               <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
                 <div>
-                  <label class="block font-medium text-slate-700 mb-1">
-                    邮箱授权码 / 应用专用密码
-                    <span v-if="storeForm.id && storeForm.has_imap_password" class="text-[10px] text-emerald-600 font-normal">(已保存，留空保持原密码)</span>
-                  </label>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block font-medium text-slate-700">
+                      邮箱授权码 / 应用专用密码
+                      <span v-if="storeForm.id && storeForm.has_imap_password" class="text-[10px] text-emerald-600 font-normal">(已保存，留空保持原密码)</span>
+                    </label>
+                    <button 
+                      type="button" 
+                      @click="showStoreImapPassword = !showStoreImapPassword" 
+                      class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {{ showStoreImapPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                    </button>
+                  </div>
                   <input 
-                    type="password" 
+                    :type="showStoreImapPassword ? 'text' : 'password'" 
                     v-model="storeForm.imap_password" 
                     placeholder="163授权密码 / Gmail应用专用密码 / QQ授权码" 
                     class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
@@ -5015,9 +5118,18 @@
                 />
               </div>
               <div>
-                <label class="block font-semibold text-slate-700 mb-1.5">Makro 登录密码 <span class="text-rose-500">*</span></label>
+                <div class="flex items-center justify-between mb-1.5">
+                  <label class="block font-semibold text-slate-700">Makro 登录密码 <span class="text-rose-500">*</span></label>
+                  <button 
+                    type="button" 
+                    @click="showAutoLoginPassword = !showAutoLoginPassword" 
+                    class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {{ showAutoLoginPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                  </button>
+                </div>
                 <input 
-                  type="password" 
+                  :type="showAutoLoginPassword ? 'text' : 'password'" 
                   v-model="autoLoginForm.password" 
                   placeholder="Makro 卖家中心密码" 
                   class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
@@ -5032,17 +5144,26 @@
                   <span>📨 邮箱应用授权码 (用于自动收码)</span>
                   <span class="text-amber-500 text-[11px]" title="非邮箱网页登录密码，如未配置也可手动输入验证码">ⓘ</span>
                 </label>
-                <button 
-                  type="button"
-                  @click="testEmailConnection(autoLoginForm.email, autoLoginForm.imap_password, autoLoginForm.imap_server, autoLoginForm.imap_port)"
-                  :disabled="testingEmail || !autoLoginForm.imap_password"
-                  class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer disabled:opacity-40"
-                >
-                  {{ testingEmail ? '⏳ 连接中...' : '🔍 测试邮箱连通' }}
-                </button>
+                <div class="flex items-center space-x-2">
+                  <button 
+                    type="button" 
+                    @click="showAutoLoginImapPassword = !showAutoLoginImapPassword" 
+                    class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {{ showAutoLoginImapPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                  </button>
+                  <button 
+                    type="button"
+                    @click="testEmailConnection(autoLoginForm.email, autoLoginForm.imap_password, autoLoginForm.imap_server, autoLoginForm.imap_port)"
+                    :disabled="testingEmail || !autoLoginForm.imap_password"
+                    class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer disabled:opacity-40"
+                  >
+                    {{ testingEmail ? '⏳ 连接中...' : '🔍 测试邮箱连通' }}
+                  </button>
+                </div>
               </div>
               <input 
-                type="password" 
+                :type="showAutoLoginImapPassword ? 'text' : 'password'" 
                 v-model="autoLoginForm.imap_password" 
                 placeholder="163授权密码 / Google应用专用密码 / QQ授权码 (选填，留空则手动输验证码)" 
                 class="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
@@ -6083,6 +6204,11 @@
             imap_password: ''
           },
           testingStoreId: null,
+          showStoreLoginPassword: false,
+          showStoreImapPassword: false,
+          showAutoLoginPassword: false,
+          showAutoLoginImapPassword: false,
+          triggeringAutoLoginAll: false,
           // Makro 自动登录与多邮箱验证码状态
           showAutoLoginModal: false,
           autoLoginStore: null,
@@ -6197,10 +6323,10 @@
         systemTabs() {
           const list = [
             { id: 'stores', name: '多店铺管理', icon: '🏪', badge: this.stores && this.stores.length ? `${this.stores.length}店` : null, desc: '多店铺授权凭据 · Cookie 与 CSRF 令牌巡检' },
-            { id: 'tasks', name: '任务日志', icon: '📋', hasActiveTask: (this.activeBgTasks || []).some(t => t.status === 'RUNNING'), desc: '后台多模态图文异步调度引擎与执行日志' },
-            { id: 'settings', name: '系统设置', icon: '⚙️', desc: '双 AI 模型选择 · 提示词微调与系统全局参数' }
+            { id: 'tasks', name: '任务日志', icon: '📋', hasActiveTask: (this.activeBgTasks || []).some(t => t.status === 'RUNNING'), desc: '后台多模态图文异步调度引擎与执行日志' }
           ];
           if (this.currentUser && this.currentUser.role === 'ADMIN') {
+            list.push({ id: 'settings', name: '系统设置', icon: '⚙️', badge: '管理', badgeType: 'admin', desc: '系统全局参数 · 凭据保活与模型配置' });
             list.push({ id: 'users', name: '用户管理', icon: '👥', badge: '管理', badgeType: 'admin', desc: '团队子账号管理 · 店铺访问控制与 RBAC 权限分配' });
           }
           return list;
@@ -7282,6 +7408,11 @@
           this.loadProducts(1);
         },
         switchTab(tabId) {
+          if ((tabId === 'settings' || tabId === 'users') && (!this.currentUser || this.currentUser.role !== 'ADMIN')) {
+            this.showToast('⛔ 无权访问：该功能仅限系统管理员使用', 'error');
+            this.currentTab = 'products';
+            return;
+          }
           const prevTab = this.currentTab;
           this.currentTab = tabId;
           if (tabId === 'inspector' && this.activeItem && this.activeItem.id && (!this.activeItem.takealot_specs || !this.activeItem.makro_catalog_attributes)) {
@@ -8401,12 +8532,12 @@
             is_default: s.is_default,
             notes: s.notes || '',
             login_email: s.login_email || '',
-            login_password: '',
+            login_password: s.login_password || '',
             imap_provider: this.detectEmailProvider(s.login_email || s.imap_user),
             imap_server: s.imap_server || '',
             imap_port: s.imap_port || 993,
             imap_user: s.imap_user || '',
-            imap_password: '',
+            imap_password: s.imap_password || '',
             has_login_password: !!s.has_login_password,
             has_imap_password: !!s.has_imap_password
           };
@@ -8504,19 +8635,22 @@
         },
         openAutoLoginModal(store = null) {
           this.autoLoginStore = store;
-          const email = (store && store.login_email) || (this.storeForm && this.storeForm.login_email) || 'xiaoyanjingqishi@gmail.com';
+          const targetStore = store || (this.stores.length > 0 ? this.stores[0] : null);
+          const email = (targetStore && targetStore.login_email) || (this.storeForm && this.storeForm.login_email) || 'xiaoyanjingqishi@gmail.com';
           const def = this.resolveImapDefaults(email);
           this.autoLoginForm = {
-            store_id: store ? store.id : (this.stores.length > 0 ? this.stores[0].id : null),
+            store_id: targetStore ? targetStore.id : null,
             email: email,
-            password: '',
+            password: (targetStore && targetStore.login_password) || '',
             imap_provider: this.detectEmailProvider(email),
-            imap_server: (store && store.imap_server) || def.server,
-            imap_port: (store && store.imap_port) || def.port,
-            imap_user: (store && store.imap_user) || '',
-            imap_password: '',
+            imap_server: (targetStore && targetStore.imap_server) || def.server,
+            imap_port: (targetStore && targetStore.imap_port) || def.port,
+            imap_user: (targetStore && (targetStore.imap_user || targetStore.login_email)) || email,
+            imap_password: (targetStore && targetStore.imap_password) || '',
             otp: ''
           };
+          this.showAutoLoginPassword = false;
+          this.showAutoLoginImapPassword = false;
           this.autoLoginStage = 'ready';
           this.autoLoginStatusMsg = '';
           this.autoLoginErrorMsg = '';
@@ -8537,6 +8671,18 @@
               this.autoLoginForm.email = s.login_email;
               this.onAutoLoginEmailInput();
             }
+            if (s.login_password) {
+              this.autoLoginForm.password = s.login_password;
+            }
+            if (s.imap_password) {
+              this.autoLoginForm.imap_password = s.imap_password;
+            }
+            if (s.imap_server) {
+              this.autoLoginForm.imap_server = s.imap_server;
+            }
+            if (s.imap_port) {
+              this.autoLoginForm.imap_port = s.imap_port;
+            }
           }
         },
         onAutoLoginEmailInput() {
@@ -8556,7 +8702,8 @@
           }
         },
         async startAutoLoginPipeline() {
-          if (!this.autoLoginForm.email || !this.autoLoginForm.password) {
+          const hasCachedPwd = this.autoLoginStore && this.autoLoginStore.has_login_password;
+          if (!this.autoLoginForm.email || (!this.autoLoginForm.password && !hasCachedPwd)) {
             alert('请填写 Makro 登录邮箱和密码！');
             return;
           }
@@ -8735,6 +8882,27 @@
             }
           } catch (e) {
             alert('保存店铺网络异常: ' + e);
+          }
+        },
+        async triggerAutoLoginAllStores() {
+          if (!confirm('确定立即对所有已配置账密的店铺执行全自动保活检测与登录刷新吗？')) return;
+          this.triggeringAutoLoginAll = true;
+          try {
+            const res = await fetch('/api/stores/trigger-auto-login-all', {
+              method: 'POST',
+              headers: this.getAuthHeaders()
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+              this.showToast(`🎉 ${data.message}`, 'success');
+              await this.loadStores();
+            } else {
+              this.showToast(`⚠️ 执行提示: ${data.detail || data.message || '未知'}`, 'warning');
+            }
+          } catch (e) {
+            this.showToast('触发全店铺保活网络异常: ' + e, 'error');
+          } finally {
+            this.triggeringAutoLoginAll = false;
           }
         },
         async deleteStore(s) {

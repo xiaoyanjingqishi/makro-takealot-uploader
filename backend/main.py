@@ -58,6 +58,19 @@ try:
 except Exception:
     pass
 
+# 确保 stores 表具备 last_auto_login_at 与 last_auto_login_status 字段 (支持21小时保活检测与状态记录)
+try:
+    from sqlalchemy import text
+    with engine.connect() as _conn:
+        cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(stores)"))]
+        if "last_auto_login_at" not in cols:
+            _conn.execute(text("ALTER TABLE stores ADD COLUMN last_auto_login_at DATETIME"))
+        if "last_auto_login_status" not in cols:
+            _conn.execute(text("ALTER TABLE stores ADD COLUMN last_auto_login_status VARCHAR(255)"))
+        _conn.commit()
+except Exception:
+    pass
+
 
 # 确保多店铺初始数据迁移 (如果 stores 为空，从现有系统配置无缝迁移首个默认店铺)
 try:
@@ -157,6 +170,13 @@ try:
     order_sync_scheduler.start()
 except Exception as _sched_err:
     print(f"[INIT] 启动后台定时同步失败: {_sched_err}")
+
+# 启动店铺全自动登录与凭据保活定时调度引擎 (默认每 21 小时，可由管理员在系统配置中自定义)
+try:
+    from app.services.auto_login_scheduler import auto_login_scheduler
+    auto_login_scheduler.start()
+except Exception as _als_err:
+    print(f"[INIT] 启动自动登录保活调度器失败: {_als_err}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

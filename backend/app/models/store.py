@@ -24,6 +24,8 @@ class Store(Base):
     imap_port = Column(Integer, default=993)  # IMAP 端口 (默认 993)
     imap_user = Column(String(150), nullable=True)  # IMAP 邮箱账号 (若空则默认同 login_email)
     imap_password = Column(String(150), nullable=True)  # 邮箱应用专用密码 / 客户端授权码
+    last_auto_login_at = Column(DateTime, nullable=True)  # 上次全自动保活登录时间
+    last_auto_login_status = Column(String(255), nullable=True)  # 上次全自动保活登录状态 (SUCCESS / FAILED: ...)
 
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

@@ -48,11 +48,15 @@ class StoreResponse(BaseModel):
     is_default: bool
     notes: Optional[str] = None
     login_email: Optional[str] = None
+    login_password: Optional[str] = None
     imap_server: Optional[str] = None
     imap_port: Optional[int] = 993
     imap_user: Optional[str] = None
+    imap_password: Optional[str] = None
     has_login_password: bool = False
     has_imap_password: bool = False
+    last_auto_login_at: Optional[datetime] = None
+    last_auto_login_status: Optional[str] = None
     has_cookie: bool = False
     cookie_preview: Optional[str] = None
     listings_count: int = 0
