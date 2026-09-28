@@ -92,7 +92,16 @@ def extract_device_model(raw_title: str, specs: Any = None, category: str = "") 
     # 2. 从原始标题中使用正向精准正则匹配主流设备机型
     title_text = str(raw_title or "")
     
-    # 2.1 苹果生态 (iPhone / iPad / Apple Watch / AirPods / MacBook)
+    # 2.1 苹果生态 (AirTag / Apple Pencil / iPhone / iPad / Apple Watch / AirPods / MacBook / iMac)
+    m_airtag = re.search(r'\b(?:Apple\s+)?AirTags?\b', title_text, re.I)
+    if m_airtag:
+        return "Apple AirTag"
+
+    m_pencil = re.search(r'\b(?:Apple\s+)?Pencil(?:\s*(?:1st|2nd|USB-C|Pro))?\b', title_text, re.I)
+    if m_pencil:
+        p_name = m_pencil.group(0).strip()
+        return p_name if p_name.lower().startswith("apple") else f"Apple {p_name}"
+
     m_iphone = re.search(r'\b(iPhone\s+(?:SE|[0-9]{1,2}(?:\s*(?:Pro\s*Max|Pro|Plus|Mini))?))\b', title_text, re.I)
     if m_iphone:
         return m_iphone.group(1).strip()
@@ -101,13 +110,18 @@ def extract_device_model(raw_title: str, specs: Any = None, category: str = "") 
     if m_ipad:
         return m_ipad.group(1).strip()
 
-    m_watch = re.search(r'\b(Apple\s*Watch\s*(?:Ultra|Series\s*[0-9]+|SE|[0-9]{2}mm)?)\b', title_text, re.I)
+    m_watch = re.search(r'\b(?:Apple\s+)?Watch\s*(?:Ultra|Series\s*[0-9]+|SE|[0-9]{2}mm)?\b', title_text, re.I)
     if m_watch:
-        return m_watch.group(1).strip()
+        w_name = m_watch.group(0).strip()
+        return w_name if w_name.lower().startswith("apple") else f"Apple {w_name}"
 
-    m_airpods = re.search(r'\b(AirPods\s*(?:Pro\s*[0-9]?|Max|[0-9]+)?)\b', title_text, re.I)
+    m_airpods = re.search(r'\bAirPods\s*(?:Pro\s*[0-9]?|Max|[0-9]+)?\b', title_text, re.I)
     if m_airpods:
-        return m_airpods.group(1).strip()
+        return f"Apple {m_airpods.group(0).strip()}"
+
+    m_mac = re.search(r'\b(MacBook\s*(?:Air|Pro)?|iMac)\b', title_text, re.I)
+    if m_mac:
+        return f"Apple {m_mac.group(1).strip()}"
 
     # 2.2 三星生态 (Galaxy S / A / Z / Note)
     m_galaxy = re.search(r'\b(Galaxy\s+[S|A|Z|Note][0-9]{1,2}(?:\s*(?:Ultra|Plus|FE|\+))?)\b', title_text, re.I)
@@ -120,14 +134,36 @@ def extract_device_model(raw_title: str, specs: Any = None, category: str = "") 
         return m_dyson.group(1).strip()
 
     # 2.4 索尼 PlayStation
-    m_sony = re.search(r'\b(PlayStation\s*[45]|PS[45](?:\s*Slim|\s*Pro)?)\b', title_text, re.I)
+    m_sony = re.search(r'\b(?:Sony\s+)?(PlayStation\s*5(?:\s*Slim|\s*Pro)?|PS5(?:\s*Slim|\s*Pro)?|PlayStation\s*4(?:\s*Slim|\s*Pro)?|PS4(?:\s*Slim|\s*Pro)?)\b', title_text, re.I)
     if m_sony:
-        return f"Sony {m_sony.group(1).strip()}"
+        matched_str = m_sony.group(1).strip()
+        if "slim" in matched_str.lower():
+            return "PlayStation 5 Slim"
+        elif "pro" in matched_str.lower() and ("5" in matched_str or "ps5" in matched_str.lower()):
+            return "PlayStation 5 Pro"
+        elif "4" in matched_str or "ps4" in matched_str.lower():
+            return "PlayStation 4"
+        return "PlayStation 5"
 
     # 2.5 任天堂 Switch
     m_switch = re.search(r'\b(Nintendo\s+Switch(?:\s*OLED|\s*Lite)?)\b', title_text, re.I)
     if m_switch:
         return m_switch.group(1).strip()
+
+    # 2.6 电子书阅读器 Kindle
+    m_kindle = re.search(r'\b(?:Amazon\s+)?(Kindle(?:\s*(?:Paperwhite|Oasis|Basic|Scribe))?)\b', title_text, re.I)
+    if m_kindle:
+        return f"Amazon {m_kindle.group(1).strip()}"
+
+    # 2.7 掌机 Steam Deck
+    m_steam = re.search(r'\b(Steam\s*Deck(?:\s*OLED)?)\b', title_text, re.I)
+    if m_steam:
+        return f"Valve {m_steam.group(1).strip()}"
+
+    # 2.8 微软 Xbox
+    m_xbox = re.search(r'\b(?:Microsoft\s+)?(Xbox\s*(?:Series\s*[XS]|One(?:\s*[XS])?)?)\b', title_text, re.I)
+    if m_xbox:
+        return f"Microsoft {m_xbox.group(1).strip()}"
 
     # 3. 语法介词匹配提取 (Compatible with ... / for ...)
     m_prep = re.search(r'(?:compatible with|for|suitable for|replacement for|fits?)\s+([A-Za-z0-9\s\+\-\.\/]+?)(?:\s+(?:case|cover|holder|protector|screen|lens|with|and|\-|,|\())', title_text, re.I)
@@ -137,6 +173,168 @@ def extract_device_model(raw_title: str, specs: Any = None, category: str = "") 
             return candidate
 
     return None
+
+def sanitize_accessory_core_name(
+    core_text: str,
+    target_brand: str = "Beishi",
+    device_model: str = "",
+    vertical: str = ""
+) -> str:
+    """
+    清洗配件标题中置于 'Compatible with' 前面的核心品名 (Generic Product Noun)，
+    坚决剔除任何第三方品牌词、型号词或专有名词，
+    将专有配件词转换为通用中性名词 (如 AirTag Holder -> Tracker Holder, PS5 Console Bracket -> Console Mounting Bracket)，
+    彻底杜绝因品牌置于兼容前缀前而被电商平台算法判定为侵权的风险。
+    """
+    if not core_text:
+        return target_brand
+
+    # 1. 临时剥离目标品牌前缀
+    clean = re.sub(rf'^\s*{re.escape(target_brand)}\s*[-_:]*\s*', '', core_text, flags=re.I).strip()
+    clean = re.sub(rf'\b{re.escape(target_brand)}\b', '', clean, flags=re.I).strip()
+
+    # 2. 剥离可能存在的 "Third-Party" 前缀与多余的兼容前缀
+    clean = re.sub(r'\bThird-Party\s+', '', clean, flags=re.I)
+    clean = re.sub(r'\b(?:Compatible\s+with|Compatible\s+for|Suitable\s+for|Designed\s+for|Replacement\s+for)\b.*$', '', clean, flags=re.I).strip()
+
+    # 3. 专有品牌词/设备名向通用中性品名转写 (优先处理复合词)
+    PROPRIETARY_REPLACEMENTS = [
+        # Apple AirTag
+        (r'\b(?:Apple\s+)?AirTags?\s+Holders?\b', 'Tracker Holder'),
+        (r'\b(?:Apple\s+)?AirTags?\s+Cases?\b', 'Tracker Case'),
+        (r'\b(?:Apple\s+)?AirTags?\s+Covers?\b', 'Tracker Cover'),
+        (r'\b(?:Apple\s+)?AirTags?\s+Mounts?\b', 'Tracker Mount'),
+        (r'\b(?:Apple\s+)?AirTags?\s+Collars?\b', 'Collar with Tracker Holder'),
+        (r'\b(?:Apple\s+)?AirTags?\b', 'Tracker'),
+
+        # Apple MagSafe
+        (r'\bMagSafe\s+Wallets?\b', 'Magnetic Wallet'),
+        (r'\bMagSafe\s+Chargers?\b', 'Magnetic Charger'),
+        (r'\bMagSafe\s+Cases?\b', 'Magnetic Case'),
+        (r'\bMagSafe\s+Mounts?\b', 'Magnetic Mount'),
+        (r'\bMagSafe\b', 'Magnetic'),
+
+        # Apple Watch
+        (r'\b(?:Apple\s+)?Watch\s+Bands?\b', 'Smartwatch Band'),
+        (r'\b(?:Apple\s+)?Watch\s+Straps?\b', 'Smartwatch Strap'),
+        (r'\b(?:Apple\s+)?Watch\s+Cases?\b', 'Smartwatch Case'),
+        (r'\b(?:Apple\s+)?Watch\s+Protectors?\b', 'Smartwatch Screen Protector'),
+
+        # AirPods
+        (r'\bAirPods?\s+Cases?\b', 'Earphone Case'),
+        (r'\bAirPods?\s+Covers?\b', 'Earphone Cover'),
+        (r'\bAirPods?\b', 'Earphones'),
+
+        # iPad
+        (r'\biPads?\s+Cases?\b', 'Tablet Case'),
+        (r'\biPads?\s+Covers?\b', 'Tablet Cover'),
+        (r'\biPads?\s+Stands?\b', 'Tablet Stand'),
+        (r'\biPads?\b', 'Tablet'),
+
+        # iPhone
+        (r'\biPhones?\s+Cases?\b', 'Phone Case'),
+        (r'\biPhones?\s+Covers?\b', 'Phone Cover'),
+        (r'\biPhones?\b', 'Phone'),
+
+        # MacBook
+        (r'\bMacBooks?\s+Cases?\b', 'Laptop Case'),
+        (r'\bMacBooks?\s+Sleeves?\b', 'Laptop Sleeve'),
+        (r'\bMacBooks?\b', 'Laptop'),
+
+        # Apple Pencil
+        (r'\b(?:Apple\s+)?Pencils?\s+Cases?\b', 'Stylus Case'),
+        (r'\b(?:Apple\s+)?Pencils?\s+Holders?\b', 'Stylus Holder'),
+        (r'\b(?:Apple\s+)?Pencils?\b', 'Stylus Pen'),
+
+        # Sony PlayStation (PS5 / PS4)
+        (r'\b(?:Sony\s+)?(?:PlayStation\s*[45]|PS[45])(?:\s*(?:Slim|Pro))?\s+Consoles?\b', 'Console'),
+        (r'\b(?:Sony\s+)?(?:PlayStation\s*[45]|PS[45])(?:\s*(?:Slim|Pro))?\s+Controllers?\b', 'Controller'),
+        (r'\b(?:Sony\s+)?(?:PlayStation\s*[45]|PS[45])(?:\s*(?:Slim|Pro))?\s+Gamepads?\b', 'Gamepad'),
+        (r'\b(?:Sony\s+)?(?:PlayStation\s*[45]|PS[45])(?:\s*(?:Slim|Pro))?\b', ''),
+
+        # Nintendo Switch
+        (r'\b(?:Nintendo\s+)?Switch(?:\s*(?:OLED|Lite))?\s+Consoles?\b', 'Gaming Console'),
+        (r'\b(?:Nintendo\s+)?Switch(?:\s*(?:OLED|Lite))?\s+Joy-?Cons?\b', 'Gaming Controller'),
+        (r'\b(?:Nintendo\s+)?Switch(?:\s*(?:OLED|Lite))?\b', ''),
+
+        # Microsoft Xbox
+        (r'\b(?:Microsoft\s+)?Xbox(?:\s*(?:Series\s*[XS]|One))?\s+Consoles?\b', 'Gaming Console'),
+        (r'\b(?:Microsoft\s+)?Xbox(?:\s*(?:Series\s*[XS]|One))?\s+Controllers?\b', 'Gaming Controller'),
+        (r'\b(?:Microsoft\s+)?Xbox(?:\s*(?:Series\s*[XS]|One))?\b', ''),
+
+        # Dyson
+        (r'\bDyson\s+Vacuum\s+Cleaners?\b', 'Vacuum Cleaner'),
+        (r'\bDyson\s+Vacuums?\b', 'Vacuum'),
+        (r'\bDyson\s+Filters?\b', 'Vacuum Cleaner Filter'),
+        (r'\bDyson\b', 'Vacuum'),
+
+        # GoPro
+        (r'\bGoPro\s+Cameras?\b', 'Action Camera'),
+        (r'\bGoPro\b', 'Action Camera'),
+
+        # DJI
+        (r'\bDJI\s+Drones?\b', 'Drone'),
+        (r'\bDJI\b', ''),
+    ]
+
+    for pat, repl in PROPRIETARY_REPLACEMENTS:
+        clean = re.sub(pat, repl, clean, flags=re.I)
+
+    # 4. 彻底剔除核心品名中的知名第三方品牌孤立词
+    BRANDS_TO_REMOVE = [
+        r'\bApple\b', r'\biPhone\b', r'\biPad\b', r'\bAirPods?\b', r'\bAirTags?\b', r'\bMacBook\b', r'\biMac\b', r'\bMagSafe\b',
+        r'\bSony\b', r'\bPlayStation\b', r'\bPS[45]\b', r'\bPulse\s*3D\b',
+        r'\bSamsung\b', r'\bGalaxy\b',
+        r'\bDyson\b',
+        r'\bNintendo\b', r'\bSwitch\b',
+        r'\bXbox\b', r'\bMicrosoft\b',
+        r'\bSteam\s*Deck\b',
+        r'\bKindle\b', r'\bAmazon\b',
+        r'\bGoPro\b', r'\bDJI\b',
+        r'\bGarmin\b', r'\bFitbit\b',
+        r'\bHuawei\b', r'\bXiaomi\b', r'\bRedmi\b',
+        r'\bDell\b', r'\bHP\b', r'\bLenovo\b', r'\bAsus\b', r'\bAcer\b',
+        r'\bBose\b', r'\bJBL\b', r'\bBeats\b',
+        r'\bDeWalt\b', r'\bMakita\b', r'\bBosch\b', r'\bMilwaukee\b',
+        r'\bStanley\b',
+    ]
+    for b_pat in BRANDS_TO_REMOVE:
+        clean = re.sub(b_pat, '', clean, flags=re.I)
+
+    # 5. 若已知具体的 device_model (例如 PlayStation 5 Slim 或 Apple AirTag)，从核心品名中剥离其零散单词
+    if device_model:
+        dev_words = re.split(r'[\s\-_]+', device_model)
+        for w in dev_words:
+            w_str = w.strip()
+            if len(w_str) >= 2 and w_str.lower() not in ["for", "with", "and", "pro", "max", "plus", "mini", "case", "cover", "stand"]:
+                clean = re.sub(rf'\b{re.escape(w_str)}\b', '', clean, flags=re.I)
+
+    # 6. 清理残留悬挂介词与标点
+    clean = re.sub(r'\s*[_:,/|]+\s*', ' ', clean)
+    clean = re.sub(r'\s+-\s+', ' ', clean)
+    clean = re.sub(r'\s+', ' ', clean).strip(' -_,:;')
+
+    trailing_prep_regex = r'\b(?:for|with|to|of|and|in|on|at|by|from|compatible|suitable|fit|fits|designed)\s*$'
+    while re.search(trailing_prep_regex, clean, re.I):
+        clean = re.sub(trailing_prep_regex, '', clean, flags=re.I).strip(' -_,:;')
+
+    # 7. 兜底保护：若核心品名被洗空或短于 3 字符，给予体面保底品名
+    if len(clean) < 3:
+        v_low = str(vertical or "").lower()
+        if "holder" in v_low or "mount" in v_low:
+            clean = "Mount Bracket Holder"
+        elif "case" in v_low or "cover" in v_low:
+            clean = "Protective Case Cover"
+        elif "filter" in v_low:
+            clean = "Replacement Filter"
+        elif "stand" in v_low:
+            clean = "Stand Bracket Holder"
+        elif "band" in v_low or "strap" in v_low:
+            clean = "Replacement Strap Band"
+        else:
+            clean = "Replacement Accessory"
+
+    return f"{target_brand} {clean}".strip()
 
 def reconstruct_accessory_title(
     makro_title: str,
@@ -150,9 +348,10 @@ def reconstruct_accessory_title(
 ) -> str:
     """
     智能重构配件兼容标题：
-    1. 确保精确保留具体的设备型号 (如 iPhone 11、Dyson V11)，绝不被抽象品牌名 (Apple) 覆盖；
-    2. 解决 'for iPhon Compatible with Apple' 双重介词与语法冲突；
-    3. 彻底废除机械暴力切片 [:60]，在全词边界安全截断。
+    1. 确保精确保留具体的设备型号 (如 iPhone 11、Dyson V11、Apple AirTag、PlayStation 5 Slim)，绝不被抽象品牌名覆盖；
+    2. ★★★ 彻底清洗 Compatible with 之前的核心品名，严禁任何第三方品牌/商标出现在兼容句式之前 (防平台侵权)；
+    3. 解决 'for ... Compatible with ...' 双重介词与语法冲突；
+    4. 彻底废除机械暴力切片 [:60]，在全词边界安全截断。
     """
     from .compliance_service import FAMOUS_BRANDS, ACCESSORY_KEYWORDS
 
@@ -160,17 +359,17 @@ def reconstruct_accessory_title(
     matched_brand = next((b for b in FAMOUS_BRANDS if re.search(rf'\b{b}\b', full_text)), None)
     is_acc = (nature == "COMPATIBLE_ACCESSORY") or any(re.search(rf'\b{acc}\b', full_text) for acc in ACCESSORY_KEYWORDS)
 
-    if not is_acc:
+    if not is_acc and not any(k in full_text for k in ["compatible with", "compatible for", "suitable for", "replacement for"]):
         return makro_title
 
-    # 1. 优先提取具体的目标设备型号
-    device_model = extract_device_model(raw_title, specs=specs, category=vertical)
+    # 1. 优先提取具体的目标设备型号 (从 raw_title 或 makro_title)
+    device_model = extract_device_model(raw_title, specs=specs, category=vertical) or extract_device_model(makro_title, specs=specs, category=vertical)
     
     target_ref = device_model or (target_famous if (target_famous and target_famous != "NONE") else (matched_brand or ""))
-    if not target_ref:
+    if not target_ref and not any(k in full_text for k in ["compatible with", "compatible for", "suitable for"]):
         return makro_title
 
-    target_display = target_ref.strip()
+    target_display = (target_ref or "").strip()
     if target_display.isupper():
         target_display = target_display.title()
 
@@ -193,28 +392,36 @@ def reconstruct_accessory_title(
     
     abstract_brands = ["apple", "samsung", "dyson", "sony", "huawei", "xiaomi", "nintendo"]
     if m_comp:
+        existing_prep = m_comp.group(1).strip()
         existing_target = m_comp.group(2).strip()
         et_lower = existing_target.lower()
+        prefix_core = title_curr[:m_comp.start()].strip()
+        suffix = title_curr[m_comp.end(2):]
+        if suffix and not suffix.startswith(" "):
+            suffix = f" {suffix}"
         
-        # 精准判断是否需要将 existing_target 升级为 device_model (例如 Apple -> iPhone 11, iPhone -> iPhone 11)
+        # 判断是否需要升级目标机型
         should_upgrade = False
         if device_model:
             if et_lower in abstract_brands or et_lower in ["iphon", "iph", "sam", "dys"]:
                 should_upgrade = True
-            elif et_lower in ["iphone", "ipad", "apple watch", "airpods", "galaxy", "dyson"]:
+            elif et_lower in ["iphone", "ipad", "apple watch", "airpods", "galaxy", "dyson", "playstation", "ps5", "ps4"]:
                 should_upgrade = True
             elif not any(c.isdigit() for c in existing_target) and any(c.isdigit() for c in device_model):
                 should_upgrade = True
 
-        if should_upgrade and device_model:
-            prefix = title_curr[:m_comp.start(2)]
-            suffix = title_curr[m_comp.end(2):]
-            title_curr = f"{prefix}{device_model}{suffix}".strip()
+        final_dev = device_model if should_upgrade else existing_target
 
-        brand_str = str(target_brand or "").strip()
-        if brand_str and not title_curr.lower().startswith(brand_str.lower()):
-            title_curr = f"{brand_str} {title_curr}"
-        return title_curr
+        # ★★★ 核心修复：清洗 Compatible with 之前的核心品名前缀，彻底清除第三方品牌/商标词 ★★★
+        clean_prefix = sanitize_accessory_core_name(
+            prefix_core,
+            target_brand=target_brand,
+            device_model=final_dev,
+            vertical=vertical
+        )
+
+        reconstructed = f"{clean_prefix} Compatible with {final_dev}{suffix}".strip()
+        return truncate_title_safely(reconstructed, max_len)
 
     # 3. 检查是否有 "for [Device]" (如 "... Phone Case with Slide Camera Lens Cover for iPhone 11")
     # 直接将 "for [Device]" 无损合规化重写为 "Compatible with [Device]"，避免双重介词
@@ -223,23 +430,16 @@ def reconstruct_accessory_title(
         for_target = m_for.group(1).strip()
         core_part = title_curr[:m_for.start()].strip()
         final_dev = device_model or for_target or target_display
-        res_t = f"{core_part} Compatible with {final_dev}".strip()
-        brand_str = str(target_brand or "").strip()
-        if brand_str and not res_t.lower().startswith(brand_str.lower()):
-            res_t = f"{brand_str} {res_t}"
-        return res_t
+        clean_core = sanitize_accessory_core_name(core_part, target_brand=target_brand, device_model=final_dev, vertical=vertical)
+        res_t = f"{clean_core} Compatible with {final_dev}".strip()
+        return truncate_title_safely(res_t, max_len)
 
     # 4. 若完全未包含兼容句式，安全在尾部追加 Compatible with {target_display}
-    clean_core = re.sub(rf'\b{re.escape(target_display)}\b', '', title_curr, flags=re.I)
-    clean_core = re.sub(rf'^\s*{re.escape(target_brand)}\s*', '', clean_core, flags=re.I).strip()
-    clean_core = re.sub(r'[-_:,/]+', ' ', clean_core)
-    clean_core = re.sub(r'\s+', ' ', clean_core).strip()
-
+    clean_core = sanitize_accessory_core_name(title_curr, target_brand=target_brand, device_model=target_display, vertical=vertical)
     compat_suffix = f"Compatible with {target_display}"
-    max_core_len = max(35, max_len - len(target_brand) - len(compat_suffix) - 15)
+    max_core_len = max(35, max_len - len(compat_suffix) - 5)
     safe_core = truncate_title_safely(clean_core, max_core_len)
-    
-    return f"{target_brand} {safe_core} {compat_suffix}".strip()
+    return f"{safe_core} {compat_suffix}".strip()
 
 def format_title_with_specs(
     title: str,
@@ -727,7 +927,14 @@ Reply ONLY with a JSON object:
 4. 品牌与侵权防护:
    - 标题必须且只能以授权品牌 "{target_brand}" 开头；
    - 严禁为了蹭流量在标题中捏造第三方大牌商标 (如 Samsung, Bosch, Nike 等)；若为知名品牌配件，必须保持第三方兼容声明格式:
-     "{target_brand} [Item] Compatible with [Device] (Color, Size)"；
+     "{target_brand} [通用中性品名] Compatible with [具体设备型号] (规格)"
+     ★★★【严禁将第三方品牌/专有名词置于 Compatible with 之前 (极重要 - 平台侵权红线)】:
+     - 在 "Compatible with" 之前的核心品名中，严禁出现任何第三方品牌名、专有设备名或商标词（如严禁 AirTag Holder, PS5 Bracket, Dyson Filter, Apple Watch Band）！
+     - 必须将专有名词转写为通用中性产品名（如 Tracker Holder, Console Mounting Bracket, Vacuum Cleaner Filter, Smartwatch Band）！
+     - 合规示例: "{target_brand} Dog Collar with Tracker Holder Compatible with Apple AirTag (Orange, M)"
+     - 合规示例: "{target_brand} Console Mounting Bracket Compatible with PlayStation 5 Slim (White)"
+     - 违规示例 (严禁!): "{target_brand} Dog Collar with AirTag Holder Compatible with Apple AirTag" (AirTag 泄露在兼容词前，属于商标侵权)
+     - 违规示例 (严禁!): "{target_brand} PS5 Slim Console Bracket Compatible with PlayStation 5 Slim" (PS5 泄露在兼容词前，属于商标侵权)
 5. 严禁平台违规促销词:
    - 严禁出现 "Best", "Cheap", "Hot Sale", "Free Shipping", "100% Quality", "Deals", "Warranty" 等平台明令禁止的词汇。
 """
@@ -749,8 +956,9 @@ Reply ONLY with a JSON object:
 - 标题必须以品牌 "{target_brand}" 开头；
 - ★★★ 核心规格括号规范 (风格 B): 若商品具备明确颜色或尺寸规格，必须统一在标题末尾以英文圆括号注明 "(Color, Size)" 或 "(Color)" 或 "(Size)"；
 - 严禁包含 Takealot 促销词 (如 Deals, Sale, Warranty 等)；
-- 若为知名品牌配件（如 Apple/iPhone 保护套等），标题必须采用第三方兼容声明格式：
-  "{target_brand} [Item] Compatible with [Device] (Color, Size)"；
+- 若为知名品牌配件（如 Apple/iPhone/PS5/AirTag 等配件），标题必须采用第三方兼容声明格式：
+  "{target_brand} [通用中性品名] Compatible with [Device] (Color, Size)"；
+  ★★★ 严禁在 Compatible with 之前出现第三方品牌名或专有名词（如严禁 AirTag/PS5/Dyson，必须转写为 Tracker/Console/Vacuum Cleaner 等通用中性词）；
 - 标题长度控制在 60 ~ {self.seo_title_max_len} 字符。
 """
             output_schema = f"""{{
@@ -775,8 +983,12 @@ Reply ONLY with a JSON object:
   2. ★★★【适用机型型号精准保全原则 (极其重要 - 严格遵守)】:
      - 必须从原标题或规格参数中精准提取并完整保留具体的适用机型/代际（例如 iPhone 11、iPhone 15 Pro Max、Dyson V11、Galaxy S24 Ultra、PS5 等）！
      - 严禁将具体型号省略为抽象品牌名（如严禁写成 Compatible with Apple 或 Compatible with Dyson，必须精确写成 Compatible with iPhone 11 或 Compatible with Dyson V11）！
-     - 标题必须严格采用标准兼容句式："{target_brand} [核心产品名] Compatible with [具体型号] (规格)"，严禁出现 "for ... Compatible with ..." 重复双介词冲突！
-  3. 严禁侵权拼接：严禁将第三方知名品牌直接置于产品词前 (如严禁 "{target_brand} Dyson Filter"，必须写 "{target_brand} Vacuum Filter Compatible with Dyson V11")！
+     - 标题必须严格采用标准兼容句式："{target_brand} [通用中性核心品名] Compatible with [具体型号] (规格)"，严禁出现 "for ... Compatible with ..." 重复双介词冲突！
+  3. ★★★【严禁侵权拼接与兼容前缀商标泄露 (平台侵权红线)】:
+     - "Compatible with" 前面的核心品名严禁包含第三方品牌或专有商标词！
+     - 专有名词必须替换为通用中性名词：AirTag Holder -> Tracker Holder, PS5 Bracket -> Console Mounting Bracket, Dyson Filter -> Vacuum Cleaner Filter, Apple Watch Band -> Smartwatch Band；
+     - 严禁出现 "{target_brand} PS5 Console Bracket Compatible with PlayStation 5"，必须写 "{target_brand} Console Mounting Bracket Compatible with PlayStation 5"！
+     - 严禁出现 "{target_brand} AirTag Dog Collar Compatible with Apple AirTag"，必须写 "{target_brand} Dog Collar with Tracker Holder Compatible with Apple AirTag"！
 """
         elif nature == "ORIGINAL_BRAND":
             brand_nature_instructions = f"""

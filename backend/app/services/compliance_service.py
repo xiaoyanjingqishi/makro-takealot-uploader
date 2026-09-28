@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 
 # 知名受保护品牌库
 FAMOUS_BRANDS = [
-    "apple", "iphone", "ipad", "airpods", "apple watch", "macbook", "magsafe",
-    "samsung", "galaxy", "dyson", "sony", "playstation", "ps4", "ps5",
-    "nintendo switch", "nintendo", "huawei", "xiaomi", "redmi", "dji", "gopro",
+    "apple", "iphone", "ipad", "airpods", "airtag", "apple watch", "apple pencil", "macbook", "imac", "magsafe",
+    "samsung", "galaxy", "dyson", "sony", "playstation", "playstation 5", "playstation 4", "ps4", "ps5", "ps5 slim", "ps5 pro",
+    "nintendo switch", "nintendo", "steam deck", "xbox", "huawei", "xiaomi", "redmi", "dji", "gopro",
     "philips", "makita", "bosch", "dewalt", "milwaukee", "dell", "hp",
     "lenovo", "asus", "acer", "garmin", "fitbit", "bose", "jbl", "beats",
-    "nike", "adidas", "lego", "stanley", "rolex", "crocs"
+    "nike", "adidas", "lego", "stanley", "rolex", "crocs", "kindle"
 ]
 
 # 知名受保护影视/动漫/游戏IP与角色库 (侵权高危，严禁未经授权销售周边或标题蹭词)
@@ -1114,21 +1114,14 @@ class ComplianceService:
 
         recommended_title = None
         if title_detected_brands:
-            first_b = title_detected_brands[0]
-            from .ai_cleaner_service import extract_device_model, truncate_title_safely
-            dev = extract_device_model(eval_title, category=category)
-            target_device = dev or first_b
-            clean_core = eval_title
-            for b_item in title_detected_brands:
-                clean_core = re.sub(rf'\b{b_item}\b', '', clean_core, flags=re.IGNORECASE)
-            for kw in COMPATIBILITY_KEYWORDS:
-                clean_core = re.sub(rf'\b{kw}\b', '', clean_core, flags=re.IGNORECASE)
-            clean_core = re.sub(rf'\b{re.escape(target_brand_name)}\b', '', clean_core, flags=re.IGNORECASE)
-            clean_core = re.sub(r'[-_:,/]+', ' ', clean_core)
-            clean_core = re.sub(r'\s+', ' ', clean_core).strip()
-            compat_suffix = f"Compatible with {target_device}"
-            safe_core = truncate_title_safely(clean_core, max(35, 120 - len(target_brand_name) - len(compat_suffix) - 15))
-            recommended_title = f"{target_brand_name} {safe_core} {compat_suffix}".strip()
+            from .ai_cleaner_service import reconstruct_accessory_title
+            recommended_title = reconstruct_accessory_title(
+                makro_title=eval_title,
+                raw_title=title,
+                target_brand=target_brand_name,
+                nature="COMPATIBLE_ACCESSORY",
+                vertical=category
+            )
 
         return {
             "compliance_status": "SAFE",
