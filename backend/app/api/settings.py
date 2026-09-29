@@ -4,7 +4,7 @@ from typing import Optional
 from ..database import get_db
 from ..models.setting import SystemSetting
 from ..models.user import User
-from ..schemas.setting import SystemSettingsSchema
+from ..schemas.setting import SystemSettingsSchema, CostPricingCalculateRequest
 from ..config import settings
 from ..utils.auth import get_current_admin, get_optional_current_user
 from ..services.auto_login_scheduler import auto_login_scheduler
@@ -156,5 +156,27 @@ def test_jev_connection(db: Session = Depends(get_db)):
     from ..services.jev_service import JevService
     res = JevService.test_connectivity(db=db)
     return res
+
+
+@router.post("/calculate-cost-price", summary="1688全链路跨境成本与精准定价计算器")
+def calculate_cost_price(req: CostPricingCalculateRequest):
+    from ..services.pricing_service import calculate_1688_pricing
+    return calculate_1688_pricing(
+        purchase_price_cny=req.purchase_price_cny,
+        length_cm=req.length_cm or 0.0,
+        width_cm=req.width_cm or 0.0,
+        height_cm=req.height_cm or 0.0,
+        actual_weight_kg=req.actual_weight_kg or 0.0,
+        domestic_freight_cny=req.domestic_freight_cny if req.domestic_freight_cny is not None else 8.0,
+        first_leg_rate_cny=req.first_leg_rate_cny if req.first_leg_rate_cny is not None else 95.0,
+        volumetric_divisor=req.volumetric_divisor if req.volumetric_divisor is not None else 6000.0,
+        last_leg_base_zar=req.last_leg_base_zar if req.last_leg_base_zar is not None else 70.0,
+        last_leg_vat_rate=req.last_leg_vat_rate if req.last_leg_vat_rate is not None else 0.15,
+        exchange_rate=req.exchange_rate if req.exchange_rate is not None else 0.40,
+        commission_rate=req.commission_rate if req.commission_rate is not None else 0.15,
+        commission_vat_rate=req.commission_vat_rate if req.commission_vat_rate is not None else 0.15,
+        target_margin=req.target_margin if req.target_margin is not None else 0.30
+    )
+
 
 

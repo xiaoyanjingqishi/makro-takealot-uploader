@@ -254,6 +254,16 @@ def dashboard():
                 return f.read()
     return "<h1>Makro-Takealot System Backend Online</h1><p><a href='/api/docs'>API Docs</a></p>"
 
+CALCULATOR_PATH = Path(__file__).resolve().parent.parent / "tools" / "makro_pricing_calculator.html"
+
+@app.get("/calculator", response_class=HTMLResponse, summary="打开 Makro 选品与全链路精准定价测算工具")
+def get_calculator():
+    if CALCULATOR_PATH.exists():
+        with open(CALCULATOR_PATH, "r", encoding="utf-8") as f:
+            return f.read()
+    return HTMLResponse("<h1>Calculator page not found</h1>", status_code=404)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)

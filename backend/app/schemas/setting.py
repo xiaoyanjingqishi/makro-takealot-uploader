@@ -58,6 +58,24 @@ class SystemSettingsSchema(BaseModel):
     jev_model: Optional[str] = "jev-latest"
     jev_enabled: bool = True
 
+
+class CostPricingCalculateRequest(BaseModel):
+    purchase_price_cny: float
+    length_cm: Optional[float] = 0.0
+    width_cm: Optional[float] = 0.0
+    height_cm: Optional[float] = 0.0
+    actual_weight_kg: Optional[float] = 0.0
+    domestic_freight_cny: Optional[float] = 8.0
+    first_leg_rate_cny: Optional[float] = 95.0
+    volumetric_divisor: Optional[float] = 6000.0
+    last_leg_base_zar: Optional[float] = 70.0
+    last_leg_vat_rate: Optional[float] = 0.15
+    exchange_rate: Optional[float] = 0.40
+    commission_rate: Optional[float] = 0.15
+    commission_vat_rate: Optional[float] = 0.15
+    target_margin: Optional[float] = 0.30
+
+
 class SyncCredentialsRequest(BaseModel):
     seller_id: Optional[str] = None
     fk_csrf_token: Optional[str] = None

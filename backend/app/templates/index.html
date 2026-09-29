@@ -375,6 +375,17 @@
             <!-- 右侧：全局上下文 (后台任务胶囊 + 店铺切换器 + 局域网 IP) -->
             <div class="flex items-center space-x-2.5 shrink-0">
               
+              <!-- 选品与全链路精准定价小工具 (新窗口直达) -->
+              <a 
+                href="/calculator" 
+                target="_blank" 
+                class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs hover:from-blue-700 hover:to-indigo-700 transition select-none cursor-pointer"
+                title="打开 Makro 选品与 1688 全链路成本定价精准测算工具 (新窗口打开)"
+              >
+                <span>🧮</span>
+                <span>选品定价测算</span>
+              </a>
+              
               <!-- 后台异步任务轻量指示胶囊 (当有任务时灵动呈现，点击展开/收起详情或跳至日志) -->
               <div v-if="activeBgTasks.length > 0" class="flex items-center space-x-1">
                 <button 

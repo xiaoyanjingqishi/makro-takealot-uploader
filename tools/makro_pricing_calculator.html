@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Makro 选品与全链路成本定价测算小工具 (含合规风控体检)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f8fafc; }
+    .card { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05); }
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen pb-12">
+
+  <!-- 顶部导航与业务公告 -->
+  <header class="bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-900 text-white shadow-lg sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-3">
+      <div class="flex items-center space-x-3">
+        <div class="bg-white/10 p-2.5 rounded-lg border border-white/20">
+          <i class="fa-solid fa-calculator text-2xl text-blue-200"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold tracking-tight">Makro 选品与全链路成本精准定价工具</h1>
+          <p class="text-xs text-blue-200">基准公式: 1688采购 + 头程95元/kg(材积6000) + 尾程70兰特(+15%税) + 汇率0.4 + 佣金15%(+15%税) + 目标毛利30%</p>
+        </div>
+      </div>
+      <!-- Tab 切换按钮 -->
+      <div class="flex bg-blue-950/50 p-1 rounded-lg border border-white/10 text-sm">
+        <button id="tabBtn1" onclick="switchTab('tab1')" class="px-4 py-1.5 rounded-md font-medium transition-all bg-white text-blue-900 shadow">
+          <i class="fa-solid fa-coins mr-1.5"></i> 定价与成本测算
+        </button>
+        <button id="tabBtn2" onclick="switchTab('tab2')" class="px-4 py-1.5 rounded-md font-medium transition-all text-blue-100 hover:text-white">
+          <i class="fa-solid fa-shield-halved mr-1.5"></i> 合规标题与风控自检
+        </button>
+        <button id="tabBtn3" onclick="switchTab('tab3')" class="px-4 py-1.5 rounded-md font-medium transition-all text-blue-100 hover:text-white">
+          <i class="fa-solid fa-book-open mr-1.5"></i> 选品SOP速查
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主体内容容器 -->
+  <main class="max-w-7xl mx-auto px-4 mt-6">
+
+    <!-- ==================== TAB 1: 定价与成本测算 ==================== -->
+    <div id="tab1" class="tab-content block">
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- 左侧参数录入区 (5列) -->
+        <div class="lg:col-span-5 space-y-5">
+          <div class="card p-5 border border-slate-200">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <h2 class="text-base font-bold text-slate-800 flex items-center">
+                <i class="fa-solid fa-sliders text-blue-600 mr-2"></i> 商品规格与采购参数
+              </h2>
+              <button onclick="resetDefaults()" class="text-xs text-blue-600 hover:underline">
+                <i class="fa-solid fa-rotate-left mr-1"></i> 恢复基准默认值
+              </button>
+            </div>
+
+            <div class="space-y-4">
+              <!-- 采购成本 -->
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">
+                  1688 采购批发价 (元 RMB) <span class="text-red-500">*</span>
+                </label>
+                <div class="relative">
+                  <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 font-bold text-sm">¥</span>
+                  <input type="number" id="p_1688" value="25.0" step="0.1" min="0" oninput="calculate()"
+                    class="w-full pl-8 pr-3 py-2 text-base font-bold text-slate-800 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none">
+                </div>
+              </div>
+
+              <!-- 包装尺寸 (长宽高) -->
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">包装尺寸 (长 × 宽 × 高 cm)</label>
+                <div class="grid grid-cols-3 gap-2">
+                  <div class="relative">
+                    <input type="number" id="pkg_l" value="15" step="0.5" min="0" placeholder="长" oninput="calculate()"
+                      class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none">
+                    <span class="absolute right-2 top-2.5 text-xs text-slate-400">cm</span>
+                  </div>
+                  <div class="relative">
+                    <input type="number" id="pkg_w" value="12" step="0.5" min="0" placeholder="宽" oninput="calculate()"
+                      class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none">
+                    <span class="absolute right-2 top-2.5 text-xs text-slate-400">cm</span>
+                  </div>
+                  <div class="relative">
+                    <input type="number" id="pkg_h" value="8" step="0.5" min="0" placeholder="高" oninput="calculate()"
+                      class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none">
+                    <span class="absolute right-2 top-2.5 text-xs text-slate-400">cm</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 实物毛重 -->
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">实物毛重 (kg)</label>
+                  <div class="relative">
+                    <input type="number" id="actual_w" value="0.20" step="0.01" min="0" oninput="calculate()"
+                      class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none">
+                    <span class="absolute right-2 top-2.5 text-xs text-slate-400">kg</span>
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">国内集货运费 (元)</label>
+                  <div class="relative">
+                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs">¥</span>
+                    <input type="number" id="domestic_f" value="8.0" step="1" min="0" oninput="calculate()"
+                      class="w-full pl-7 pr-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:bg-white outline-none">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 物流与汇率税费折叠面板 -->
+            <div class="mt-5 pt-4 border-t border-slate-100">
+              <div class="flex items-center justify-between cursor-pointer text-xs font-semibold text-slate-500 mb-3" onclick="toggleAdvancedSettings()">
+                <span><i class="fa-solid fa-gear mr-1"></i> 物流费率、汇率与税费基准 (已内置)</span>
+                <i id="advIcon" class="fa-solid fa-chevron-down text-slate-400"></i>
+              </div>
+
+              <div id="advSettings" class="space-y-3 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">头程运费 (元/kg)</label>
+                    <input type="number" id="first_rate" value="95" step="1" oninput="calculate()"
+                      class="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">材积换算除数</label>
+                    <input type="number" id="vol_divisor" value="6000" step="100" oninput="calculate()"
+                      class="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">南非尾程派送基数 (兰特)</label>
+                    <input type="number" id="last_base" value="70" step="5" oninput="calculate()"
+                      class="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">尾程增值税 (VAT %)</label>
+                    <input type="number" id="last_vat" value="15" step="1" oninput="calculate()"
+                      class="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2">
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">汇率 (1ZAR=?元)</label>
+                    <input type="number" id="rate_zar" value="0.40" step="0.01" oninput="calculate()"
+                      class="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">Makro佣金率 (%)</label>
+                    <input type="number" id="comm_rate" value="15" step="1" oninput="calculate()"
+                      class="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">佣金税 (VAT %)</label>
+                    <input type="number" id="comm_vat" value="15" step="1" oninput="calculate()"
+                      class="w-full px-2 py-1.5 text-xs bg-white border border-slate-300 rounded outline-none">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 目标毛利率调节滑块 -->
+            <div class="mt-5 pt-4 border-t border-slate-100">
+              <div class="flex justify-between items-center mb-1.5">
+                <label class="text-xs font-bold text-slate-700">期望销售毛利率 (Margin)</label>
+                <span id="marginLabel" class="text-sm font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">30%</span>
+              </div>
+              <input type="range" id="target_margin" min="10" max="60" value="30" step="1" oninput="syncMargin(this.value)"
+                class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600">
+              <div class="flex justify-between text-[10px] text-slate-400 mt-1">
+                <span>10% (保本跑量)</span>
+                <span>30% (标准推荐)</span>
+                <span>50%+ (暴利品)</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- 右侧测算与财务结果区 (7列) -->
+        <div class="lg:col-span-7 space-y-5">
+
+          <!-- 核心定价主看板 -->
+          <div class="card p-6 bg-gradient-to-br from-white to-blue-50/40 border border-blue-200 relative overflow-hidden">
+            <div class="absolute -right-6 -bottom-6 text-blue-100 text-9xl font-black select-none pointer-events-none opacity-40">R</div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pb-5 border-b border-blue-100">
+              <!-- 建议售价 -->
+              <div>
+                <span class="text-xs font-semibold text-slate-500 block mb-1">Makro 建议售价 (Selling Price)</span>
+                <div class="flex items-baseline">
+                  <span class="text-lg font-bold text-blue-800 mr-1">R</span>
+                  <span id="res_selling" class="text-4xl font-extrabold text-blue-700 tracking-tight">419</span>
+                </div>
+                <span class="text-[11px] text-slate-400">已应用心理定价(尾数9)</span>
+              </div>
+
+              <!-- 划线原价 MRP -->
+              <div>
+                <span class="text-xs font-semibold text-slate-500 block mb-1">划线原价 (MRP 1.5倍)</span>
+                <div class="flex items-baseline">
+                  <span class="text-lg font-bold text-slate-400 mr-1">R</span>
+                  <span id="res_mrp" class="text-3xl font-bold text-slate-600 tracking-tight">628</span>
+                </div>
+                <span class="text-[11px] text-slate-400">前台划线折扣展示</span>
+              </div>
+
+              <!-- 纯毛利润 -->
+              <div>
+                <span class="text-xs font-semibold text-slate-500 block mb-1">单单净毛利 (30%目标)</span>
+                <div class="flex items-baseline">
+                  <span class="text-lg font-bold text-emerald-600 mr-1">R</span>
+                  <span id="res_profit_zar" class="text-3xl font-extrabold text-emerald-600 tracking-tight">126.7</span>
+                </div>
+                <span id="res_profit_cny" class="text-xs font-medium text-emerald-700">折合约 ¥50.7 元</span>
+              </div>
+            </div>
+
+            <!-- 极速换算倍率公式 -->
+            <div class="mt-4 flex flex-wrap items-center justify-between text-xs text-slate-600 bg-white/80 p-3 rounded-lg border border-blue-100">
+              <span class="font-medium">
+                <i class="fa-solid fa-wand-magic-sparkles text-amber-500 mr-1.5"></i>
+                落地总成本: <strong id="res_total_cny_text" class="text-slate-800 font-bold">¥88.00 元</strong> (折合 <strong id="res_total_zar_text" class="text-slate-800 font-bold">R 220.00</strong>)
+              </span>
+              <span class="bg-blue-100/70 text-blue-800 px-2 py-0.5 rounded text-[11px] font-mono">
+                售价 = 人民币总成本 × 4.7393
+              </span>
+            </div>
+          </div>
+
+          <!-- 成本拆解与平台扣费透视图 -->
+          <div class="card p-5 border border-slate-200">
+            <h3 class="text-sm font-bold text-slate-700 mb-3 flex items-center">
+              <i class="fa-solid fa-chart-pie text-indigo-600 mr-2"></i> 全链路成本与资金流向明细
+            </h3>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-4">
+              <!-- 采购成本 -->
+              <div class="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                <span class="text-slate-400 block mb-0.5">1688 采购成本</span>
+                <span id="item_cny" class="text-base font-bold text-slate-700">¥25.00</span>
+                <span id="item_pct" class="text-[10px] text-slate-400 block">占比 28.4%</span>
+              </div>
+
+              <!-- 国内物流 -->
+              <div class="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                <span class="text-slate-400 block mb-0.5">国内快递运费</span>
+                <span id="dom_cny" class="text-base font-bold text-slate-700">¥8.00</span>
+                <span id="dom_pct" class="text-[10px] text-slate-400 block">占比 9.1%</span>
+              </div>
+
+              <!-- 头程空派 -->
+              <div class="p-3 bg-blue-50/50 rounded-lg border border-blue-100">
+                <span class="text-blue-500 block mb-0.5">头程空派运费</span>
+                <span id="first_cny" class="text-base font-bold text-blue-700">¥22.80</span>
+                <span id="first_desc" class="text-[10px] text-blue-600 block">计费重: 0.24kg</span>
+              </div>
+
+              <!-- 尾程派送 -->
+              <div class="p-3 bg-amber-50/50 rounded-lg border border-amber-100">
+                <span class="text-amber-600 block mb-0.5">南非本土尾程</span>
+                <span id="last_cny" class="text-base font-bold text-amber-700">¥32.20</span>
+                <span id="last_desc" class="text-[10px] text-amber-600 block">R 80.5 (含15%税)</span>
+              </div>
+            </div>
+
+            <!-- 平台扣款与实收回款 -->
+            <div class="p-3.5 bg-slate-50 rounded-lg border border-slate-200 text-xs flex flex-col sm:flex-row justify-between items-center gap-2">
+              <div>
+                <span class="text-slate-500">平台综合扣点 (佣金15% + 增值税15% = <strong>17.25%</strong>):</span>
+                <strong id="res_platform_fee" class="text-red-600 font-bold ml-1">R 72.28</strong>
+              </div>
+              <div>
+                <span class="text-slate-500">最终实收到手回款 (82.75%):</span>
+                <strong id="res_net_payout" class="text-indigo-700 font-bold ml-1">R 346.72</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- 智能风控与选品警示看板 -->
+          <div id="warningCard" class="card p-4 border border-amber-200 bg-amber-50/40 hidden">
+            <h4 class="text-xs font-bold text-amber-800 flex items-center mb-2">
+              <i class="fa-solid fa-triangle-exclamation text-amber-600 mr-2 text-sm"></i> 选品风险与优化提示
+            </h4>
+            <ul id="warningList" class="space-y-1.5 text-xs text-amber-900"></ul>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ==================== TAB 2: 合规标题与风控自检 ==================== -->
+    <div id="tab2" class="tab-content hidden space-y-6">
+
+      <!-- 配件标题规范化生成器 -->
+      <div class="card p-6 border border-slate-200">
+        <div class="flex items-center space-x-2 pb-3 border-b border-slate-100 mb-4">
+          <i class="fa-solid fa-pen-fancy text-blue-600 text-lg"></i>
+          <div>
+            <h3 class="text-base font-bold text-slate-800">第三方配件合规标题智能生成器</h3>
+            <p class="text-xs text-slate-400">专为相机配件、吸尘器耗材、表带数码周边打造，严格杜绝索尼镜头盖式封店！</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">配件核心英文品类词 <span class="text-red-500">*</span></label>
+            <input type="text" id="acc_name" placeholder="例如: Camera Lens Front Cap" value="Camera Lens Front Protective Cap"
+              oninput="generateTitle()" class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">适配品牌及具体型号 <span class="text-red-500">*</span></label>
+            <input type="text" id="acc_brand" placeholder="例如: Sony Alpha 7 / A7M4" value="Sony Alpha Series"
+              oninput="generateTitle()" class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-600 mb-1">规格 / 口径 / 材质 / 颜色</label>
+            <input type="text" id="acc_spec" placeholder="例如: 58mm Black (with Anti-Lost String)" value="58mm Black"
+              oninput="generateTitle()" class="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- 生成的结果 -->
+        <div class="bg-blue-50/60 p-4 rounded-xl border border-blue-200">
+          <div class="flex justify-between items-center mb-1.5">
+            <span class="text-xs font-bold text-blue-900 flex items-center">
+              <i class="fa-solid fa-circle-check text-emerald-600 mr-1.5"></i> Makro 官方合规标准标题 (点击复制)
+            </span>
+            <button onclick="copyGeneratedTitle()" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded shadow-sm transition-all">
+              <i class="fa-regular fa-copy mr-1"></i> 一键复制
+            </button>
+          </div>
+          <div id="generated_title" class="font-mono text-sm text-slate-800 font-semibold p-2.5 bg-white rounded border border-blue-100 select-all">
+            Third-Party Camera Lens Front Protective Cap Compatible with Sony Alpha Series (58mm Black)
+          </div>
+          <p class="text-[11px] text-blue-700 mt-2">
+            ✅ <strong>合规机制</strong>：已强制前置 <code>Third-Party</code>，并使用标准 <code>Compatible with</code> 限定词，避免平台判定原厂假冒冒用。
+          </p>
+        </div>
+      </div>
+
+      <!-- 快速侵权违禁检测小工具 -->
+      <div class="card p-6 border border-slate-200">
+        <div class="flex items-center space-x-2 pb-3 border-b border-slate-100 mb-4">
+          <i class="fa-solid fa-radar text-red-600 text-lg"></i>
+          <div>
+            <h3 class="text-base font-bold text-slate-800">商品标题与选品关键词 3 秒风控体检</h3>
+            <p class="text-xs text-slate-400">检测是否触发香奈儿、LV、索尼等品牌直接侵权，以及蓝牙、WiFi等受限禁运品</p>
+          </div>
+        </div>
+
+        <div class="flex gap-3 mb-4">
+          <input type="text" id="check_input" placeholder="输入拟刊登的商品英文标题或 1688 关键词进行体检 (例如: Chanel Style Handbag 或 Sony A7 lens)"
+            class="flex-1 px-4 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500">
+          <button onclick="runAudit()" class="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold rounded-lg transition-all shadow">
+            <i class="fa-solid fa-stethoscope mr-1.5"></i> 开始体检
+          </button>
+        </div>
+
+        <div id="audit_result" class="hidden p-4 rounded-xl border text-sm">
+          <!-- 动态渲染体检结果 -->
+        </div>
+      </div>
+
+    </div>
+
+
+    <!-- ==================== TAB 3: 选品 SOP 速查 ==================== -->
+    <div id="tab3" class="tab-content hidden space-y-6">
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- 红线 -->
+        <div class="card p-5 border-t-4 border-red-500">
+          <h4 class="text-sm font-bold text-red-700 flex items-center mb-2">
+            <i class="fa-solid fa-ban mr-2"></i> 🔴 红线池 (绝对禁止·碰了必封)
+          </h4>
+          <ul class="text-xs text-slate-600 space-y-2 list-disc list-inside">
+            <li><strong>国际奢侈品</strong>：Chanel、LV、Gucci、Prada、Hermes、Dior、Rolex 箱包服饰（含外观专利菱格纹）。</li>
+            <li><strong>带标实物</strong>：产品表面印有原厂 Logo 的任何假冒配件/服装。</li>
+            <li><strong>知名 IP 周边</strong>：迪士尼、漫威英雄、宝可梦、三丽鸥、泡泡玛特 Labubu。</li>
+            <li><strong>无线特限品</strong>：蓝牙耳机、WiFi 插座（需南非 ICASA 认证）、纯电池、液体粉末。</li>
+          </ul>
+        </div>
+
+        <!-- 黄线 -->
+        <div class="card p-5 border-t-4 border-amber-500">
+          <h4 class="text-sm font-bold text-amber-700 flex items-center mb-2">
+            <i class="fa-solid fa-triangle-exclamation mr-2"></i> 🟡 黄线池 (严格合规·第三方配件)
+          </h4>
+          <ul class="text-xs text-slate-600 space-y-2 list-disc list-inside">
+            <li><strong>适用范围</strong>：相机周边配件、吸尘器替换滤网、智能手表通用表带。</li>
+            <li><strong>标题铁律</strong>：必须带有 <code>Third-Party</code> 与 <code>Compatible with</code>，严禁品牌词打头。</li>
+            <li><strong>图片铁律</strong>：实物表面严禁任何原厂 Logo（中性纯白牌），严禁盗用官方渲染图。</li>
+            <li><strong>属性去品牌</strong>：model_number 剔除品牌词，Brand 填 Generic。</li>
+          </ul>
+        </div>
+
+        <!-- 绿线 -->
+        <div class="card p-5 border-t-4 border-emerald-500">
+          <h4 class="text-sm font-bold text-emerald-700 flex items-center mb-2">
+            <i class="fa-solid fa-circle-check mr-2"></i> 🟢 绿线池 (安全畅销·推荐主力)
+          </h4>
+          <ul class="text-xs text-slate-600 space-y-2 list-disc list-inside">
+            <li><strong>家居收纳与清洁</strong>：挂钩、分格盒、密封夹、硅胶清洁刷。</li>
+            <li><strong>厨房实用小工具</strong>：压蒜器、量勺量杯、油壶喷雾瓶、硅胶刮刀。</li>
+            <li><strong>五金与园艺耗材</strong>：通用螺丝刀组、扎带、自动滴灌器、地钉。</li>
+            <li><strong>通用宠物日用品</strong>：宠物梳毛器、指甲剪、慢食盆、拾便袋。</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 快速换算口诀卡 -->
+      <div class="card p-5 border border-slate-200 bg-white">
+        <h4 class="text-sm font-bold text-slate-800 mb-3 flex items-center">
+          <i class="fa-solid fa-lightbulb text-amber-500 mr-2"></i> 选品 30 秒定价自查口诀
+        </h4>
+        <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 text-center text-xs">
+          <div class="p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <span class="font-bold text-blue-700 block text-sm mb-1">1. 查体积</span>
+            <span class="text-slate-500">长×宽×高÷6000<br>是否远超实重？</span>
+          </div>
+          <div class="p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <span class="font-bold text-blue-700 block text-sm mb-1">2. 算总成</span>
+            <span class="text-slate-500">采购 + 8元国内<br>+ 计费重×95 + 32.2元尾程</span>
+          </div>
+          <div class="p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <span class="font-bold text-blue-700 block text-sm mb-1">3. 翻售价</span>
+            <span class="text-blue-900 font-bold">总成本(元) × 4.74<br>= 30%毛利兰特售价</span>
+          </div>
+          <div class="p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <span class="font-bold text-blue-700 block text-sm mb-1">4. 瞄竞品</span>
+            <span class="text-slate-500">在 Makro / Takealot<br>是否有价格优势？</span>
+          </div>
+          <div class="p-3 bg-slate-50 rounded-lg border border-slate-100">
+            <span class="font-bold text-blue-700 block text-sm mb-1">5. 定划线</span>
+            <span class="text-slate-500">最终售价 × 1.5<br>= MRP划线原价</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    // Tab 切换逻辑
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.getElementById(tabId).classList.remove('hidden');
+
+      ['tabBtn1', 'tabBtn2', 'tabBtn3'].forEach(btn => {
+        const b = document.getElementById(btn);
+        b.className = "px-4 py-1.5 rounded-md font-medium transition-all text-blue-100 hover:text-white";
+      });
+      const activeBtn = tabId === 'tab1' ? 'tabBtn1' : (tabId === 'tab2' ? 'tabBtn2' : 'tabBtn3');
+      document.getElementById(activeBtn).className = "px-4 py-1.5 rounded-md font-medium transition-all bg-white text-blue-900 shadow";
+    }
+
+    function toggleAdvancedSettings() {
+      const adv = document.getElementById('advSettings');
+      const icon = document.getElementById('advIcon');
+      if (adv.classList.contains('hidden')) {
+        adv.classList.remove('hidden');
+        icon.className = "fa-solid fa-chevron-up text-slate-400";
+      } else {
+        adv.classList.add('hidden');
+        icon.className = "fa-solid fa-chevron-down text-slate-400";
+      }
+    }
+
+    function syncMargin(val) {
+      document.getElementById('marginLabel').innerText = val + '%';
+      calculate();
+    }
+
+    function resetDefaults() {
+      document.getElementById('p_1688').value = "25.0";
+      document.getElementById('pkg_l').value = "15";
+      document.getElementById('pkg_w').value = "12";
+      document.getElementById('pkg_h').value = "8";
+      document.getElementById('actual_w').value = "0.20";
+      document.getElementById('domestic_f').value = "8.0";
+      document.getElementById('first_rate').value = "95";
+      document.getElementById('vol_divisor').value = "6000";
+      document.getElementById('last_base').value = "70";
+      document.getElementById('last_vat').value = "15";
+      document.getElementById('rate_zar').value = "0.40";
+      document.getElementById('comm_rate').value = "15";
+      document.getElementById('comm_vat').value = "15";
+      document.getElementById('target_margin').value = "30";
+      syncMargin(30);
+    }
+
+    // 核心定价与成本测算计算引擎
+    function calculate() {
+      const p1688 = parseFloat(document.getElementById('p_1688').value) || 0;
+      const l = parseFloat(document.getElementById('pkg_l').value) || 0;
+      const w = parseFloat(document.getElementById('pkg_w').value) || 0;
+      const h = parseFloat(document.getElementById('pkg_h').value) || 0;
+      const actWeight = parseFloat(document.getElementById('actual_w').value) || 0;
+      const domFreight = parseFloat(document.getElementById('domestic_f').value) || 0;
+
+      const firstRate = parseFloat(document.getElementById('first_rate').value) || 95;
+      const volDivisor = parseFloat(document.getElementById('vol_divisor').value) || 6000;
+      const lastBaseZar = parseFloat(document.getElementById('last_base').value) || 70;
+      const lastVat = (parseFloat(document.getElementById('last_vat').value) || 15) / 100;
+      const rateZar = parseFloat(document.getElementById('rate_zar').value) || 0.40;
+      const commRate = (parseFloat(document.getElementById('comm_rate').value) || 15) / 100;
+      const commVat = (parseFloat(document.getElementById('comm_vat').value) || 15) / 100;
+      const margin = (parseFloat(document.getElementById('target_margin').value) || 30) / 100;
+
+      // 1. 材积与计费重量
+      const volWeight = volDivisor > 0 ? (l * w * h) / volDivisor : 0;
+      const chgWeight = Math.max(actWeight, volWeight);
+
+      // 2. 头程运费
+      const firstLegCny = chgWeight * firstRate;
+
+      // 3. 尾程运费 (含税)
+      const lastLegZar = lastBaseZar * (1 + lastVat);
+      const lastLegCny = lastLegZar * rateZar;
+
+      // 4. 总成本
+      const totalCostCny = p1688 + domFreight + firstLegCny + lastLegCny;
+      const totalCostZar = rateZar > 0 ? totalCostCny / rateZar : 0;
+
+      // 5. 平台综合扣点率 (15% + 15%税 = 17.25%)
+      const platformFeeRatio = commRate * (1 + commVat);
+
+      // 6. 反推售价: S * (1 - 平台扣点 - 毛利率) = 总成本
+      const costRatio = 1 - platformFeeRatio - margin;
+      const calcSellingZar = costRatio > 0 ? totalCostZar / costRatio : 0;
+      let sellingPriceInt = Math.max(1, Math.ceil(calcSellingZar));
+
+      // 心理定价建议 (尾数调至 9)
+      const mod10 = sellingPriceInt % 10;
+      if (mod10 < 9) {
+        sellingPriceInt += (9 - mod10);
+      }
+
+      // MRP 1.5倍
+      const mrpInt = Math.max(sellingPriceInt, Math.round(sellingPriceInt * 1.5));
+
+      // 财务结果
+      const platformFeeZar = sellingPriceInt * platformFeeRatio;
+      const netPayoutZar = sellingPriceInt - platformFeeZar;
+      const grossProfitZar = netPayoutZar - totalCostZar;
+      const grossProfitCny = grossProfitZar * rateZar;
+
+      // 渲染视图
+      document.getElementById('res_selling').innerText = sellingPriceInt;
+      document.getElementById('res_mrp').innerText = mrpInt;
+      document.getElementById('res_profit_zar').innerText = grossProfitZar.toFixed(1);
+      document.getElementById('res_profit_cny').innerText = "折合约 ¥" + grossProfitCny.toFixed(1) + " 元";
+
+      document.getElementById('res_total_cny_text').innerText = "¥" + totalCostCny.toFixed(2) + " 元";
+      document.getElementById('res_total_zar_text').innerText = "R " + totalCostZar.toFixed(2);
+
+      // 成本拆解
+      document.getElementById('item_cny').innerText = "¥" + p1688.toFixed(2);
+      document.getElementById('dom_cny').innerText = "¥" + domFreight.toFixed(2);
+      document.getElementById('first_cny').innerText = "¥" + firstLegCny.toFixed(2);
+      document.getElementById('last_cny').innerText = "¥" + lastLegCny.toFixed(2);
+
+      if (totalCostCny > 0) {
+        document.getElementById('item_pct').innerText = "占比 " + ((p1688 / totalCostCny) * 100).toFixed(1) + "%";
+        document.getElementById('dom_pct').innerText = "占比 " + ((domFreight / totalCostCny) * 100).toFixed(1) + "%";
+      }
+
+      document.getElementById('first_desc').innerText = "计费重: " + chgWeight.toFixed(2) + "kg" + (chgWeight === volWeight && volWeight > actWeight ? "(取材积)" : "(取实重)");
+      document.getElementById('last_desc').innerText = "R " + lastLegZar.toFixed(1) + " (含15%税)";
+
+      document.getElementById('res_platform_fee').innerText = "R " + platformFeeZar.toFixed(2);
+      document.getElementById('res_net_payout').innerText = "R " + netPayoutZar.toFixed(2);
+
+      // 风险警示检测
+      const warnings = [];
+      if (volWeight > actWeight * 1.5 && volWeight > 0.3) {
+        warnings.push(`⚠️ <strong>轻泡货预警</strong>：材积重量 (${volWeight.toFixed(2)}kg) 严重大于实际重量 (${actWeight.toFixed(2)}kg)，头程运费高达 ¥${firstLegCny.toFixed(1)}元！建议优化包装压缩体积。`);
+      }
+      if (p1688 < 12 && totalCostCny > 0) {
+        warnings.push(`⚠️ <strong>低客单价预警</strong>：尾程固定成本 (R${lastLegZar.toFixed(1)} / 约¥${lastLegCny.toFixed(1)}元) 占总成本高达 ${((lastLegCny/totalCostCny)*100).toFixed(0)}%，单品利润较薄，建议打包 3件套/5件套 销售。`);
+      }
+      if (chgWeight >= 1.0) {
+        warnings.push(`⚠️ <strong>大件超重预警</strong>：包裹计费重量已达到 ${chgWeight.toFixed(2)}kg，在南非空派模式下成本偏高，请确认市场竞品是否有足够溢价空间。`);
+      }
+
+      const warnCard = document.getElementById('warningCard');
+      const warnList = document.getElementById('warningList');
+      if (warnings.length > 0) {
+        warnList.innerHTML = warnings.map(w => `<li>${w}</li>`).join('');
+        warnCard.classList.remove('hidden');
+      } else {
+        warnCard.classList.add('hidden');
+      }
+    }
+
+    // 标题生成器
+    function generateTitle() {
+      const name = document.getElementById('acc_name').value.trim() || "Accessory Part";
+      const brand = document.getElementById('acc_brand').value.trim() || "Universal";
+      const spec = document.getElementById('acc_spec').value.trim();
+
+      let title = `Third-Party ${name} Compatible with ${brand}`;
+      if (spec) {
+        title += ` (${spec})`;
+      }
+      document.getElementById('generated_title').innerText = title;
+    }
+
+    function copyGeneratedTitle() {
+      const text = document.getElementById('generated_title').innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        alert("已成功复制合规标题到剪贴板！\n" + text);
+      });
+    }
+
+    // 侵权快速体检器
+    const LUXURY_WORDS = ["chanel", "louis vuitton", "lv", "gucci", "hermes", "prada", "dior", "balenciaga", "fendi", "burberry", "celine", "rolex", "cartier"];
+    const BRAND_WORDS = ["sony", "apple", "iphone", "samsung", "dyson", "philips", "nike", "adidas", "nintendo", "playstation", "ps5", "dji", "gopro"];
+    const RESTRICTED_WORDS = ["bluetooth", "wifi", "wireless", "battery", "liquid", "cream", "powder", "spray", "knife"];
+    const IP_WORDS = ["disney", "marvel", "spiderman", "pokemon", "pikachu", "sanrio", "hello kitty", "labubu", "naruto"];
+
+    function runAudit() {
+      const input = document.getElementById('check_input').value.trim().toLowerCase();
+      const resDiv = document.getElementById('audit_result');
+      if (!input) {
+        alert("请输入待检测的标题或关键词！");
+        return;
+      }
+
+      resDiv.classList.remove('hidden');
+
+      // 1. 奢侈品检测
+      const hitLuxury = LUXURY_WORDS.filter(w => new RegExp(`\\b${w}\\b`, 'i').test(input));
+      if (hitLuxury.length > 0) {
+        resDiv.className = "p-4 rounded-xl border border-red-300 bg-red-50 text-red-900";
+        resDiv.innerHTML = `
+          <div class="font-bold text-base flex items-center text-red-700 mb-2">
+            <i class="fa-solid fa-skull-crossbones mr-2 text-xl"></i> 🚨 致命侵权红线拦截！严禁上架！
+          </div>
+          <p class="mb-2">检测到命中顶级奢侈品关键词: <strong class="underline">${hitLuxury.join(', ')}</strong></p>
+          <div class="text-xs bg-white/80 p-2.5 rounded border border-red-200">
+            <strong>封店复盘警示</strong>：香奈儿、LV、Gucci 等奢侈品受国际知识产权严厉保护，包括外观专利。在 Makro 平台刊登将直接导致店铺永久封禁并冻结全部资金！
+          </div>
+        `;
+        return;
+      }
+
+      // 2. IP周边检测
+      const hitIP = IP_WORDS.filter(w => new RegExp(`\\b${w}\\b`, 'i').test(input));
+      if (hitIP.length > 0) {
+        resDiv.className = "p-4 rounded-xl border border-red-300 bg-red-50 text-red-900";
+        resDiv.innerHTML = `
+          <div class="font-bold text-base flex items-center text-red-700 mb-2">
+            <i class="fa-solid fa-ban mr-2 text-xl"></i> 🚨 受保护 IP 侵权拦截！
+          </div>
+          <p class="mb-2">检测到命中受保护影视/动漫/潮玩 IP: <strong class="underline">${hitIP.join(', ')}</strong></p>
+          <p class="text-xs">未经官方版权授权，销售任何周边均构成严重版权侵权，严禁选品开发！</p>
+        `;
+        return;
+      }
+
+      // 3. 无线/特限品检测
+      const hitRestricted = RESTRICTED_WORDS.filter(w => new RegExp(`\\b${w}\\b`, 'i').test(input));
+      if (hitRestricted.length > 0) {
+        resDiv.className = "p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-900";
+        resDiv.innerHTML = `
+          <div class="font-bold text-base flex items-center text-amber-800 mb-2">
+            <i class="fa-solid fa-triangle-exclamation mr-2 text-xl"></i> ⚠️ 平台受限品与资质审查警示
+          </div>
+          <p class="mb-2">检测到特限词汇: <strong class="underline">${hitRestricted.join(', ')}</strong></p>
+          <p class="text-xs">若包含蓝牙/WiFi 无线电发射设备，需南非 ICASA 强制型号核准证书；若是液体/电池类，可能面临国际航运禁运！</p>
+        `;
+        return;
+      }
+
+      // 4. 品牌词配件检测 (索尼镜头盖案例)
+      const hitBrand = BRAND_WORDS.filter(w => new RegExp(`\\b${w}\\b`, 'i').test(input));
+      if (hitBrand.length > 0) {
+        const hasThirdParty = input.includes('third-party') || input.includes('third party');
+        const hasCompatible = input.includes('compatible with') || input.includes('suitable for') || input.includes('replacement for');
+
+        if (!hasThirdParty || !hasCompatible) {
+          resDiv.className = "p-4 rounded-xl border border-red-300 bg-red-50 text-red-900";
+          resDiv.innerHTML = `
+            <div class="font-bold text-base flex items-center text-red-700 mb-2">
+              <i class="fa-solid fa-circle-exclamation mr-2 text-xl"></i> ❌ 严重商标侵权高危 (索尼镜头盖同款风险)
+            </div>
+            <p class="mb-1.5">标题中包含品牌词 <strong class="underline">${hitBrand.join(', ')}</strong>，但缺少第三方合规限定声明！</p>
+            <p class="text-xs mb-2 text-red-800">直接将品牌名写在标题中会被判定为冒用原厂假冒（两家店铺封店直接原因）。</p>
+            <div class="text-xs bg-white p-2.5 rounded border border-red-200">
+              <strong>整改方案</strong>：请使用上方生成器，重塑为 <code>Third-Party ... Compatible with ${hitBrand[0].toUpperCase()}</code> 结构，且<strong>实物图片上绝对不能出现原厂 Logo</strong>！
+            </div>
+          `;
+          return;
+        } else {
+          resDiv.className = "p-4 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900";
+          resDiv.innerHTML = `
+            <div class="font-bold text-base flex items-center text-emerald-700 mb-2">
+              <i class="fa-solid fa-circle-check mr-2 text-xl"></i> ✅ 第三方配件标题合规达标
+            </div>
+            <p class="text-xs mb-1">标题已规范使用 <code>Third-Party</code> 及兼容限定词，符合 Makro 配件准入规则。</p>
+            <p class="text-xs text-red-600 font-bold">⚠️ 终审铁律提醒：请再次确认商品实物正反面照片没有任何 ${hitBrand[0].toUpperCase()} Logo！</p>
+          `;
+          return;
+        }
+      }
+
+      // 5. 纯绿线白牌
+      resDiv.className = "p-4 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900";
+      resDiv.innerHTML = `
+        <div class="font-bold text-base flex items-center text-emerald-700 mb-2">
+          <i class="fa-solid fa-shield-check mr-2 text-xl"></i> 🟢 安全绿线商品 (推荐放心上架)
+        </div>
+        <p class="text-xs">未检出任何知名品牌、奢侈品或受限违规词，属于纯日常中性消费品，无侵权风险，可放心安排开发与刊登！</p>
+      `;
+    }
+
+    // 初始化运行一次测算与标题生成
+    window.addEventListener('DOMContentLoaded', () => {
+      calculate();
+      generateTitle();
+    });
+  </script>
+</body>
+</html>
