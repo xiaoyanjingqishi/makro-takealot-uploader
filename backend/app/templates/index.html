@@ -4135,7 +4135,26 @@
             <button @click="showQuickCollectModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
           </div>
 
-          <div class="p-6 space-y-4">
+          <!-- 采集模式切换选项卡: 单品输入 vs CSV表格批量采集 -->
+          <div class="flex border-b border-slate-200/80 bg-slate-50/50 px-6 pt-2">
+            <button 
+              @click="quickCollectTab = 'single'"
+              :class="quickCollectTab === 'single' ? 'border-blue-600 text-blue-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'"
+              class="pb-2.5 px-3 border-b-2 text-xs transition cursor-pointer flex items-center space-x-1.5"
+            >
+              <span>🎯 单商品/链接快速采集</span>
+            </button>
+            <button 
+              @click="quickCollectTab = 'csv'"
+              :class="quickCollectTab === 'csv' ? 'border-blue-600 text-blue-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'"
+              class="pb-2.5 px-3 border-b-2 text-xs transition cursor-pointer flex items-center space-x-1.5"
+            >
+              <span>📄 导入 CSV 表格批量采集</span>
+            </button>
+          </div>
+
+          <!-- 模式 1: 单品 PLID / 链接采集 -->
+          <div v-if="quickCollectTab === 'single'" class="p-6 space-y-4">
             <p class="text-xs text-slate-500 leading-relaxed">
               输入 Takealot 商品的 <strong>PLID</strong>、<strong>TSIN</strong>（如 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">PLID102204256</code> 或 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">103776345</code>）或 <strong>商品详情页链接</strong>，系统将直接调用 Takealot 官方 API 双模毫秒级提取全量规格与图组：
             </p>
@@ -4173,6 +4192,68 @@
             </div>
           </div>
 
+          <!-- 模式 2: 批量 CSV / TXT 文件导入采集 -->
+          <div v-if="quickCollectTab === 'csv'" class="p-6 space-y-4">
+            <p class="text-xs text-slate-500 leading-relaxed">
+              支持上传从其他系统导出的商品表格文件（<code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">.csv</code> 或 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">.txt</code>），系统将自动识别提取 <strong>PLID</strong> 与 <strong>TSIN</strong>，并在后台并发拉取全量规格、多维变体与高清图组：
+            </p>
+
+            <!-- 拖拽/点击上传区域 -->
+            <div 
+              @click="$refs.csvFileInput.click()" 
+              @dragover.prevent
+              @dragenter.prevent
+              @drop.prevent="handleCsvFileDrop"
+              class="border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition select-none"
+              :class="csvFile ? 'border-blue-400 bg-blue-50/40' : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50/70'"
+            >
+              <input 
+                type="file" 
+                ref="csvFileInput" 
+                accept=".csv,.txt" 
+                @change="handleCsvFileSelect" 
+                class="hidden"
+              />
+              <div v-if="!csvFile" class="space-y-1.5 text-xs text-slate-500">
+                <div class="text-2xl">📤</div>
+                <div class="font-medium text-slate-700">点击或将 CSV / TXT 文件拖拽到此处</div>
+                <div class="text-[11px] text-slate-400">支持 8店_有出单商品_PLID明细.csv 等任意包含 PLID 列的表格</div>
+              </div>
+              <div v-else class="space-y-1 text-xs">
+                <div class="text-2xl">📄</div>
+                <div class="font-bold text-slate-800 break-all">{{ csvFileName }}</div>
+                <div class="text-[11px] text-blue-600 font-medium">
+                  识别到约 <span class="font-bold text-blue-700 font-mono">{{ csvPlidCount }}</span> 个待采集商品
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1">（点击可更换文件）</div>
+              </div>
+            </div>
+
+            <!-- 智能去重保护开关 -->
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+              <label class="flex items-start space-x-2 text-xs text-slate-700 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  v-model="csvSkipExisting" 
+                  class="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div>
+                  <span class="font-semibold text-slate-900">智能跳过已存在商品 (推荐)</span>
+                  <p class="text-[11px] text-slate-500 mt-0.5 leading-normal">
+                    若商品在系统中已存在，自动跳过采集，防止覆盖已清洗或已提交至 Makro 的数据。
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div class="p-3 bg-blue-50/60 rounded-xl border border-blue-100 text-[11px] text-blue-800 flex items-start space-x-2 leading-relaxed">
+              <span class="text-sm shrink-0">💡</span>
+              <div>
+                <strong>并发与后台执行</strong>：提交后系统将在后台以 6 线程并发拉取官方 API 物料，不影响您正常操作其他页面，顶部任务栏可实时查看百分比与入库进度。
+              </div>
+            </div>
+          </div>
+
           <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
             <button 
               @click="showQuickCollectModal = false" 
@@ -4180,14 +4261,26 @@
             >
               取消
             </button>
-            <button 
-              @click="submitQuickCollect" 
-              :disabled="parsedPlidInfo.status !== 'valid' || isQuickCollecting"
-              class="px-4.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-xl flex items-center space-x-1.5 shadow-xs transition active:scale-95 cursor-pointer"
-            >
-              <span v-if="isQuickCollecting">⏳ 正在读取 API...</span>
-              <span v-else>立即采集入库</span>
-            </button>
+            <template v-if="quickCollectTab === 'single'">
+              <button 
+                @click="submitQuickCollect" 
+                :disabled="parsedPlidInfo.status !== 'valid' || isQuickCollecting"
+                class="px-4.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-xl flex items-center space-x-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+              >
+                <span v-if="isQuickCollecting">⏳ 正在读取 API...</span>
+                <span v-else>立即采集入库</span>
+              </button>
+            </template>
+            <template v-else>
+              <button 
+                @click="submitCsvCollect" 
+                :disabled="!csvFile || isCsvCollecting"
+                class="px-4.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-xl flex items-center space-x-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+              >
+                <span v-if="isCsvCollecting">⏳ 正在启动任务...</span>
+                <span v-else>🚀 开始批量采集入库</span>
+              </button>
+            </template>
           </div>
         </div>
       </div>
@@ -6290,6 +6383,12 @@
           showQuickCollectModal: false,
           quickCollectInput: '',
           isQuickCollecting: false,
+          quickCollectTab: 'single', // 'single' | 'csv'
+          csvFile: null,
+          csvFileName: '',
+          csvPlidCount: 0,
+          csvSkipExisting: true,
+          isCsvCollecting: false,
           productAbortController: null
         };
       },
@@ -8004,6 +8103,79 @@
             alert(`❌ 采集请求失败: ${e}`);
           } finally {
             this.isQuickCollecting = false;
+          }
+        },
+        handleCsvFileSelect(e) {
+          const files = e.target.files || (e.dataTransfer && e.dataTransfer.files);
+          if (!files || files.length === 0) return;
+          const file = files[0];
+          this.csvFile = file;
+          this.csvFileName = file.name;
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            try {
+              const text = evt.target.result;
+              const matches = text.match(/\b\d{7,10}\b/g) || [];
+              const unique = new Set(matches);
+              this.csvPlidCount = unique.size;
+            } catch (err) {
+              this.csvPlidCount = 0;
+            }
+          };
+          reader.readAsText(file.slice(0, 204800));
+        },
+        handleCsvFileDrop(e) {
+          if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            this.handleCsvFileSelect(e);
+          }
+        },
+        async submitCsvCollect() {
+          if (!this.csvFile || this.isCsvCollecting) return;
+          this.isCsvCollecting = true;
+          try {
+            const formData = new FormData();
+            formData.append('file', this.csvFile);
+            formData.append('skip_existing', this.csvSkipExisting ? 'true' : 'false');
+            const res = await fetch('/api/products/import-csv', {
+              method: 'POST',
+              headers: this.getAuthHeaders(),
+              body: formData
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.task_id) {
+                this.activeBgTasks.unshift({
+                  task_id: data.task_id,
+                  type: 'batch_csv_import',
+                  task_name: 'CSV 商品批量采集',
+                  status: 'RUNNING',
+                  total: data.total || 0,
+                  current: 0,
+                  progress: 0,
+                  success_count: 0,
+                  fail_count: 0,
+                  current_title: `已启动 6 线程并发采集 ${data.total} 件商品...`,
+                  message: data.message
+                });
+                this.ensureBgTasksPolling();
+              }
+              alert(`🚀 ${data.message || '批量采集任务已在后台启动！'}\n共计 ${data.total} 件商品，您可随时在顶部任务栏查看采集进度。`);
+              this.showQuickCollectModal = false;
+              this.csvFile = null;
+              this.csvFileName = '';
+              this.csvPlidCount = 0;
+              if (this.$refs.csvFileInput) {
+                this.$refs.csvFileInput.value = '';
+              }
+              await this.loadProducts();
+            } else {
+              const err = await res.json().catch(() => ({}));
+              alert(`❌ 启动批量采集失败: ${err.detail || res.statusText}`);
+            }
+          } catch (e) {
+            alert(`❌ 请求失败: ${e}`);
+          } finally {
+            this.isCsvCollecting = false;
           }
         },
         async showComplianceModal(item) {

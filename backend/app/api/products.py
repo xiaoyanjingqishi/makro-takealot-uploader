@@ -5,14 +5,16 @@ import hashlib
 import requests
 from typing import List, Optional, Union
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, UploadFile, File, Form, Request
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload, joinedload
-from ..database import get_db
+from ..database import get_db, SessionLocal
 from ..models.product import Product, ProductVariant
 from ..models.store import ProductStoreListing
 from ..models.task import TaskLog
 from ..models.user import User
+from ..services.task_manager import task_manager
+from ..services.csv_collector import parse_plids_from_content, batch_collect_plids
 from ..utils.auth import get_optional_current_user
 from ..schemas.product import (
     TakealotCollectRequest,
@@ -334,6 +336,80 @@ def collect_by_plid(
             db=db
         )
         raise HTTPException(status_code=500, detail=f"采集异常: {str(e)}")
+
+@router.post("/import-csv", summary="上传 CSV/TXT 文件或提交列表批量采集 Takealot 商品")
+async def import_csv_products(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    raw_content: Optional[str] = Form(None),
+    skip_existing: bool = Form(True),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    全自动 CSV / TXT 批量采集接口：
+    - 支持直接上传 Takealot 导出的 CSV/TXT 表格文件
+    - 支持以 JSON 格式提交 PLID 列表或大文本
+    - 智能提取 PLID 与 TSIN，支持跳过已有已刊登商品
+    - 接入 TaskManager 挂载异步后台任务并支持实时进度监控
+    """
+    content_bytes = b""
+    content_type = request.headers.get("content-type", "").lower()
+    
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                skip_existing = bool(body.get("skip_existing", True))
+                if body.get("plids") and isinstance(body["plids"], list):
+                    content_bytes = "\n".join(str(p) for p in body["plids"]).encode("utf-8")
+                elif body.get("content"):
+                    content_bytes = str(body["content"]).encode("utf-8")
+        except Exception as je:
+            logger.debug(f"JSON 解析跳过: {je}")
+    elif file is not None:
+        content_bytes = await file.read()
+    elif raw_content:
+        content_bytes = raw_content.encode("utf-8")
+
+    if not content_bytes:
+        raise HTTPException(status_code=400, detail="请上传 CSV/TXT 表格文件，或在请求体中提供商品编号")
+
+    plid_items = parse_plids_from_content(content_bytes)
+    if not plid_items:
+        raise HTTPException(status_code=400, detail="未能从上传内容中识别出有效的 Takealot PLID/TSIN 编号，请核对文件格式")
+
+    user_id = current_user.id if current_user else None
+    task_name = f"CSV批量采集 ({len(plid_items)} 个商品)"
+    task = task_manager.create_task("BATCH_COLLECT", task_name, len(plid_items))
+
+    def _worker(tm, tid):
+        thread_db = SessionLocal()
+        try:
+            res = batch_collect_plids(
+                plid_items=plid_items,
+                db=thread_db,
+                user_id=user_id,
+                skip_existing=skip_existing,
+                max_workers=6,
+                task_id=tid
+            )
+            msg = f"批量采集完成: 成功新入库 {res['success_count']} 个商品 ({res['variant_count']} 个独立变体), 跳过已有 {res['skipped_count']} 项, 失败 {res['failed_count']} 项"
+            tm.finish_task(tid, status="SUCCESS" if res["success_count"] > 0 or res["skipped_count"] > 0 else "FAILED", message=msg)
+        except Exception as e:
+            logger.error(f"后台批量采集任务异常: {e}", exc_info=True)
+            tm.finish_task(tid, status="FAILED", message=f"采集异常中断: {str(e)[:150]}")
+        finally:
+            thread_db.close()
+
+    task_manager.start_task(task["id"], _worker)
+
+    return {
+        "success": True,
+        "task_id": task["id"],
+        "total_plids": len(plid_items),
+        "message": f"已识别 {len(plid_items)} 个商品编号，后台批量采集任务已成功启动！"
+    }
 
 @router.post("/check-existence", summary="批量检查商品/PLID是否已被采集入库")
 def check_products_existence(payload: dict, db: Session = Depends(get_db)):
