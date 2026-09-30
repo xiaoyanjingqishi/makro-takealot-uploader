@@ -237,7 +237,7 @@ def batch_collect_piggyback(
     success_count = 0
     failed_items = []
 
-    # 1. 优先处理来自插件扩展的结构化富数据 (搜索页批量采集 / 多变体采集)
+    # 1. 优先处理来自插件扩展的结构化数据 (搜索页批量采集 / 多变体采集，后端直接发起官方与前台权威抓取)
     if req.rich_items and len(req.rich_items) > 0:
         for rit in req.rich_items:
             try:
@@ -245,36 +245,46 @@ def batch_collect_piggyback(
                 if not fsn:
                     continue
                 item_id = rit.get("item_id")
-                raw_url = rit.get("url") or MakroScraperService.format_canonical_makro_url(fsn, item_id)
-                title = rit.get("title") or fsn
-                price = float(rit.get("price") or 0.0)
-                mrp = float(rit.get("mrp") or (price * 1.5 if price > 0 else 0.0))
-                image_url = rit.get("image_url") or ""
-                seller_name = rit.get("seller_name") or ""
-                seller_count = int(rit.get("seller_count") or 1)
+                
+                # 后端直接调用 MakroScraperService 获取权威价格、MRP、标题与主图
+                data = MakroScraperService.resolve_piggyback_product(fsn, store, client_data={"item_id": item_id})
+
+                target_fsn = data["makro_product_id"]
+                target_item_id = item_id or data.get("item_id")
+                raw_url = data.get("makro_url") or MakroScraperService.format_canonical_makro_url(target_fsn, target_item_id)
+                title = data.get("title") or fsn
+                title_zh = data.get("title_zh") or title
+                image_url = data.get("image_url") or ""
+                seller_name = data.get("original_seller") or ""
+                seller_count = int(data.get("seller_count") or 1)
+                real_price = float(data.get("original_price") or 0.0)
+                real_mrp = float(data.get("original_mrp") or (real_price * 1.5 if real_price > 0 else 0.0))
+
                 variant_name = rit.get("variant_name") or ""
                 variant_attributes = rit.get("variant_attributes")
                 if isinstance(variant_attributes, (dict, list)):
                     variant_attributes = json.dumps(variant_attributes, ensure_ascii=False)
 
                 target_p, target_m = MakroPiggybackService.calculate_price(
-                    original_price=price,
+                    original_price=real_price,
                     strategy=req.price_strategy or "MINUS_1",
                     min_floor=req.min_price_floor or 0.0,
-                    original_mrp=mrp
+                    original_mrp=real_mrp
                 )
 
                 existing = db.query(MakroPiggybackItem).filter(
                     MakroPiggybackItem.store_id == store.id,
-                    MakroPiggybackItem.makro_product_id == fsn
+                    MakroPiggybackItem.makro_product_id == target_fsn
                 ).first()
 
                 if existing:
-                    existing.item_id = item_id or existing.item_id
+                    existing.item_id = target_item_id or existing.item_id
                     existing.makro_url = raw_url
+                    existing.title = title or existing.title
+                    existing.title_zh = title_zh or existing.title_zh
                     existing.image_url = image_url or existing.image_url
-                    existing.original_price = price or existing.original_price
-                    existing.original_mrp = mrp or existing.original_mrp
+                    existing.original_price = real_price or existing.original_price
+                    existing.original_mrp = real_mrp or existing.original_mrp
                     existing.original_seller = seller_name or existing.original_seller
                     existing.seller_count = seller_count or existing.seller_count
                     existing.target_price = target_p
@@ -285,23 +295,22 @@ def batch_collect_piggyback(
                         existing.variant_attributes = variant_attributes
                 else:
                     sku = _generate_piggyback_sku()
-                    title_zh = rit.get("title_zh") or title or fsn
-                    if variant_name:
+                    if variant_name and not title_zh.endswith(f"({variant_name})"):
                         title_zh = f"{title_zh} ({variant_name})"
 
                     new_item = MakroPiggybackItem(
                         store_id=store.id,
                         user_id=current_user.id if current_user else None,
-                        makro_product_id=fsn,
-                        item_id=item_id,
+                        makro_product_id=target_fsn,
+                        item_id=target_item_id,
                         makro_url=raw_url,
                         title=title,
                         title_zh=title_zh,
-                        brand="Generic",
-                        vertical="general",
+                        brand=data.get("brand") or getattr(store, "default_brand", "Generic") or "Generic",
+                        vertical=data.get("vertical") or "general",
                         image_url=image_url,
-                        original_price=price,
-                        original_mrp=mrp,
+                        original_price=real_price,
+                        original_mrp=real_mrp,
                         original_seller=seller_name,
                         seller_count=seller_count,
                         seller_sku=sku,

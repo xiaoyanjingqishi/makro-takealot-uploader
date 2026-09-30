@@ -151,7 +151,7 @@ class MakroScraperService:
         fsn, item_id = cls.extract_identifiers(url_or_fsn)
         target_url = url_or_fsn if url_or_fsn.startswith("http") else (cls.format_canonical_makro_url(fsn, item_id) if fsn else "")
         if not target_url:
-            return {"price": 0.0, "mrp": 0.0, "seller_name": "", "seller_count": 1, "image_url": "", "url": ""}
+            return {"price": 0.0, "mrp": 0.0, "seller_name": "", "seller_count": 1, "image_url": "", "title": "", "brand": "", "vertical": "", "item_id": "", "url": ""}
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
@@ -164,9 +164,13 @@ class MakroScraperService:
         seller_name = ""
         seller_count = 1
         image_url = ""
+        title = ""
+        brand = ""
+        vertical = ""
+        scraped_item_id = item_id or ""
 
         try:
-            resp = requests.get(target_url, headers=headers, timeout=12)
+            resp = requests.get(target_url, headers=headers, timeout=15)
             if resp.status_code == 200:
                 html = resp.text
 
@@ -177,22 +181,63 @@ class MakroScraperService:
                         st = json.loads(state_m.group(1))
                         ctx = st.get("pageDataV4", {}).get("page", {}).get("pageData", {}).get("pageContext", {})
                         if ctx:
+                            if ctx.get("itemId"):
+                                scraped_item_id = str(ctx["itemId"]).lower()
+                            if ctx.get("titles"):
+                                title = ctx["titles"].get("title") or ctx["titles"].get("subtitle") or ""
+                            
                             pricing = ctx.get("pricing", {})
                             if pricing:
-                                if pricing.get("finalPrice") and isinstance(pricing["finalPrice"].get("value"), (int, float)):
-                                    price = float(pricing["finalPrice"]["value"])
-                                elif pricing.get("fsp"):
+                                # 优先从 finalPrice.decimalValue 获取真实兰特售价 (如 "499.00")
+                                final_p = pricing.get("finalPrice", {})
+                                if final_p.get("decimalValue"):
+                                    try:
+                                        price = float(str(final_p["decimalValue"]).replace(",", "").strip())
+                                    except Exception:
+                                        pass
+                                if price <= 0 and isinstance(final_p.get("value"), (int, float)):
+                                    val = float(final_p["value"])
+                                    # 如果 value 是分 (例如 49900 且 fsp 为 49900)
+                                    if val >= 5000 and pricing.get("fsp") == val:
+                                        val = val / 100.0
+                                    price = val
+                                elif price <= 0 and pricing.get("fsp"):
                                     fsp = float(pricing["fsp"])
-                                    price = fsp / 100.0 if fsp > 5000 else fsp
+                                    price = fsp / 100.0 if fsp >= 5000 else fsp
                                 
+                                # 解析划线价 MRP
                                 for p_item in pricing.get("prices", []):
-                                    if p_item.get("priceType") == "MRP" and isinstance(p_item.get("value"), (int, float)):
-                                        mrp = float(p_item["value"])
+                                    ptype = p_item.get("priceType")
+                                    dec_val = p_item.get("decimalValue")
+                                    p_val = p_item.get("value")
+                                    if ptype == "MRP":
+                                        if dec_val:
+                                            try:
+                                                mrp = float(str(dec_val).replace(",", "").strip())
+                                            except Exception:
+                                                pass
+                                        if mrp <= 0 and isinstance(p_val, (int, float)):
+                                            m_val = float(p_val)
+                                            if m_val >= 5000 and pricing.get("mrp") == m_val:
+                                                m_val = m_val / 100.0
+                                            mrp = m_val
+                                    elif ptype == "FSP" and price <= 0:
+                                        if dec_val:
+                                            try:
+                                                price = float(str(dec_val).replace(",", "").strip())
+                                            except Exception:
+                                                pass
+                                        if price <= 0 and isinstance(p_val, (int, float)):
+                                            price = float(p_val)
                             
                             tracking = ctx.get("trackingDataV2", {})
                             if tracking:
                                 seller_name = tracking.get("sellerName", "")
-                                seller_count = tracking.get("sellerCount", 1)
+                                seller_count = int(tracking.get("sellerCount", 1))
+                                if tracking.get("brand"):
+                                    brand = tracking.get("brand")
+                                if tracking.get("vertical"):
+                                    vertical = tracking.get("vertical")
 
                             if ctx.get("imageUrl"):
                                 image_url = ctx["imageUrl"].replace("{@width}", "400").replace("{@height}", "400").replace("{@quality}", "80")
@@ -200,7 +245,7 @@ class MakroScraperService:
                         logger.debug(f"解析 __INITIAL_STATE__ 失败: {parse_e}")
 
                 # 2. 尝试从 LD-JSON 结构化数据补充
-                if price <= 0 or not image_url:
+                if price <= 0 or not image_url or not title:
                     ld_json_matches = re.findall(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.DOTALL | re.I)
                     for block in ld_json_matches:
                         try:
@@ -208,6 +253,14 @@ class MakroScraperService:
                             if isinstance(d, list):
                                 d = next((x for x in d if x.get("@type") == "Product"), {})
                             if isinstance(d, dict) and d.get("@type") == "Product":
+                                if not title and d.get("name"):
+                                    title = d.get("name")
+                                if not brand:
+                                    b_val = d.get("brand")
+                                    if isinstance(b_val, dict):
+                                        brand = b_val.get("name", "")
+                                    elif isinstance(b_val, str):
+                                        brand = b_val
                                 if not image_url and d.get("image"):
                                     image_url = d["image"]
                                 offers = d.get("offers", {})
@@ -220,11 +273,18 @@ class MakroScraperService:
                         except Exception:
                             pass
 
-                # 3. 正则匹配页面价格兜底
-                if price <= 0:
-                    price_match = re.search(r'"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)', html)
-                    if price_match:
-                        price = float(price_match.group(1))
+                # 3. HTML 兜底提取标题与图片
+                if not title:
+                    title_m = re.search(r'<title>(.*?)</title>', html, re.I)
+                    if title_m:
+                        t = title_m.group(1).split('|')[0].split('-')[0].strip()
+                        if t:
+                            title = t
+
+                # 4. 价格与 MRP 强一致性防踩坑：若价格被异常识别为分 (如 49900.0 与 66500.0) 自动归一化
+                if price >= 5000 and (price % 100 == 0) and mrp >= 5000 and (mrp % 100 == 0):
+                    price = round(price / 100.0, 2)
+                    mrp = round(mrp / 100.0, 2)
 
                 if mrp <= 0 and price > 0:
                     mrp = round(price * 1.5, 2)
@@ -237,6 +297,10 @@ class MakroScraperService:
             "seller_name": seller_name,
             "seller_count": seller_count,
             "image_url": image_url,
+            "title": title,
+            "brand": brand,
+            "vertical": vertical,
+            "item_id": scraped_item_id,
             "url": target_url
         }
 
@@ -248,11 +312,11 @@ class MakroScraperService:
         client_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        综合解析入口：整合来自浏览器扩展的直传精确数据、官方卖家网关 searchProduct 与前台抓取
+        综合解析入口：由后端直接访问 Makro 获取官方权威数据与前台在售数据
         """
         fsn, item_id = cls.extract_identifiers(url_or_fsn)
         
-        # 允许优先采用客户端传递的真实 item_id 与 fsn
+        # 提取客户端传递的辅助标识 (fsn / item_id / variant_name)
         if client_data:
             if not fsn and client_data.get("fsn"):
                 fsn = str(client_data["fsn"]).strip().upper()
@@ -262,40 +326,38 @@ class MakroScraperService:
         if not fsn:
             raise ValueError(f"无法从输入中提取合法的 16 位 Makro FSN 编号 (例如 GSPHPVTNMFHDAWV4): '{url_or_fsn}'")
 
-        # 1. 优先调用 searchProduct 官方网关获取官方类目、标题、品牌与图片
+        # 1. 尝试调用 searchProduct 官方卖家网关获取官方类目、标题、品牌与高精图片
         official = cls.fetch_product_by_fsn_from_seller_api(fsn, store)
 
-        # 2. 结合前台数据 (若客户端已直传，则直接采纳客户端数据，彻底避开服务端受限风控)
-        client_price = float(client_data.get("price") or 0.0) if client_data else 0.0
-        client_mrp = float(client_data.get("mrp") or 0.0) if client_data else 0.0
-        client_img = (client_data.get("image_url") or "").strip() if client_data else ""
-        client_seller = (client_data.get("seller_name") or "").strip() if client_data else ""
-        client_seller_count = int(client_data.get("seller_count") or 1) if client_data else 1
-        client_title = (client_data.get("title") or "").strip() if client_data else ""
+        # 2. 无论客户端传递何种参数，后端始终直接访问 Makro 前台获取买家真实售价、MRP 与 Buybox 情报
+        canonical_target = cls.format_canonical_makro_url(fsn, item_id)
+        frontend_info = cls.scrape_buyer_frontend(canonical_target)
+        if (frontend_info.get("price") or 0.0) <= 0 and url_or_fsn.startswith("http") and url_or_fsn != canonical_target:
+            # 备用：尝试原链接直接抓取
+            alt_info = cls.scrape_buyer_frontend(url_or_fsn)
+            if (alt_info.get("price") or 0.0) > 0:
+                frontend_info = alt_info
 
-        frontend_info = {}
-        if client_price <= 0:
-            frontend_info = cls.scrape_buyer_frontend(url_or_fsn)
-
-        # 整合数据
-        title = (official.get("title") if official else "") or client_title or f"Makro Product {fsn}"
-        brand = (official.get("brand") if official else "") or "Generic"
-        vertical = (official.get("vertical") if official else "") or "general"
-        image_url = (official.get("image_url") if official else "") or client_img or frontend_info.get("image_url", "")
+        # 3. 整合权威数据
+        final_item_id = item_id or frontend_info.get("item_id") or ""
+        title = (official.get("title") if official else "") or frontend_info.get("title") or f"Makro Product {fsn}"
+        brand = (official.get("brand") if official else "") or frontend_info.get("brand") or getattr(store, "default_brand", "Generic") or "Generic"
+        vertical = (official.get("vertical") if official else "") or frontend_info.get("vertical") or "general"
+        image_url = (official.get("image_url") if official else "") or frontend_info.get("image_url") or ""
         model_number = (official.get("model_number") if official else "")
         barcode = (official.get("barcode") if official else "")
         title_zh = official.get("title_zh") if official else TranslationService.translate_title(title)
 
-        price = client_price if client_price > 0 else (frontend_info.get("price") or 0.0)
-        mrp = client_mrp if client_mrp > 0 else (frontend_info.get("mrp") or (round(price * 1.5, 2) if price > 0 else 0.0))
-        seller_name = client_seller or frontend_info.get("seller_name", "")
-        seller_count = client_seller_count if client_seller_count > 1 else (frontend_info.get("seller_count") or 1)
+        price = float(frontend_info.get("price") or 0.0)
+        mrp = float(frontend_info.get("mrp") or (round(price * 1.5, 2) if price > 0 else 0.0))
+        seller_name = frontend_info.get("seller_name") or ""
+        seller_count = int(frontend_info.get("seller_count") or 1)
 
-        makro_url = cls.format_canonical_makro_url(fsn, item_id)
+        makro_url = cls.format_canonical_makro_url(fsn, final_item_id)
 
         return {
             "makro_product_id": fsn,
-            "item_id": item_id,
+            "item_id": final_item_id,
             "makro_url": makro_url,
             "title": title,
             "title_zh": title_zh,

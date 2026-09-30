@@ -146,8 +146,25 @@ class TestAutoReprice(unittest.TestCase):
             self.assertEqual(res["action"], "UNDER_CUT")
             self.assertEqual(res["new_price"], 179.0) # 180 - 1 = 179
 
-    def test_batch_collect_with_rich_items(self):
+    @patch("app.services.makro_scraper_service.MakroScraperService.resolve_piggyback_product")
+    def test_batch_collect_with_rich_items(self, mock_resolve):
         """测试从搜索页或变体矩阵批量采集富文本数据"""
+        mock_resolve.return_value = {
+            "makro_product_id": "FSN_RICH_001",
+            "item_id": "itm_rich_001",
+            "makro_url": "https://www.makro.co.za/-/p/itm_rich_001?pid=FSN_RICH_001",
+            "title": "Rich Search Result Item",
+            "title_zh": "Rich 搜索结果商品",
+            "brand": "Generic",
+            "vertical": "general",
+            "image_url": "https://www.makro.co.za/img/1.jpg",
+            "model_number": "",
+            "barcode": "",
+            "original_price": 299.0,
+            "original_mrp": 399.0,
+            "original_seller": "OtherSeller",
+            "seller_count": 1
+        }
         payload = {
             "store_id": self.store.id,
             "auto_comply": False,
@@ -156,11 +173,6 @@ class TestAutoReprice(unittest.TestCase):
                     "fsn": "FSN_RICH_001",
                     "item_id": "itm_rich_001",
                     "title": "Rich Search Result Item",
-                    "price": 299.0,
-                    "mrp": 399.0,
-                    "image_url": "https://www.makro.co.za/img/1.jpg",
-                    "seller_name": "OtherSeller",
-                    "seller_count": 1,
                     "variant_name": "Black / 10-Pack",
                     "variant_attributes": {"color": "Black", "pack": "10-Pack"}
                 }

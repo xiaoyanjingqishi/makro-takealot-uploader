@@ -183,6 +183,31 @@ try:
 except Exception as _ie:
     print(f"[INIT] 字段与复合索引初始化跳过或异常: {_ie}")
 
+# 自动纠偏跟品池历史分/兰特单位异常 (如 49900.0 自动纠偏为 499.0 并重算跟品价)
+try:
+    with SessionLocal() as _db:
+        from app.models.makro_piggyback import MakroPiggybackItem
+        from app.services.makro_piggyback_service import MakroPiggybackService
+        anomalies = _db.query(MakroPiggybackItem).filter(MakroPiggybackItem.original_price >= 5000).all()
+        for it in anomalies:
+            if it.original_price and (it.original_price % 100 == 0):
+                it.original_price = round(it.original_price / 100.0, 2)
+            if it.original_mrp and (it.original_mrp % 100 == 0):
+                it.original_mrp = round(it.original_mrp / 100.0, 2)
+            t_price, t_mrp = MakroPiggybackService.calculate_price(
+                original_price=it.original_price,
+                strategy=it.price_strategy or "MINUS_1",
+                min_floor=it.min_price_floor or 0.0,
+                original_mrp=it.original_mrp
+            )
+            it.target_price = t_price
+            it.target_mrp = t_mrp
+        if anomalies:
+            _db.commit()
+            print(f"[INIT] 自动修复 {len(anomalies)} 件历史异常价格跟品商品")
+except Exception as _p_err:
+    print(f"[INIT] 跟品价格纠偏跳过: {_p_err}")
+
 # 确保全量存量商品类目健康合规 (自动纠偏历史脏类目)
 try:
     with SessionLocal() as _db:

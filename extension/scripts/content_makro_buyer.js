@@ -66,25 +66,12 @@
                     if (optVal) labelParts.push(optVal);
                   });
                   const varName = labelParts.join(" / ") || pData.titles?.subtitle || pid;
-                  const finalP = pData.pricing?.finalPrice?.value || 0.0;
-                  let mrp = 0.0;
-                  (pData.pricing?.prices || []).forEach(pr => {
-                    if (pr.priceType === "MRP" || pr.name?.includes("Maximum")) mrp = pr.value;
-                  });
-
-                  let imgUrl = "";
-                  if (pData.images && pData.images.length > 0) {
-                    imgUrl = pData.images[0].url ? pData.images[0].url.replace(/\{@width\}/g, "400").replace(/\{@height\}/g, "400").replace(/\{@quality\}/g, "80") : "";
-                  }
 
                   variants.push({
                     fsn: pid.toUpperCase(),
                     variant_name: varName,
-                    price: finalP,
-                    mrp: mrp || (finalP * 1.5),
-                    image_url: imgUrl,
-                    url: pData.productUrl ? `https://www.makro.co.za${pData.productUrl}` : window.location.href,
-                    title: pData.titles?.title || document.title
+                    variant_attributes: { "variant": varName },
+                    url: pData.productUrl ? (pData.productUrl.startsWith("http") ? pData.productUrl : `https://www.makro.co.za${pData.productUrl}`) : window.location.href
                   });
                 }
               }
@@ -109,11 +96,8 @@
               variants.push({
                 fsn: fsn,
                 variant_name: a.textContent.trim(),
-                price: 0.0,
-                mrp: 0.0,
-                image_url: "",
-                url: href.startsWith("http") ? href : `https://www.makro.co.za${href}`,
-                title: document.title
+                variant_attributes: { "variant": a.textContent.trim() },
+                url: href.startsWith("http") ? href : `https://www.makro.co.za${href}`
               });
             }
           }
@@ -124,16 +108,10 @@
     return variants;
   }
 
-  // 解析当前页面主商品
+  // 解析当前页面主商品 (仅提取 PID 与 Item ID 等标识，具体售价与元数据由系统后端直接访问 Makro 官方抓取入库)
   function extractProductPageData() {
     let fsn = null;
     let itemId = null;
-    let title = "";
-    let price = 0.0;
-    let mrp = 0.0;
-    let imageUrl = "";
-    let sellerName = "";
-    let sellerCount = 1;
     const currentUrl = window.location.href;
 
     const urlObj = new URL(currentUrl);
@@ -152,81 +130,31 @@
       }
     }
 
-    // 提取 __INITIAL_STATE__
-    try {
-      const scripts = document.querySelectorAll("script");
-      for (const s of scripts) {
-        const text = s.textContent || "";
-        if (text.includes("window.__INITIAL_STATE__")) {
-          const m = text.match(/window\.__INITIAL_STATE__\s*=\s*(\{.*?\});/s);
-          if (m) {
-            const state = JSON.parse(m[1]);
-            const ctx = state?.pageDataV4?.page?.pageData?.pageContext;
-            if (ctx) {
-              if (!fsn && ctx.productId) fsn = String(ctx.productId).toUpperCase();
-              if (!itemId && ctx.itemId) itemId = String(ctx.itemId);
-              if (ctx.titles && ctx.titles.title) title = ctx.titles.title.trim();
-              
-              if (ctx.pricing) {
-                if (ctx.pricing.finalPrice && typeof ctx.pricing.finalPrice.value === "number") {
-                  price = ctx.pricing.finalPrice.value;
-                } else if (ctx.pricing.fsp) {
-                  price = ctx.pricing.fsp > 5000 ? ctx.pricing.fsp / 100 : ctx.pricing.fsp;
-                }
-                const pricesList = ctx.pricing.prices || [];
-                const mrpItem = pricesList.find(p => p.priceType === "MRP");
-                if (mrpItem && typeof mrpItem.value === "number") {
-                  mrp = mrpItem.value;
-                }
-              }
-
-              if (ctx.imageUrl) {
-                imageUrl = ctx.imageUrl
-                  .replace(/\{@width\}/g, "400")
-                  .replace(/\{@height\}/g, "400")
-                  .replace(/\{@quality\}/g, "80");
-              }
-
-              if (ctx.trackingDataV2) {
-                sellerName = ctx.trackingDataV2.sellerName || "";
-                sellerCount = ctx.trackingDataV2.sellerCount || 1;
+    // 兜底从 script __INITIAL_STATE__ 获取
+    if (!fsn || !itemId) {
+      try {
+        const scripts = document.querySelectorAll("script");
+        for (const s of scripts) {
+          const text = s.textContent || "";
+          if (text.includes("window.__INITIAL_STATE__")) {
+            const m = text.match(/window\.__INITIAL_STATE__\s*=\s*(\{.*?\});/s);
+            if (m) {
+              const state = JSON.parse(m[1]);
+              const ctx = state?.pageDataV4?.page?.pageData?.pageContext;
+              if (ctx) {
+                if (!fsn && ctx.productId) fsn = String(ctx.productId).toUpperCase();
+                if (!itemId && ctx.itemId) itemId = String(ctx.itemId);
               }
             }
+            break;
           }
-          break;
         }
-      }
-    } catch (e) {
-      console.warn("[Makro-Piggyback] 解析 __INITIAL_STATE__ 异常:", e);
-    }
-
-    // DOM 兜底
-    if (!title) {
-      const h1 = document.querySelector("h1");
-      if (h1) title = h1.textContent.trim();
-    }
-    if (price <= 0) {
-      const pEl = document.querySelector('[data-testid="selling-price"], .price, [class*="Price"], div._30jeq3');
-      if (pEl) price = parsePrice(pEl.textContent);
-    }
-    if (mrp <= 0 && price > 0) {
-      const mEl = document.querySelector('div._3I9_wc');
-      mrp = mEl ? parsePrice(mEl.textContent) : Math.round(price * 1.5 * 100) / 100;
-    }
-    if (!imageUrl) {
-      const img = document.querySelector('img[src*="/asset/rukmini/"], img[src*="cms/"]');
-      if (img && img.src) imageUrl = img.src;
+      } catch (e) {}
     }
 
     return {
       fsn: fsn || "",
       itemId: itemId || "",
-      title: title || "",
-      price: price || 0.0,
-      mrp: mrp || 0.0,
-      imageUrl: imageUrl || "",
-      sellerName: sellerName || "",
-      sellerCount: sellerCount || 1,
       url: currentUrl
     };
   }
@@ -302,8 +230,8 @@
         </span>
       </div>
       <div style="font-size:11px; color:#cbd5e1; display:flex; flex-direction:column; gap:3px;">
-        <div>💰 当前在售: <strong style="color:#fbbf24;">${priceText}</strong></div>
-        <div>🏪 黄金买家: <span style="color:#94a3b8;">${sellerText}</span></div>
+        <div>📌 目标编号: <strong style="color:#fbbf24; font-family:monospace;">${data.fsn || data.itemId || '已识别'}</strong></div>
+        <div style="color:#94a3b8; font-size:10px;">⚡ 点击后由中台后端直连 Makro 官方抓取真实售价与建档入库</div>
       </div>
       ${variantsHtml}
       <div style="display:flex; flex-direction:column; gap:6px;">
@@ -349,7 +277,7 @@
           return;
         }
         collectVarsBtn.disabled = true;
-        collectVarsBtn.innerText = "⏳ 正在批量入库...";
+        collectVarsBtn.innerText = "⏳ 正在提交后端抓取入库...";
 
         const richItems = [];
         cbs.forEach(cb => {
@@ -360,12 +288,6 @@
               fsn: v.fsn,
               item_id: data.itemId,
               url: v.url,
-              title: data.title,
-              price: v.price > 0 ? v.price : data.price,
-              mrp: v.mrp > 0 ? v.mrp : data.mrp,
-              image_url: v.image_url || data.imageUrl,
-              seller_name: data.sellerName,
-              seller_count: data.sellerCount,
               variant_name: v.variant_name,
               variant_attributes: { "variant": v.variant_name }
             });
@@ -401,7 +323,7 @@
     document.getElementById("makro-piggyback-btn").addEventListener("click", () => {
       const btn = document.getElementById("makro-piggyback-btn");
       const msg = document.getElementById("makro-piggyback-msg");
-      btn.innerText = "⏳ 正在解析入库...";
+      btn.innerText = "⏳ 正在由后端解析入库...";
       btn.disabled = true;
       msg.style.display = "none";
 
@@ -411,13 +333,7 @@
         action: "COLLECT_MAKRO_PIGGYBACK",
         url: latestData.url,
         fsn: latestData.fsn || latestData.url,
-        item_id: latestData.itemId,
-        title: latestData.title,
-        price: latestData.price,
-        mrp: latestData.mrp,
-        image_url: latestData.imageUrl,
-        seller_name: latestData.sellerName,
-        seller_count: latestData.sellerCount
+        item_id: latestData.itemId
       }, (response) => {
         btn.disabled = false;
         btn.innerHTML = hasVariants ? "<span>🚀</span> 仅采集当前单品" : "<span>🚀</span> 采集跟品到本地系统";
@@ -427,7 +343,7 @@
           msg.style.background = "rgba(16, 185, 129, 0.2)";
           msg.style.color = "#34d399";
           msg.style.border = "1px solid #059669";
-          msg.innerHTML = `✅ 采集成功！已入库 (R${latestData.price || '0'})`;
+          msg.innerHTML = `✅ 采集成功！后端已获取权威数据并入库`;
           setTimeout(() => { msg.style.display = "none"; }, 4000);
         } else {
           msg.style.display = "block";
@@ -445,39 +361,26 @@
   // 模块二：搜索列表页卡片注入与批量工具栏 (Search Page Collector)
   // =============================================================
 
-  // 从搜索卡片 DOM 解析单品信息
+  // 从搜索卡片 DOM 解析单品信息 (仅提取 FSN 与 Item ID 等标识，具体售价与详情由后端直接访问 Makro 权威抓取)
   function extractCardData(cardEl) {
     const fsn = (cardEl.getAttribute("data-id") || "").trim().toUpperCase();
     if (!fsn) return null;
 
     const titleLink = cardEl.querySelector("a.s1Q9rs") || cardEl.querySelector("a._2rpwqI") || cardEl.querySelector("a[href*='/p/']");
-    const title = titleLink ? (titleLink.getAttribute("title") || titleLink.textContent.trim()) : fsn;
     const href = titleLink ? titleLink.href : "";
 
     let itemId = null;
-    const itmMatch = href.match(/\/p\/([a-zA-Z0-9]+)/i);
-    if (itmMatch && itmMatch[1].toLowerCase().startsWith("itm")) {
-      itemId = itmMatch[1];
+    if (href) {
+      const itmMatch = href.match(/\/p\/([a-zA-Z0-9]+)/i);
+      if (itmMatch && itmMatch[1].toLowerCase().startsWith("itm")) {
+        itemId = itmMatch[1];
+      }
     }
-
-    const imgEl = cardEl.querySelector("img._396cs4") || cardEl.querySelector("img");
-    const imageUrl = imgEl ? (imgEl.src || imgEl.getAttribute("src") || "") : "";
-
-    const priceEl = cardEl.querySelector("div._30jeq3");
-    const mrpEl = cardEl.querySelector("div._3I9_wc");
-    const price = priceEl ? parsePrice(priceEl.textContent) : 0.0;
-    const mrp = mrpEl ? parsePrice(mrpEl.textContent) : (price * 1.5);
 
     return {
       fsn,
       item_id: itemId,
-      title,
-      price,
-      mrp,
-      image_url: imageUrl,
-      url: href || `https://www.makro.co.za/-/p/${itemId || fsn}?pid=${fsn}`,
-      seller_name: "",
-      seller_count: 1
+      url: href || `https://www.makro.co.za/-/p/${itemId || fsn}?pid=${fsn}`
     };
   }
 
@@ -542,13 +445,7 @@
           action: "COLLECT_MAKRO_PIGGYBACK",
           url: cardData.url,
           fsn: cardData.fsn,
-          item_id: cardData.item_id,
-          title: cardData.title,
-          price: cardData.price,
-          mrp: cardData.mrp,
-          image_url: cardData.image_url,
-          seller_name: cardData.seller_name,
-          seller_count: cardData.seller_count
+          item_id: cardData.item_id
         }, (res) => {
           if (res && res.success) {
             qBtn.style.background = "#059669";

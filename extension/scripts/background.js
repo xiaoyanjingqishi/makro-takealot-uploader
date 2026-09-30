@@ -207,12 +207,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         body: JSON.stringify({
           url_or_fsn: urlOrFsn,
           item_id: request.item_id || null,
-          title: request.title || null,
-          price: request.price || null,
-          mrp: request.mrp || null,
-          image_url: request.image_url || null,
-          seller_name: request.seller_name || null,
-          seller_count: request.seller_count || 1,
           variant_name: request.variant_name || null,
           variant_attributes: request.variant_attributes || null
         })
