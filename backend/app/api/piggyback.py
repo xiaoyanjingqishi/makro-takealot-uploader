@@ -63,7 +63,8 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         "store_name": item.store.name if item.store else "未知店铺",
         "user_id": item.user_id,
         "makro_product_id": item.makro_product_id,
-        "makro_url": item.makro_url,
+        "item_id": item.item_id,
+        "makro_url": item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, item.item_id),
         "title": item.title,
         "title_zh": item.title_zh,
         "brand": item.brand,
@@ -73,6 +74,8 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         "model_number": item.model_number,
         "original_price": item.original_price or 0.0,
         "original_mrp": item.original_mrp or 0.0,
+        "original_seller": item.original_seller or "",
+        "seller_count": item.seller_count or 1,
         "seller_sku": item.seller_sku,
         "target_price": item.target_price or 0.0,
         "target_mrp": item.target_mrp or 0.0,
@@ -100,12 +103,23 @@ def collect_single_piggyback(
     db: Session = Depends(get_db)
 ):
     store = _get_target_store(db, req.store_id)
+    client_data = {
+        "item_id": req.item_id,
+        "title": req.title,
+        "price": req.price,
+        "mrp": req.mrp,
+        "image_url": req.image_url,
+        "seller_name": req.seller_name,
+        "seller_count": req.seller_count,
+        "fsn": req.url_or_fsn
+    }
     try:
-        data = MakroScraperService.resolve_piggyback_product(req.url_or_fsn, store)
+        data = MakroScraperService.resolve_piggyback_product(req.url_or_fsn, store, client_data=client_data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     fsn = data["makro_product_id"]
+    item_id = data.get("item_id")
 
     # 检查是否已在当前店铺的跟品池中
     existing = db.query(MakroPiggybackItem).filter(
@@ -122,6 +136,8 @@ def collect_single_piggyback(
 
     if existing:
         # 更新参数
+        existing.item_id = item_id or existing.item_id
+        existing.makro_url = data.get("makro_url", existing.makro_url)
         existing.title = data.get("title", existing.title)
         existing.title_zh = data.get("title_zh", existing.title_zh)
         existing.brand = data.get("brand", existing.brand)
@@ -129,6 +145,8 @@ def collect_single_piggyback(
         existing.image_url = data.get("image_url", existing.image_url)
         existing.original_price = data.get("original_price", existing.original_price)
         existing.original_mrp = data.get("original_mrp", existing.original_mrp)
+        existing.original_seller = data.get("original_seller", existing.original_seller)
+        existing.seller_count = data.get("seller_count", existing.seller_count or 1)
         existing.target_price = target_p
         existing.target_mrp = target_m
         existing.min_price_floor = req.min_price_floor or existing.min_price_floor
@@ -140,6 +158,7 @@ def collect_single_piggyback(
             store_id=store.id,
             user_id=current_user.id if current_user else None,
             makro_product_id=fsn,
+            item_id=item_id,
             makro_url=data.get("makro_url"),
             title=data.get("title"),
             title_zh=data.get("title_zh"),
@@ -150,6 +169,8 @@ def collect_single_piggyback(
             barcode=data.get("barcode"),
             original_price=data.get("original_price", 0.0),
             original_mrp=data.get("original_mrp", 0.0),
+            original_seller=data.get("original_seller"),
+            seller_count=data.get("seller_count", 1),
             seller_sku=sku,
             target_price=target_p,
             target_mrp=target_m,
@@ -166,11 +187,21 @@ def collect_single_piggyback(
     db.commit()
     db.refresh(item)
 
-    # 自动触发单品 AI 合规检测
-    try:
-        MakroPiggybackService.check_compliance_for_item(item, db)
-    except Exception as comp_err:
-        logger.warning(f"采集后自动合规检测跳过: {comp_err}")
+    # 检查是否执行自动 AI 合规检测 (默认不自动检测，借鉴选品箱模式手动批量触发)
+    should_auto_compliance = False
+    if req.auto_compliance is not None:
+        should_auto_compliance = req.auto_compliance
+    else:
+        from ..models.setting import SystemSetting
+        setting_rec = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_auto_compliance").first()
+        if setting_rec and setting_rec.value:
+            should_auto_compliance = str(setting_rec.value).lower() in ["true", "1", "yes"]
+
+    if should_auto_compliance:
+        try:
+            MakroPiggybackService.check_compliance_for_item(item, db)
+        except Exception as comp_err:
+            logger.warning(f"采集后自动合规检测跳过: {comp_err}")
 
     return {
         "success": True,
@@ -195,6 +226,7 @@ def batch_collect_piggyback(
         try:
             data = MakroScraperService.resolve_piggyback_product(clean_text, store)
             fsn = data["makro_product_id"]
+            item_id = data.get("item_id")
 
             target_p, target_m = MakroPiggybackService.calculate_price(
                 original_price=data.get("original_price", 0.0),
@@ -209,7 +241,13 @@ def batch_collect_piggyback(
             ).first()
 
             if existing:
+                existing.item_id = item_id or existing.item_id
+                existing.makro_url = data.get("makro_url", existing.makro_url)
+                existing.image_url = data.get("image_url") or existing.image_url
                 existing.original_price = data.get("original_price", existing.original_price)
+                existing.original_mrp = data.get("original_mrp", existing.original_mrp)
+                existing.original_seller = data.get("original_seller") or existing.original_seller
+                existing.seller_count = data.get("seller_count") or existing.seller_count or 1
                 existing.target_price = target_p
                 existing.target_mrp = target_m
             else:
@@ -218,6 +256,7 @@ def batch_collect_piggyback(
                     store_id=store.id,
                     user_id=current_user.id if current_user else None,
                     makro_product_id=fsn,
+                    item_id=item_id,
                     makro_url=data.get("makro_url"),
                     title=data.get("title"),
                     title_zh=data.get("title_zh"),
@@ -228,6 +267,8 @@ def batch_collect_piggyback(
                     barcode=data.get("barcode"),
                     original_price=data.get("original_price", 0.0),
                     original_mrp=data.get("original_mrp", 0.0),
+                    original_seller=data.get("original_seller"),
+                    seller_count=data.get("seller_count", 1),
                     seller_sku=sku,
                     target_price=target_p,
                     target_mrp=target_m,

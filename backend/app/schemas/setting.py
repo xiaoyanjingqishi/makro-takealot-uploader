@@ -58,6 +58,9 @@ class SystemSettingsSchema(BaseModel):
     jev_model: Optional[str] = "jev-latest"
     jev_enabled: bool = True
 
+    # Makro 跟品合规检测开关配置
+    piggyback_auto_compliance: bool = False  # 采集跟品时是否自动执行双AI侵权检测 (默认关闭，手动触发)
+
 
 class CostPricingCalculateRequest(BaseModel):
     purchase_price_cny: float

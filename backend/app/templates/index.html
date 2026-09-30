@@ -2179,6 +2179,17 @@
                 <option :value="null">🏪 全部店铺</option>
                 <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
               </select>
+
+              <!-- 采集自动AI检测开关 (借鉴选品箱模式，默认关闭，支持手动批量质检) -->
+              <label class="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100/80 rounded-lg border border-slate-200/80 cursor-pointer select-none text-[11px] text-slate-700 transition" title="开启后每次采集商品将自动调用双AI合规检测；关闭则入库为待检测，支持勾选后手动批量质检">
+                <input 
+                  type="checkbox" 
+                  v-model="piggyback.autoCompliance" 
+                  @change="savePiggybackAutoCompliance"
+                  class="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+                />
+                <span :class="piggyback.autoCompliance ? 'font-bold text-indigo-700' : 'text-slate-600'">采集自动AI检测</span>
+              </label>
             </div>
 
             <!-- 右侧: 操作按钮组 -->
@@ -2317,10 +2328,14 @@
                         <img 
                           v-if="item.image_url" 
                           :src="item.image_url" 
+                          @error="item.image_url = ''"
                           alt="product" 
                           class="w-full h-full object-cover transition-transform group-hover/img:scale-110"
                         />
-                        <div v-else class="w-full h-full flex items-center justify-center text-slate-300 text-xs">无图</div>
+                        <div v-else class="w-full h-full flex flex-col items-center justify-center text-slate-300 text-[10px]">
+                          <span>🖼️</span>
+                          <span>暂无图</span>
+                        </div>
                       </div>
 
                       <!-- 文本信息 -->
@@ -2337,7 +2352,7 @@
                           </span>
                         </div>
                         <a 
-                          :href="item.makro_url || 'https://www.makro.co.za/p/' + item.makro_product_id" 
+                          :href="getMakroProductUrl(item)" 
                           target="_blank"
                           class="font-medium text-slate-900 hover:text-sky-600 line-clamp-1 block transition-colors leading-snug"
                           :title="item.title"
@@ -2347,6 +2362,12 @@
                         <p v-if="item.title_zh" class="text-[11px] text-slate-500 line-clamp-1">
                           🇨🇳 {{ item.title_zh }}
                         </p>
+                        <!-- 竞品与跟卖商家情报 -->
+                        <div class="text-[10.5px] text-slate-500 flex items-center space-x-1.5 pt-0.5">
+                          <span class="text-amber-500 font-bold">🏆</span>
+                          <span class="font-medium text-slate-700">占位卖家: {{ item.original_seller || '自营/当前' }}</span>
+                          <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-mono">共 {{ item.seller_count || 1 }} 家在售</span>
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -6823,7 +6844,8 @@
             },
             items: [],
             selectedIds: [],
-            selectAll: false
+            selectAll: false,
+            autoCompliance: localStorage.getItem('makro_piggyback_auto_compliance') === 'true'
           },
           loadingPiggyback: false,
           showCollectPiggybackModal: false,
@@ -7379,6 +7401,18 @@
             this.loadingPiggyback = false;
           }
         },
+        getMakroProductUrl(item) {
+          if (item.makro_url && item.makro_url.includes('/p/')) {
+            return item.makro_url;
+          }
+          const fsn = item.makro_product_id;
+          const itm = item.item_id || fsn;
+          return `https://www.makro.co.za/-/p/${itm}?pid=${fsn}`;
+        },
+        savePiggybackAutoCompliance() {
+          localStorage.setItem('makro_piggyback_auto_compliance', this.piggyback.autoCompliance ? 'true' : 'false');
+          this.showToast(this.piggyback.autoCompliance ? '已开启采集后自动AI侵权检测' : '已关闭自动检测，改为手动批量质检', 'info');
+        },
         changePiggybackState(st) {
           this.piggyback.status = st;
           this.loadPiggybackItems(1);
@@ -7399,10 +7433,14 @@
           if (!this.collectPiggybackForm.url_or_fsn) return;
           this.collectingPiggyback = true;
           try {
+            const payload = {
+              ...this.collectPiggybackForm,
+              auto_compliance: this.piggyback.autoCompliance
+            };
             const res = await fetch('/api/piggyback/collect', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(this.collectPiggybackForm)
+              body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || '采集失败');
@@ -7427,7 +7465,8 @@
               body: JSON.stringify({
                 items: lines,
                 store_id: this.batchCollectPiggybackForm.store_id,
-                price_strategy: this.batchCollectPiggybackForm.price_strategy
+                price_strategy: this.batchCollectPiggybackForm.price_strategy,
+                auto_compliance: this.piggyback.autoCompliance
               })
             });
             const data = await res.json();

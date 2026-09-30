@@ -12,6 +12,7 @@ class MakroPiggybackItem(Base):
 
     # Makro 目标原商品信息 (来自 searchProduct / 前台链接)
     makro_product_id = Column(String(100), nullable=False, index=True)  # FSN (如 GSPHPVTNMFHDAWV4)
+    item_id = Column(String(100), nullable=True)                        # 目录 Item ID (如 itmdda5c11c09523)
     makro_url = Column(String(500), nullable=True)
     title = Column(String(500), nullable=False)
     title_zh = Column(String(500), nullable=True)  # 智能中文翻译
@@ -21,10 +22,11 @@ class MakroPiggybackItem(Base):
     barcode = Column(String(100), nullable=True)
     model_number = Column(String(200), nullable=True)
 
-    # 竞品与原链接价格
+    # 竞品与原链接价格及跟卖情报
     original_price = Column(Float, default=0.0)      # 原链接当前在售售价 (SSP)
     original_mrp = Column(Float, default=0.0)        # 原链接划线零售价 (MRP)
-    original_seller = Column(String(100), nullable=True)
+    original_seller = Column(String(100), nullable=True) # 当前 Buybox 占位卖家名称
+    seller_count = Column(Integer, default=1)        # 当前在售/跟卖商家总数
 
     # 本店跟品设定
     seller_sku = Column(String(100), nullable=False, index=True)  # 本店自定义 SKU (如 GP2026100101)

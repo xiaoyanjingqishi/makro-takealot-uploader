@@ -93,6 +93,7 @@ def get_settings(
         jev_base_url=_get_str("jev_base_url", getattr(settings, "JEV_BASE_URL", "https://api.typesafe.ai")),
         jev_model=_get_str("jev_model", getattr(settings, "JEV_MODEL", "jev-latest")),
         jev_enabled=_get_bool("jev_enabled", getattr(settings, "JEV_ENABLED", True)),
+        piggyback_auto_compliance=_get_bool("piggyback_auto_compliance", False),
     )
 
 @router.post("", summary="保存或更新系统配置 (仅限系统管理员)")

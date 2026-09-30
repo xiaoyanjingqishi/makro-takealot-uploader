@@ -131,6 +131,16 @@ try:
             _conn.execute(text("ALTER TABLE products ADD COLUMN clean_mode VARCHAR(20) DEFAULT 'text'"))
             _conn.commit()
 
+        # 检查并补充 makro_piggyback_items.item_id 与 seller_count 字段
+        pb_tables = [row[0] for row in _conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='makro_piggyback_items'")).fetchall()]
+        if pb_tables:
+            pb_cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(makro_piggyback_items)")).fetchall()]
+            if "item_id" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN item_id VARCHAR(100)"))
+            if "seller_count" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN seller_count INTEGER DEFAULT 1"))
+            _conn.commit()
+
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_product_variants_product_id ON product_variants (product_id)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_status_id ON products (status, id DESC)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_compliance_status_id ON products (compliance_status, id DESC)"))

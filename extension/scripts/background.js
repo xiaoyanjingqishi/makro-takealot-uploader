@@ -204,7 +204,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       fetch(`${backendUrl}/api/piggyback/collect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url_or_fsn: urlOrFsn })
+        body: JSON.stringify({
+          url_or_fsn: urlOrFsn,
+          item_id: request.item_id || null,
+          title: request.title || null,
+          price: request.price || null,
+          mrp: request.mrp || null,
+          image_url: request.image_url || null,
+          seller_name: request.seller_name || null,
+          seller_count: request.seller_count || 1
+        })
       })
         .then(async (res) => {
           if (!res.ok) {
