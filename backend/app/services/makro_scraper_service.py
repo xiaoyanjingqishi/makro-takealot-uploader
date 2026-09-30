@@ -3,7 +3,6 @@ import json
 import logging
 import requests
 from typing import Optional, Dict, Any, Tuple
-from bs4 import BeautifulSoup
 from .translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
