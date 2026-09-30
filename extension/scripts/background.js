@@ -196,4 +196,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  // 5. Makro 官网买家端一键采集跟品
+  if (request.action === "COLLECT_MAKRO_PIGGYBACK") {
+    getBackendUrl().then((backendUrl) => {
+      const urlOrFsn = request.fsn || request.url;
+      fetch(`${backendUrl}/api/piggyback/collect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url_or_fsn: urlOrFsn })
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `HTTP ${res.status}`);
+          }
+          return res.json();
+        })
+        .then(data => sendResponse({ success: true, data }))
+        .catch(err => {
+          console.error("跟品采集推送到后端失败:", err);
+          sendResponse({ success: false, error: err.message });
+        });
+    });
+    return true;
+  }
 });
+

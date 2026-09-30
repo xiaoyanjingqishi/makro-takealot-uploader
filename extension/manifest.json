@@ -17,6 +17,7 @@
   "host_permissions": [
     "https://*.takealot.com/*",
     "https://seller.makro.co.za/*",
+    "https://*.makro.co.za/*",
     "http://*/*",
     "https://*/*"
   ],
@@ -55,6 +56,18 @@
       ],
       "js": [
         "scripts/content_makro.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.makro.co.za/*"
+      ],
+      "exclude_matches": [
+        "https://seller.makro.co.za/*"
+      ],
+      "js": [
+        "scripts/content_makro_buyer.js"
       ],
       "run_at": "document_idle"
     }

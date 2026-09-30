@@ -7,6 +7,7 @@ from .compliance_log import ComplianceArbitrationLog
 from .makro_listing import MakroListing
 from .makro_order import MakroOrder
 from .makro_audit_listing import MakroAuditListing
+from .makro_piggyback import MakroPiggybackItem
 
 __all__ = [
     "User",
@@ -20,5 +21,6 @@ __all__ = [
     "ComplianceArbitrationLog",
     "MakroListing",
     "MakroOrder",
-    "MakroAuditListing"
+    "MakroAuditListing",
+    "MakroPiggybackItem"
 ]
