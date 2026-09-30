@@ -227,7 +227,7 @@ def download_extension():
                 for root, dirs, files in os.walk(ext_dir):
                     for file in files:
                         full_path = Path(root) / file
-                        arc_name = full_path.relative_to(ext_dir.parent)
+                        arc_name = full_path.relative_to(ext_dir)
                         z.write(full_path, arc_name)
     if not zip_path.exists():
         return Response(content="Extension package not found", status_code=404)
@@ -235,12 +235,16 @@ def download_extension():
         path=str(zip_path),
         filename="makro-extension-v1.0.0.zip",
         media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=makro-extension-v1.0.0.zip"}
+        headers={
+            "Content-Disposition": "attachment; filename=makro-extension-v1.0.0.zip",
+            "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
     )
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard():
+    html_content = ""
     if TEMPLATE_PATH.exists():
         try:
             cur_mtime = TEMPLATE_PATH.stat().st_mtime
@@ -248,11 +252,18 @@ def dashboard():
                 with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
                     _template_cache["content"] = f.read()
                 _template_cache["mtime"] = cur_mtime
-            return _template_cache["content"]
+            html_content = _template_cache["content"]
         except Exception:
             with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-                return f.read()
-    return "<h1>Makro-Takealot System Backend Online</h1><p><a href='/api/docs'>API Docs</a></p>"
+                html_content = f.read()
+    else:
+        html_content = "<h1>Makro-Takealot System Backend Online</h1><p><a href='/api/docs'>API Docs</a></p>"
+    
+    resp = HTMLResponse(content=html_content)
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 CALCULATOR_PATH = Path(__file__).resolve().parent.parent / "tools" / "makro_pricing_calculator.html"
 
