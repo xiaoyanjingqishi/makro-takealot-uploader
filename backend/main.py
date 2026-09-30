@@ -151,6 +151,11 @@ try:
                 _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN last_reprice_at DATETIME"))
             if "last_reprice_result" not in pb_cols:
                 _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN last_reprice_result VARCHAR(200)"))
+            if "buybox_status" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN buybox_status VARCHAR(50) DEFAULT 'UNKNOWN'"))
+            if "last_competitor_price" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN last_competitor_price FLOAT"))
+            _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_makro_piggyback_buybox_status ON makro_piggyback_items (buybox_status)"))
             _conn.commit()
 
         # 检查并创建 makro_reprice_logs 表

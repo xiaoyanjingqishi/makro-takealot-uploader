@@ -99,6 +99,8 @@ class PiggybackItemResponse(BaseModel):
     height: Optional[float] = None
     compliance_status: str
     compliance_details: Optional[Dict[str, Any]] = None
+    buybox_status: Optional[str] = "UNKNOWN"
+    last_competitor_price: Optional[float] = None
     status: str
     makro_listing_id: Optional[str] = None
     error_message: Optional[str] = None
@@ -109,6 +111,16 @@ class PiggybackItemResponse(BaseModel):
         "from_attributes": True,
         "protected_namespaces": ()
     }
+
+class BatchSetFloorRequest(BaseModel):
+    ids: List[int] = Field(..., description="选中的跟品商品 ID 列表")
+    mode: str = Field("PERCENT", description="PERCENT(原价百分比), OFFSET(原价减去固定额), FIXED(统一定价)")
+    value: float = Field(..., description="计算数值，例如 75 表示 75%, 20 表示减 20 兰特, 或 199 统一底价")
+    auto_enable_reprice: Optional[bool] = Field(True, description="是否自动开启自动跟价")
+
+class CheckExistenceRequest(BaseModel):
+    fsns: List[str] = Field(..., description="需要排重核验的 Makro FSN / PID 列表")
+    store_id: Optional[int] = Field(None, description="店铺 ID")
 
 class RepriceLogResponse(BaseModel):
     id: int

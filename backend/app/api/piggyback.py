@@ -19,6 +19,8 @@ from ..schemas.piggyback import (
     BatchCheckComplianceRequest,
     BatchPublishPiggybackRequest,
     BatchDeletePiggybackRequest,
+    BatchSetFloorRequest,
+    CheckExistenceRequest,
     PiggybackItemResponse
 )
 from ..services.makro_scraper_service import MakroScraperService
@@ -84,6 +86,8 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         "auto_reprice": item.auto_reprice if item.auto_reprice is not None else True,
         "last_reprice_at": item.last_reprice_at.strftime("%Y-%m-%d %H:%M:%S") if item.last_reprice_at else None,
         "last_reprice_result": item.last_reprice_result or "",
+        "buybox_status": item.buybox_status or "UNKNOWN",
+        "last_competitor_price": item.last_competitor_price,
         "price_strategy": item.price_strategy or "MINUS_1",
         "inventory": item.inventory or 99,
         "lead_time_days": item.lead_time_days or 14,
@@ -409,14 +413,127 @@ def batch_collect_piggyback(
         "failed_items": failed_items
     }
 
+@router.get("/kpi-stats", summary="获取跟品与跟价运营驾驶舱 6 大核心 KPI 统计")
+def get_piggyback_kpi_stats(
+    store_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = db.query(MakroPiggybackItem)
+    if current_user and current_user.role != "ADMIN":
+        query = query.filter(MakroPiggybackItem.user_id == current_user.id)
+    if isinstance(store_id, int):
+        query = query.filter(MakroPiggybackItem.store_id == store_id)
+
+    total_count = query.count()
+    active_query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+    active_count = active_query.count()
+
+    winning_count = active_query.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
+    losing_count = active_query.filter(MakroPiggybackItem.buybox_status == "LOSING").count()
+    floor_hit_count = active_query.filter(MakroPiggybackItem.buybox_status == "FLOOR_HIT").count()
+    missing_floor_count = active_query.filter(
+        (MakroPiggybackItem.min_price_floor == None) | (MakroPiggybackItem.min_price_floor <= 0)
+    ).count()
+
+    staging_count = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
+    blocked_count = query.filter(
+        (MakroPiggybackItem.status == "FAILED") |
+        (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
+    ).count()
+
+    return {
+        "total_count": total_count,
+        "active_count": active_count,
+        "winning_count": winning_count,
+        "losing_count": losing_count,
+        "floor_hit_count": floor_hit_count,
+        "missing_floor_count": missing_floor_count,
+        "staging_count": staging_count,
+        "blocked_count": blocked_count
+    }
+
+@router.post("/batch-set-floor", summary="批量公式设置保本底价并智能联动跟价")
+def batch_set_floor(
+    req: BatchSetFloorRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="请至少选择一件商品")
+
+    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    updated_count = 0
+    mode = (req.mode or "PERCENT").upper()
+    val = float(req.value or 0.0)
+
+    for item in items:
+        base_p = float(item.original_price or item.target_price or 0.0)
+        if mode == "PERCENT":
+            new_floor = round(base_p * (val / 100.0), 2)
+        elif mode == "OFFSET":
+            new_floor = max(round(base_p - val, 2), 1.0)
+        elif mode == "FIXED":
+            new_floor = max(round(val, 2), 1.0)
+        else:
+            new_floor = round(base_p * 0.7, 2)
+
+        item.min_price_floor = new_floor
+        # 保护当前售价不得低于新设定的底价
+        if item.target_price and item.target_price < new_floor:
+            item.target_price = new_floor
+        if req.auto_enable_reprice:
+            item.auto_reprice = True
+        updated_count += 1
+
+    db.commit()
+    return {
+        "success": True,
+        "total_requested": len(req.ids),
+        "updated_count": updated_count
+    }
+
+@router.post("/check-existence", summary="核验一组 FSN/PID 是否已存在于跟品库中 (用于扩展排重感知)")
+def check_piggyback_existence(
+    req: CheckExistenceRequest,
+    db: Session = Depends(get_db)
+):
+    if not req.fsns:
+        return {"exists": {}}
+
+    fsn_list = [f.strip().upper() for f in req.fsns if f and f.strip()]
+    if not fsn_list:
+        return {"exists": {}}
+
+    query = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.makro_product_id.in_(fsn_list))
+    if isinstance(req.store_id, int):
+        query = query.filter(MakroPiggybackItem.store_id == req.store_id)
+
+    matched = query.all()
+    res = {}
+    for it in matched:
+        res[it.makro_product_id] = {
+            "id": it.id,
+            "status": it.status,
+            "seller_sku": it.seller_sku,
+            "target_price": it.target_price,
+            "buybox_status": it.buybox_status or "UNKNOWN",
+            "auto_reprice": it.auto_reprice,
+            "min_price_floor": it.min_price_floor or 0.0
+        }
+
+    return {"exists": res}
+
 @router.get("/items", summary="获取跟品池商品列表与多维统计")
 def list_piggyback_items(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status: Optional[str] = Query(None, description="ALL, PENDING, ACTIVE, FAILED"),
-    compliance_status: Optional[str] = Query(None, description="ALL, SAFE, RISK, PROHIBITED, PENDING_CHECK"),
-    store_id: Optional[int] = Query(None),
-    search: Optional[str] = Query(None),
+    page: int = 1,
+    page_size: int = 20,
+    status: Optional[str] = None,
+    stage: Optional[str] = None,
+    buybox_status: Optional[str] = None,
+    compliance_status: Optional[str] = None,
+    store_id: Optional[int] = None,
+    search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -426,27 +543,45 @@ def list_piggyback_items(
     if current_user and current_user.role != "ADMIN":
         query = query.filter(MakroPiggybackItem.user_id == current_user.id)
 
-    if store_id:
+    if isinstance(store_id, int):
         query = query.filter(MakroPiggybackItem.store_id == store_id)
 
     # 全局总数统计 (用于顶部统计卡片)
     stat_query = db.query(MakroPiggybackItem)
     if current_user and current_user.role != "ADMIN":
         stat_query = stat_query.filter(MakroPiggybackItem.user_id == current_user.id)
-    if store_id:
+    if isinstance(store_id, int):
         stat_query = stat_query.filter(MakroPiggybackItem.store_id == store_id)
 
     total_all = stat_query.count()
-    pending_count = stat_query.filter(MakroPiggybackItem.status == "PENDING").count()
-    active_count = stat_query.filter(MakroPiggybackItem.status == "ACTIVE").count()
+    pending_count = stat_query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
+    active_count = stat_query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"])).count()
     failed_count = stat_query.filter(MakroPiggybackItem.status == "FAILED").count()
     safe_count = stat_query.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
     risk_count = stat_query.filter(MakroPiggybackItem.compliance_status == "RISK").count()
     prohibited_count = stat_query.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
 
-    # 应用筛选条件
-    if status and status != "ALL":
+    # 应用阶段漏斗筛选 (STAGING, ACTIVE_MONITOR, BLOCKED_FAILED)
+    if stage == "STAGING":
+        query = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
+    elif stage == "ACTIVE_MONITOR":
+        query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+    elif stage == "BLOCKED_FAILED":
+        query = query.filter(
+            (MakroPiggybackItem.status == "FAILED") |
+            (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
+        )
+    elif status and status != "ALL":
         query = query.filter(MakroPiggybackItem.status == status)
+
+    # 应用 Buybox 战况与缺底价筛选
+    if buybox_status and buybox_status != "ALL":
+        if buybox_status == "MISSING_FLOOR":
+            query = query.filter(
+                (MakroPiggybackItem.min_price_floor == None) | (MakroPiggybackItem.min_price_floor <= 0)
+            )
+        else:
+            query = query.filter(MakroPiggybackItem.buybox_status == buybox_status)
 
     if compliance_status and compliance_status != "ALL":
         query = query.filter(MakroPiggybackItem.compliance_status == compliance_status)
@@ -480,7 +615,7 @@ def list_piggyback_items(
         "items": [_format_piggyback_item(it) for it in items]
     }
 
-@router.put("/items/{item_id}", summary="修改单件跟品商品参数")
+@router.put("/items/{item_id}", summary="修改单件跟品商品参数 (支持售价与底价极速保存并联动推送)")
 def update_piggyback_item(
     item_id: int,
     req: PiggybackItemUpdate,
@@ -491,14 +626,24 @@ def update_piggyback_item(
     if not item:
         raise HTTPException(status_code=404, detail="未找到该跟品商品")
 
+    old_price = item.target_price
+    price_changed = False
+
     if req.seller_sku is not None:
         item.seller_sku = req.seller_sku.strip()
     if req.target_price is not None:
-        item.target_price = float(req.target_price)
+        new_price = float(req.target_price)
+        if abs(new_price - (old_price or 0.0)) >= 0.01:
+            price_changed = True
+        item.target_price = new_price
     if req.target_mrp is not None:
         item.target_mrp = float(req.target_mrp)
     if req.min_price_floor is not None:
         item.min_price_floor = float(req.min_price_floor)
+        # 若当前售价低于新底价，自动抬升至底价
+        if item.target_price and item.target_price < item.min_price_floor:
+            item.target_price = item.min_price_floor
+            price_changed = True
     if req.max_price_ceiling is not None:
         item.max_price_ceiling = float(req.max_price_ceiling)
     if req.auto_reprice is not None:
@@ -522,9 +667,23 @@ def update_piggyback_item(
     if req.height is not None:
         item.height = float(req.height)
 
+    # 若已在售且售价实质变动，尝试联动官方 API 同步新售价
+    push_msg = None
+    if price_changed and item.status in ["ACTIVE", "PUBLISHED"]:
+        try:
+            from ..services.auto_reprice_service import AutoRepriceService
+            store = item.store or _get_target_store(db, item.store_id)
+            AutoRepriceService._push_price_to_makro(item, store, item.target_price)
+            item.last_reprice_at = datetime.now()
+            item.last_reprice_result = f"MANUAL_SYNC: 手动改价为 R{item.target_price} 并成功同步官方"
+            push_msg = "已同步推送至 Makro 官方 Listing"
+        except Exception as e:
+            logger.warning(f"手动改价同步 Makro 官方失败 [{item.seller_sku}]: {e}")
+            push_msg = f"本地保存成功，但官方同步失败: {str(e)[:100]}"
+
     db.commit()
     db.refresh(item)
-    return {"success": True, "item": _format_piggyback_item(item)}
+    return {"success": True, "item": _format_piggyback_item(item), "sync_message": push_msg}
 
 @router.post("/check-compliance/{item_id}", summary="对单件商品执行 AI 侵权与合规检测")
 def check_single_compliance(

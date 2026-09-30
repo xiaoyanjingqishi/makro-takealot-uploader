@@ -2129,26 +2129,119 @@
       <div v-if="currentTab === 'piggyback'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
         <!-- 顶部固定控制区 -->
         <div class="shrink-0 space-y-2 pb-2">
-          <!-- 统计与操作栏 -->
+          <!-- 运营驾驶舱 6 大核心 KPI 战况卡片 -->
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            <!-- 1. 跟品总池 -->
+            <div 
+              @click="selectKpiFilter('total')"
+              :class="piggyback.stage === 'ALL' && piggyback.buybox_status === 'ALL' ? 'ring-2 ring-sky-500 bg-sky-50/60 shadow-xs' : 'hover:border-sky-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium">📦 跟品总池</span>
+                <span class="text-[9.5px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded-full font-mono">全量</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-slate-800 group-hover:text-sky-600 transition-colors">
+                {{ piggyback.kpi.total_count }}
+              </div>
+            </div>
+
+            <!-- 2. 在售挂靠 -->
+            <div 
+              @click="selectKpiFilter('active')"
+              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'ALL' ? 'ring-2 ring-emerald-500 bg-emerald-50/60 shadow-xs' : 'hover:border-emerald-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium text-emerald-800">🟢 在售挂靠</span>
+                <span class="text-[9.5px] bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded-full font-mono font-semibold">Active</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-emerald-600 group-hover:text-emerald-700 transition-colors">
+                {{ piggyback.kpi.active_count }}
+              </div>
+            </div>
+
+            <!-- 3. Buybox 占位中 -->
+            <div 
+              @click="selectKpiFilter('winning')"
+              :class="piggyback.buybox_status === 'WINNING' ? 'ring-2 ring-emerald-600 bg-emerald-50/70 shadow-xs' : 'hover:border-emerald-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium text-emerald-900 font-bold">🥇 占位赢车</span>
+                <span class="text-[9.5px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded-full font-bold">最低价</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-emerald-700 group-hover:scale-105 transition-transform origin-left">
+                {{ piggyback.kpi.winning_count }}
+              </div>
+            </div>
+
+            <!-- 4. 丢车需调价 -->
+            <div 
+              @click="selectKpiFilter('losing')"
+              :class="piggyback.buybox_status === 'LOSING' ? 'ring-2 ring-rose-500 bg-rose-50/70 shadow-xs' : 'hover:border-rose-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium text-rose-800 font-bold">🚨 丢车需调价</span>
+                <span class="text-[9.5px] bg-rose-100 text-rose-700 px-1.5 py-0.2 rounded-full font-bold animate-pulse">竞对更低</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-rose-600 group-hover:scale-105 transition-transform origin-left">
+                {{ piggyback.kpi.losing_count }}
+              </div>
+            </div>
+
+            <!-- 5. 底价拦截中 -->
+            <div 
+              @click="selectKpiFilter('floor_hit')"
+              :class="piggyback.buybox_status === 'FLOOR_HIT' ? 'ring-2 ring-amber-500 bg-amber-50/70 shadow-xs' : 'hover:border-amber-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium text-amber-900 font-bold">🛡️ 底价坚守中</span>
+                <span class="text-[9.5px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded-full font-bold">防亏损</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-amber-600 group-hover:scale-105 transition-transform origin-left">
+                {{ piggyback.kpi.floor_hit_count }}
+              </div>
+            </div>
+
+            <!-- 6. 未设底价高危 -->
+            <div 
+              @click="selectKpiFilter('missing_floor')"
+              :class="piggyback.buybox_status === 'MISSING_FLOOR' ? 'ring-2 ring-orange-500 bg-orange-50/70 shadow-xs' : 'hover:border-orange-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium text-orange-900 font-bold">⚠️ 缺底价高危</span>
+                <span class="text-[9.5px] bg-orange-100 text-orange-800 px-1.5 py-0.2 rounded-full font-bold">风险</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-orange-600 group-hover:scale-105 transition-transform origin-left">
+                {{ piggyback.kpi.missing_floor_count }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 漏斗阶段与操作栏 -->
           <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-3 flex items-center justify-between flex-wrap gap-2.5">
-            <!-- 左侧: 状态筛选与合规筛选 -->
+            <!-- 左侧: 漏斗阶段 Tab 与风控筛选 -->
             <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
-              <!-- 跟品状态按钮组 -->
+              <!-- 漏斗三阶段标签组 -->
               <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
                 <button 
-                  v-for="st in [
-                    { key: 'ALL', label: '全部', count: piggyback.stats.total_all },
-                    { key: 'PENDING', label: '待跟品', count: piggyback.stats.pending_count },
-                    { key: 'ACTIVE', label: '在售中', count: piggyback.stats.active_count },
-                    { key: 'FAILED', label: '失败', count: piggyback.stats.failed_count }
+                  v-for="stg in [
+                    { key: 'ALL', label: '全部', count: piggyback.kpi.total_count },
+                    { key: 'STAGING', label: '待处理池', count: piggyback.kpi.staging_count },
+                    { key: 'ACTIVE_MONITOR', label: '在售跟价监控', count: piggyback.kpi.active_count },
+                    { key: 'BLOCKED_FAILED', label: '异常拦截', count: piggyback.kpi.blocked_count }
                   ]"
-                  :key="st.key"
-                  @click="changePiggybackState(st.key)"
-                  :class="piggyback.status === st.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
+                  :key="stg.key"
+                  @click="changePiggybackStage(stg.key)"
+                  :class="piggyback.stage === stg.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
                   class="px-2.5 py-1 text-xs rounded-md transition-all flex items-center space-x-1 cursor-pointer select-none"
                 >
-                  <span>{{ st.label }}</span>
-                  <span class="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 text-[10px] rounded-full font-mono">{{ st.count }}</span>
+                  <span>{{ stg.label }}</span>
+                  <span class="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 text-[10px] rounded-full font-mono">{{ stg.count }}</span>
                 </button>
               </div>
 
@@ -2235,14 +2328,15 @@
                 <span>批量导入</span>
               </button>
 
-              <!-- 批量比价 -->
+              <!-- 公式算底价 -->
               <button 
-                @click="showBatchPricingPiggybackModal = true"
+                @click="openBatchFloorModal"
                 :disabled="piggyback.selectedIds.length === 0"
                 class="px-2.5 py-1.5 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title="按比例或固定差额公式批量配置保本底价"
               >
-                <span>⚡</span>
-                <span>批量比价 ({{ piggyback.selectedIds.length }})</span>
+                <span>🛡️</span>
+                <span>公式算底价 ({{ piggyback.selectedIds.length }})</span>
               </button>
 
               <!-- 批量自动跟价巡检 -->
@@ -2388,40 +2482,118 @@
                           <span>📦 变体:</span>
                           <span>{{ item.variant_name }}</span>
                         </div>
-                        <!-- 竞品与跟卖商家情报 -->
-                        <div class="text-[10.5px] text-slate-500 flex items-center space-x-1.5 pt-0.5">
-                          <span class="text-amber-500 font-bold">🏆</span>
-                          <span class="font-medium text-slate-700">占位卖家: {{ item.original_seller || '自营/当前' }}</span>
+                        <!-- 竞品与跟卖商家情报 + Buybox 状态 -->
+                        <div class="flex items-center space-x-1.5 flex-wrap gap-y-1 pt-0.5">
+                          <span 
+                            v-if="item.buybox_status === 'WINNING'" 
+                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300"
+                            title="本店当前持有黄金购物车 (最低在售价)"
+                          >
+                            🥇 占位赢车
+                          </span>
+                          <span 
+                            v-else-if="item.buybox_status === 'LOSING'" 
+                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse"
+                            :title="'竞对价格更低，已失守购物车！当前竞对价: R' + (item.last_competitor_price || item.original_price)"
+                          >
+                            🚨 丢车需调价
+                          </span>
+                          <span 
+                            v-else-if="item.buybox_status === 'FLOOR_HIT'" 
+                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300"
+                            :title="'竞对报价过低已触达保本底价 R' + item.min_price_floor + '，坚守不降防止亏损'"
+                          >
+                            🛡️ 保本底价拦截
+                          </span>
+                          <span 
+                            v-else-if="item.buybox_status === 'NO_COMPETITOR'" 
+                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200"
+                          >
+                            ⚪ 独家在售
+                          </span>
+
+                          <span class="text-[10.5px] text-slate-500">
+                            🏆 当前Buybox: <strong class="text-slate-700 font-semibold">{{ item.original_seller || '自营/当前' }}</strong>
+                          </span>
                           <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-mono">共 {{ item.seller_count || 1 }} 家在售</span>
                         </div>
                       </div>
                     </div>
                   </td>
 
-                  <!-- 价格与智能比价 -->
+                  <!-- 价格与智能比价 (支持行内单击极速快改与缺底价预警) -->
                   <td class="py-3 px-3 align-top">
                     <div class="space-y-1 font-mono">
                       <div class="flex items-center justify-between text-[11px] text-slate-500">
                         <span>原网在售价:</span>
                         <span class="font-medium">R {{ item.original_price.toFixed(2) }}</span>
                       </div>
-                      <div class="flex items-center justify-between">
-                        <span class="text-[11px] font-bold text-slate-700">本店跟品价:</span>
-                        <span class="text-xs font-bold text-emerald-600">R {{ item.target_price.toFixed(2) }}</span>
-                      </div>
-                      <!-- 差价优势徽章 -->
-                      <div class="flex items-center justify-between text-[10px]">
-                        <span class="text-slate-400">划线价: R {{ item.target_mrp.toFixed(2) }}</span>
-                        <span 
-                          v-if="item.original_price > item.target_price"
-                          class="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold"
+
+                      <!-- 本店跟品价 (行内单击快改) -->
+                      <div class="flex items-center justify-between group/price">
+                        <span class="text-[11px] font-bold text-slate-700">跟品售价:</span>
+                        <div v-if="inlineEditing.id === item.id && inlineEditing.field === 'target_price'" class="flex items-center space-x-1">
+                          <span class="text-xs font-bold text-emerald-600">R</span>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            v-model="inlineEditing.tempValue" 
+                            @keyup.enter="saveInlineEdit(item)"
+                            @keyup.esc="cancelInlineEdit"
+                            @blur="saveInlineEdit(item)"
+                            class="w-18 px-1 py-0.5 text-xs font-bold text-emerald-700 bg-white border-2 border-emerald-500 rounded focus:outline-none shadow-xs font-mono"
+                            ref="inlineInput"
+                          />
+                        </div>
+                        <div 
+                          v-else 
+                          @click="startInlineEdit(item, 'target_price')"
+                          :class="item._flashSuccess === 'target_price' ? 'bg-emerald-200 ring-2 ring-emerald-400' : 'hover:bg-emerald-50/80 hover:border-emerald-300'"
+                          class="cursor-pointer px-1 py-0.5 rounded border border-transparent transition-all flex items-center space-x-1"
+                          title="单击立即修改售价 (按Enter直接保存并同步官方)"
                         >
-                          -R{{ (item.original_price - item.target_price).toFixed(2) }}
-                        </span>
-                        <span v-else class="text-slate-400">平价</span>
+                          <span class="text-xs font-bold text-emerald-600">R {{ item.target_price.toFixed(2) }}</span>
+                          <span class="text-[10px] text-slate-400 group-hover/price:text-emerald-600 transition-colors opacity-0 group-hover/price:opacity-100">✏️</span>
+                        </div>
                       </div>
+
+                      <!-- 保本底价 (行内单击快改 + 缺底价黄色告警) -->
+                      <div class="flex items-center justify-between group/floor">
+                        <span class="text-[10.5px] text-slate-500">保本底价:</span>
+                        <div v-if="inlineEditing.id === item.id && inlineEditing.field === 'min_price_floor'" class="flex items-center space-x-1">
+                          <span class="text-[11px] font-bold text-amber-600">R</span>
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            v-model="inlineEditing.tempValue" 
+                            @keyup.enter="saveInlineEdit(item)"
+                            @keyup.esc="cancelInlineEdit"
+                            @blur="saveInlineEdit(item)"
+                            class="w-18 px-1 py-0.5 text-xs font-bold text-amber-700 bg-white border-2 border-amber-500 rounded focus:outline-none shadow-xs font-mono"
+                            ref="inlineInput"
+                          />
+                        </div>
+                        <div 
+                          v-else 
+                          @click="startInlineEdit(item, 'min_price_floor')"
+                          :class="item._flashSuccess === 'min_price_floor' ? 'bg-amber-200 ring-2 ring-amber-400' : 'hover:bg-amber-50/80 hover:border-amber-300'"
+                          class="cursor-pointer px-1 py-0.5 rounded border border-transparent transition-all flex items-center space-x-1"
+                          title="单击立即设置/修改保本底价"
+                        >
+                          <template v-if="item.min_price_floor > 0">
+                            <span class="text-xs font-semibold text-slate-700">R {{ item.min_price_floor.toFixed(2) }}</span>
+                            <span class="text-[10px] text-slate-400 group-hover/floor:text-amber-600 transition-colors opacity-0 group-hover/floor:opacity-100">✏️</span>
+                          </template>
+                          <template v-else>
+                            <span class="px-1.5 py-0.2 bg-amber-100 text-amber-800 border border-amber-300 rounded text-[10px] font-bold animate-pulse">
+                              ⚠️ 缺底价
+                            </span>
+                          </template>
+                        </div>
+                      </div>
+
                       <!-- 自动跟价状态与控制 -->
-                      <div class="flex items-center justify-between text-[10px] pt-1 border-t border-slate-100 mt-1">
+                      <div class="flex items-center justify-between text-[10px] pt-1 border-t border-slate-100 mt-0.5">
                         <span 
                           @click="toggleItemAutoReprice(item)"
                           class="cursor-pointer px-1.5 py-0.2 rounded text-[10px] font-medium border transition-colors select-none"
@@ -2430,7 +2602,13 @@
                         >
                           {{ item.auto_reprice ? '🤖 跟价: 开' : '⚪ 跟价: 关' }}
                         </span>
-                        <span class="text-slate-400" :title="'保本底价: R' + (item.min_price_floor || 0)">底: R{{ (item.min_price_floor || 0).toFixed(0) }}</span>
+                        <span 
+                          v-if="item.original_price > item.target_price"
+                          class="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold text-[9.5px]"
+                        >
+                          -R{{ (item.original_price - item.target_price).toFixed(2) }}
+                        </span>
+                        <span v-else class="text-slate-400 text-[9.5px]">平价</span>
                       </div>
                       <div v-if="item.last_reprice_result" class="text-[9.5px] text-slate-400 truncate max-w-[170px]" :title="'上次跟价: ' + item.last_reprice_result + (item.last_reprice_at ? ' (' + item.last_reprice_at + ')' : '')">
                         ⏱️ {{ item.last_reprice_result }}
@@ -2580,6 +2758,82 @@
             </div>
           </div>
         </div>
+
+        <!-- 底部吸附毛玻璃批量工具栏 (当勾选任何商品时平滑滑出) -->
+        <transition name="slide-up">
+          <div 
+            v-if="piggyback.selectedIds.length > 0"
+            class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900/90 backdrop-blur-md text-white px-5 py-2.5 rounded-2xl shadow-2xl border border-slate-700/80 flex items-center space-x-3 transition-all animate-in fade-in slide-in-from-bottom-5"
+          >
+            <div class="flex items-center space-x-1.5 text-xs font-medium pr-3 border-r border-slate-700/80">
+              <span class="text-sky-400 font-bold font-mono text-sm">{{ piggyback.selectedIds.length }}</span>
+              <span class="text-slate-300">已选</span>
+            </div>
+
+            <!-- 批量一键挂靠 -->
+            <button 
+              @click="handleBatchPublishPiggyback"
+              class="px-3 py-1.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition cursor-pointer"
+            >
+              <span>🚀</span>
+              <span>一键跟卖</span>
+            </button>
+
+            <!-- 批量公式算底价 -->
+            <button 
+              @click="openBatchFloorModal"
+              class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition cursor-pointer"
+            >
+              <span>🛡️</span>
+              <span>公式算底价</span>
+            </button>
+
+            <!-- 批量立即跟价 -->
+            <button 
+              @click="triggerBatchReprice"
+              :disabled="runningBatchReprice"
+              class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition cursor-pointer disabled:opacity-50"
+            >
+              <span>⚡</span>
+              <span>{{ runningBatchReprice ? '跟价中...' : '立即跟价' }}</span>
+            </button>
+
+            <!-- 批量开关跟价 -->
+            <div class="flex items-center space-x-1 bg-slate-800/80 p-0.5 rounded-lg border border-slate-700">
+              <button 
+                @click="batchToggleAutoReprice(true)"
+                class="px-2 py-1 hover:bg-slate-700 text-sky-300 rounded text-[11px] font-medium transition cursor-pointer"
+                title="批量开启自动跟价"
+              >
+                🤖 开启跟价
+              </button>
+              <button 
+                @click="batchToggleAutoReprice(false)"
+                class="px-2 py-1 hover:bg-slate-700 text-slate-400 rounded text-[11px] font-medium transition cursor-pointer"
+                title="批量暂停自动跟价"
+              >
+                ⚪ 关闭跟价
+              </button>
+            </div>
+
+            <!-- 批量AI质检 -->
+            <button 
+              @click="handleBatchCheckCompliance"
+              class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium flex items-center space-x-1 transition cursor-pointer"
+            >
+              <span>🔍 质检</span>
+            </button>
+
+            <!-- 取消选择 -->
+            <button 
+              @click="piggyback.selectedIds = []; piggyback.selectAll = false;"
+              class="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer ml-1 text-xs"
+              title="取消选择"
+            >
+              ✕ 取消
+            </button>
+          </div>
+        </transition>
       </div>
 
 
@@ -6634,6 +6888,101 @@
       </div>
     </div>
 
+    <!-- ================= 弹窗: 批量保本底价计算器 ================= -->
+    <div v-if="showBatchFloorModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+        <div class="p-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="text-xl">🛡️</span>
+            <div>
+              <h3 class="font-bold text-sm">批量公式计算保本底价</h3>
+              <p class="text-[11px] text-amber-100">已选择 {{ piggyback.selectedIds.length }} 件商品，防止恶性内卷与穿仓</p>
+            </div>
+          </div>
+          <button @click="showBatchFloorModal = false" class="text-white/80 hover:text-white text-base cursor-pointer">✕</button>
+        </div>
+
+        <div class="p-5 space-y-3.5 text-xs">
+          <!-- 模式选择 -->
+          <div class="space-y-2">
+            <label class="font-bold text-slate-700 block">计算公式模式:</label>
+            
+            <!-- 模式 A: 原价百分比 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-xl border cursor-pointer transition select-none"
+              :class="batchFloorForm.mode === 'PERCENT' ? 'border-amber-500 bg-amber-50/60 shadow-2xs' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="radio" value="PERCENT" v-model="batchFloorForm.mode" class="mt-0.5 text-amber-600 focus:ring-amber-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">原价比例折算 (最常用)</span>
+                <p class="text-slate-500 text-[11px]">保本底价 = 原网在售价 × [ X% ]</p>
+                <div v-if="batchFloorForm.mode === 'PERCENT'" class="mt-2 flex items-center space-x-2">
+                  <span class="text-slate-600">按原价的:</span>
+                  <input type="number" v-model.number="batchFloorForm.value" min="1" max="150" class="w-20 px-2 py-1 border border-slate-300 rounded font-mono font-bold text-amber-700 text-xs" />
+                  <span class="font-bold text-slate-700">% 设为保本底线</span>
+                </div>
+              </div>
+            </label>
+
+            <!-- 模式 B: 原价减固定金额 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-xl border cursor-pointer transition select-none"
+              :class="batchFloorForm.mode === 'OFFSET' ? 'border-amber-500 bg-amber-50/60 shadow-2xs' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="radio" value="OFFSET" v-model="batchFloorForm.mode" class="mt-0.5 text-amber-600 focus:ring-amber-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">固定差额下浮</span>
+                <p class="text-slate-500 text-[11px]">保本底价 = 原网在售价 - [ 固定兰特 ]</p>
+                <div v-if="batchFloorForm.mode === 'OFFSET'" class="mt-2 flex items-center space-x-2">
+                  <span class="text-slate-600">原价下浮: R</span>
+                  <input type="number" v-model.number="batchFloorForm.value" min="0" class="w-20 px-2 py-1 border border-slate-300 rounded font-mono font-bold text-amber-700 text-xs" />
+                </div>
+              </div>
+            </label>
+
+            <!-- 模式 C: 统一保本底价 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-xl border cursor-pointer transition select-none"
+              :class="batchFloorForm.mode === 'FIXED' ? 'border-amber-500 bg-amber-50/60 shadow-2xs' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="radio" value="FIXED" v-model="batchFloorForm.mode" class="mt-0.5 text-amber-600 focus:ring-amber-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">统一固定保本底价</span>
+                <p class="text-slate-500 text-[11px]">所选商品强制设为固定的保本底价</p>
+                <div v-if="batchFloorForm.mode === 'FIXED'" class="mt-2 flex items-center space-x-2">
+                  <span class="text-slate-600">固定底价: R</span>
+                  <input type="number" v-model.number="batchFloorForm.value" min="1" class="w-20 px-2 py-1 border border-slate-300 rounded font-mono font-bold text-amber-700 text-xs" />
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <!-- 自动开启跟价联动 -->
+          <label class="flex items-center space-x-2 p-2.5 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-200 cursor-pointer select-none">
+            <input type="checkbox" v-model="batchFloorForm.auto_enable_reprice" class="text-amber-600 focus:ring-amber-500 rounded cursor-pointer" />
+            <span class="text-slate-700 font-medium">配置底价后，自动开启选中商品的自动跟价</span>
+          </label>
+
+          <!-- 实时效果预览 -->
+          <div v-if="samplePreviewFloor" class="p-2.5 bg-amber-50/70 rounded-xl border border-amber-200 text-amber-900 text-[11px] space-y-1">
+            <div class="font-bold flex items-center justify-between">
+              <span>💡 效果预览 (以首件已选商品为例):</span>
+              <span class="font-mono text-slate-500 font-normal">原价 R {{ samplePreviewFloor.orig.toFixed(2) }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs pt-0.5">
+              <span>计算后的保本底价:</span>
+              <span class="font-bold font-mono text-amber-700 text-sm">R {{ samplePreviewFloor.newFloor.toFixed(2) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-2">
+          <button @click="showBatchFloorModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 cursor-pointer">取消</button>
+          <button 
+            @click="handleBatchSetFloor" 
+            :disabled="submittingBatchFloor"
+            class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50"
+          >
+            <span>{{ submittingBatchFloor ? '正在批量应用...' : '确定应用' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- ================= 弹窗: 批量智能比价策略 ================= -->
     <div v-if="showBatchPricingPiggybackModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
       <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4">
@@ -6992,6 +7341,8 @@
             page: 1,
             pageSize: 20,
             status: 'ALL',
+            stage: 'ALL',
+            buybox_status: 'ALL',
             compliance_status: 'ALL',
             store_id: null,
             search: '',
@@ -7004,11 +7355,34 @@
               risk_count: 0,
               prohibited_count: 0
             },
+            kpi: {
+              total_count: 0,
+              active_count: 0,
+              winning_count: 0,
+              losing_count: 0,
+              floor_hit_count: 0,
+              missing_floor_count: 0,
+              staging_count: 0,
+              blocked_count: 0
+            },
             items: [],
             selectedIds: [],
             selectAll: false,
             autoCompliance: localStorage.getItem('makro_piggyback_auto_compliance') === 'true'
           },
+          inlineEditing: {
+            id: null,
+            field: null,
+            tempValue: null,
+            saving: false
+          },
+          showBatchFloorModal: false,
+          batchFloorForm: {
+            mode: 'PERCENT',
+            value: 75,
+            auto_enable_reprice: true
+          },
+          submittingBatchFloor: false,
           loadingPiggyback: false,
           showCollectPiggybackModal: false,
           collectPiggybackForm: {
@@ -7512,6 +7886,22 @@
             url: null,
             label: '⚠️ 尚未识别到有效编号（支持粘贴 Takealot 商品链接、PLID、TSIN 或 7-10位纯数字编号）'
           };
+        },
+        samplePreviewFloor() {
+          if (!this.piggyback.selectedIds || this.piggyback.selectedIds.length === 0) return null;
+          const firstItem = this.piggyback.items.find(it => this.piggyback.selectedIds.includes(it.id));
+          if (!firstItem) return null;
+          const orig = Number(firstItem.original_price || firstItem.target_price || 100);
+          const val = Number(this.batchFloorForm.value || 0);
+          let newFloor = 0;
+          if (this.batchFloorForm.mode === 'PERCENT') {
+            newFloor = Math.round(orig * (val / 100) * 100) / 100;
+          } else if (this.batchFloorForm.mode === 'OFFSET') {
+            newFloor = Math.max(Math.round((orig - val) * 100) / 100, 1);
+          } else {
+            newFloor = Math.max(val, 1);
+          }
+          return { orig, newFloor };
         }
       },
       async mounted() {
@@ -7535,6 +7925,158 @@
       },
       methods: {
         // ================= Makro 智能跟品方法组 =================
+        async loadPiggybackKpi() {
+          try {
+            const params = new URLSearchParams();
+            if (this.piggyback.store_id) params.append('store_id', this.piggyback.store_id);
+            const res = await fetch(`/api/piggyback/kpi-stats?${params.toString()}`);
+            if (res.ok) {
+              const data = await res.json();
+              this.piggyback.kpi = data;
+            }
+          } catch (e) {
+            console.warn('加载跟品 KPI 异常:', e);
+          }
+        },
+        selectKpiFilter(filterType) {
+          if (filterType === 'total') {
+            this.piggyback.stage = 'ALL';
+            this.piggyback.buybox_status = 'ALL';
+          } else if (filterType === 'active') {
+            this.piggyback.stage = 'ACTIVE_MONITOR';
+            this.piggyback.buybox_status = 'ALL';
+          } else if (filterType === 'winning') {
+            this.piggyback.stage = 'ACTIVE_MONITOR';
+            this.piggyback.buybox_status = 'WINNING';
+          } else if (filterType === 'losing') {
+            this.piggyback.stage = 'ACTIVE_MONITOR';
+            this.piggyback.buybox_status = 'LOSING';
+          } else if (filterType === 'floor_hit') {
+            this.piggyback.stage = 'ACTIVE_MONITOR';
+            this.piggyback.buybox_status = 'FLOOR_HIT';
+          } else if (filterType === 'missing_floor') {
+            this.piggyback.stage = 'ACTIVE_MONITOR';
+            this.piggyback.buybox_status = 'MISSING_FLOOR';
+          }
+          this.loadPiggybackItems(1);
+        },
+        changePiggybackStage(stage) {
+          this.piggyback.stage = stage;
+          this.piggyback.buybox_status = 'ALL';
+          this.loadPiggybackItems(1);
+        },
+        startInlineEdit(item, field) {
+          this.inlineEditing = {
+            id: item.id,
+            field: field,
+            tempValue: item[field] !== undefined ? item[field] : 0,
+            saving: false
+          };
+          this.$nextTick(() => {
+            const input = this.$refs.inlineInput;
+            if (input) {
+              if (Array.isArray(input)) input[0]?.focus();
+              else input.focus();
+            }
+          });
+        },
+        cancelInlineEdit() {
+          this.inlineEditing = { id: null, field: null, tempValue: null, saving: false };
+        },
+        async saveInlineEdit(item) {
+          if (!this.inlineEditing.id || this.inlineEditing.id !== item.id) return;
+          const field = this.inlineEditing.field;
+          const newVal = parseFloat(this.inlineEditing.tempValue);
+          if (isNaN(newVal)) {
+            this.cancelInlineEdit();
+            return;
+          }
+          const oldVal = item[field];
+          if (Math.abs(newVal - (oldVal || 0)) < 0.001) {
+            this.cancelInlineEdit();
+            return;
+          }
+          
+          item[field] = newVal;
+          this.cancelInlineEdit();
+          
+          try {
+            const payload = { [field]: newVal };
+            const res = await fetch(`/api/piggyback/items/${item.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || '更新失败');
+            
+            // 行内微动效提示
+            item._flashSuccess = field;
+            setTimeout(() => { item._flashSuccess = null; }, 1500);
+
+            if (data.sync_message) {
+              this.showToast(data.sync_message, 'success');
+            } else {
+              this.showToast(`已更新 ${field === 'target_price' ? '跟品售价' : '保本底价'}`, 'success');
+            }
+            this.loadPiggybackKpi();
+          } catch (e) {
+            item[field] = oldVal;
+            this.showToast('修改失败: ' + e.message, 'error');
+          }
+        },
+        openBatchFloorModal() {
+          if (this.piggyback.selectedIds.length === 0) {
+            this.showToast('请先勾选需要设置保本底价的商品', 'warning');
+            return;
+          }
+          this.showBatchFloorModal = true;
+        },
+        async handleBatchSetFloor() {
+          if (this.piggyback.selectedIds.length === 0) return;
+          this.submittingBatchFloor = true;
+          try {
+            const res = await fetch('/api/piggyback/batch-set-floor', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ids: this.piggyback.selectedIds,
+                mode: this.batchFloorForm.mode,
+                value: this.batchFloorForm.value,
+                auto_enable_reprice: this.batchFloorForm.auto_enable_reprice
+              })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || '批量设置失败');
+            this.showToast(`🛡️ 成功为 ${data.updated_count} 件商品计算并配置保本底价！`, 'success');
+            this.showBatchFloorModal = false;
+            this.loadPiggybackItems(this.piggyback.page);
+            this.loadPiggybackKpi();
+          } catch (e) {
+            this.showToast('批量设底价失败: ' + e.message, 'error');
+          } finally {
+            this.submittingBatchFloor = false;
+          }
+        },
+        async batchToggleAutoReprice(enable) {
+          if (this.piggyback.selectedIds.length === 0) return;
+          const ids = this.piggyback.selectedIds;
+          try {
+            let updated = 0;
+            for (const id of ids) {
+              const res = await fetch(`/api/reprice/config/${id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ auto_reprice: enable })
+              });
+              if (res.ok) updated++;
+            }
+            this.showToast(`已批量${enable ? '开启' : '关闭'} ${updated} 件商品的自动跟价`, 'success');
+            this.loadPiggybackItems(this.piggyback.page);
+          } catch (e) {
+            this.showToast('批量修改跟价状态异常: ' + e.message, 'error');
+          }
+        },
         async loadPiggybackItems(page = 1) {
           this.loadingPiggyback = true;
           this.piggyback.page = page;
@@ -7545,6 +8087,12 @@
             });
             if (this.piggyback.status && this.piggyback.status !== 'ALL') {
               params.append('status', this.piggyback.status);
+            }
+            if (this.piggyback.stage && this.piggyback.stage !== 'ALL') {
+              params.append('stage', this.piggyback.stage);
+            }
+            if (this.piggyback.buybox_status && this.piggyback.buybox_status !== 'ALL') {
+              params.append('buybox_status', this.piggyback.buybox_status);
             }
             if (this.piggyback.compliance_status && this.piggyback.compliance_status !== 'ALL') {
               params.append('compliance_status', this.piggyback.compliance_status);
@@ -7566,6 +8114,8 @@
             }
             this.piggyback.selectedIds = [];
             this.piggyback.selectAll = false;
+            // 同步刷新顶部 KPI 指标
+            this.loadPiggybackKpi();
           } catch (e) {
             console.error('加载跟品列表异常:', e);
             this.showToast('加载跟品商品列表失败: ' + e.message, 'error');

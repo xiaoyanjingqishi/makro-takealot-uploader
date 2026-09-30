@@ -255,5 +255,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  // 5.2 Makro 检查商品是否已存在于跟品库中 (排重核验)
+  if (request.action === "CHECK_PIGGYBACK_EXISTENCE") {
+    getBackendUrl().then((backendUrl) => {
+      fetch(`${backendUrl}/api/piggyback/check-existence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fsns: request.fsns || []
+        })
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `HTTP ${res.status}`);
+          }
+          return res.json();
+        })
+        .then(data => sendResponse({ success: true, exists: data.exists || {} }))
+        .catch(err => {
+          console.warn("排重检测请求异常:", err);
+          sendResponse({ success: false, exists: {} });
+        });
+    });
+    return true;
+  }
 });
 

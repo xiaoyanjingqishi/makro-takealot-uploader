@@ -354,6 +354,48 @@
         }
       });
     });
+
+    // 异步排重校验：检查详情页主品与变体是否已入库
+    try {
+      const pdpFsns = [data.fsn];
+      if (variants && variants.length > 0) {
+        variants.forEach(v => { if (v.fsn) pdpFsns.push(v.fsn); });
+      }
+      chrome.runtime.sendMessage({
+        action: "CHECK_PIGGYBACK_EXISTENCE",
+        fsns: pdpFsns
+      }, (res) => {
+        if (res && res.success && res.exists) {
+          const existsMap = res.exists;
+          const mainInfo = existsMap[data.fsn];
+          if (mainInfo) {
+            const btn = document.getElementById("makro-piggyback-btn");
+            if (btn) {
+              btn.style.background = "#059669";
+              btn.innerHTML = mainInfo.status === "ACTIVE" 
+                ? `<span>🟢</span> 该商品已在售中 (R${mainInfo.target_price})`
+                : `<span>✅</span> 该商品已在跟品库`;
+            }
+          }
+          if (variants && variants.length > 0) {
+            variants.forEach((v, idx) => {
+              if (existsMap[v.fsn]) {
+                const rows = document.querySelectorAll(".makro-variant-row");
+                if (rows && rows[idx]) {
+                  const tag = document.createElement("span");
+                  tag.style.cssText = "background:#059669; color:white; font-size:9.5px; padding:1px 4px; border-radius:3px; margin-left:4px;";
+                  tag.innerText = "已在库";
+                  const targetDiv = rows[idx].querySelector("div");
+                  if (targetDiv) targetDiv.appendChild(tag);
+                }
+              }
+            });
+          }
+        }
+      });
+    } catch (e) {
+      console.debug("详情页排重核验跳过:", e);
+    }
   }
 
 
@@ -461,6 +503,49 @@
       // 复选框变化更新底部计数
       badge.querySelector(".makro-search-cb").addEventListener("change", updateToolbarCount);
     });
+
+    // 异步排重校验：检查当前页所有商品卡片是否已在跟品库中
+    try {
+      const fsnsToCheck = [];
+      cards.forEach((card) => {
+        const fsn = (card.getAttribute("data-id") || "").trim().toUpperCase();
+        if (fsn && !card.dataset.checkedExistence) {
+          card.dataset.checkedExistence = "pending";
+          fsnsToCheck.push(fsn);
+        }
+      });
+
+      if (fsnsToCheck.length > 0) {
+        chrome.runtime.sendMessage({
+          action: "CHECK_PIGGYBACK_EXISTENCE",
+          fsns: fsnsToCheck
+        }, (res) => {
+          if (res && res.success && res.exists) {
+            const existsMap = res.exists;
+            cards.forEach((card) => {
+              const fsn = (card.getAttribute("data-id") || "").trim().toUpperCase();
+              if (existsMap[fsn]) {
+                card.dataset.checkedExistence = "exists";
+                const qBtn = card.querySelector(".makro-search-quick-btn");
+                const cb = card.querySelector(".makro-search-cb");
+                const info = existsMap[fsn];
+                if (qBtn) {
+                  qBtn.style.background = "#059669";
+                  qBtn.style.opacity = "0.9";
+                  qBtn.innerText = info.status === "ACTIVE" ? "🟢 在售中" : "✅ 已在库";
+                  qBtn.title = `已存在于跟品库 (SKU: ${info.seller_sku}，当前售价: R${info.target_price || 0})`;
+                }
+                if (cb) {
+                  cb.title = "已在库商品";
+                }
+              }
+            });
+          }
+        });
+      }
+    } catch (e) {
+      console.debug("搜索页排重核验跳过:", e);
+    }
 
     updateToolbarCount();
   }

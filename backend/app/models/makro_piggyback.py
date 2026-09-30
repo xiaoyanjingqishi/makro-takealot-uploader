@@ -51,6 +51,8 @@ class MakroPiggybackItem(Base):
     max_price_ceiling = Column(Float, default=0.0)     # 最高保护价
     last_reprice_at = Column(DateTime, nullable=True)  # 最近一次跟价巡检时间
     last_reprice_result = Column(String(200), nullable=True) # 最近一次跟价巡检执行摘要
+    buybox_status = Column(String(50), default="UNKNOWN", index=True) # WINNING, LOSING, FLOOR_HIT, NO_COMPETITOR, UNKNOWN
+    last_competitor_price = Column(Float, nullable=True) # 最近一次竞对报价
 
     # AI 侵权与合规检测状态与详情
     # PENDING_CHECK (待检测), SAFE (合规安全), RISK (黄线风险), PROHIBITED (红线禁售), DISPUTED (分歧待仲裁)

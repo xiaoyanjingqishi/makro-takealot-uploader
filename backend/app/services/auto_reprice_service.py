@@ -126,7 +126,29 @@ class AutoRepriceService:
                 action = "FAILED"
                 reason = f"调价计算成功但推送官方失败: {str(api_err)}"
 
-        # 6. 更新商品记录状态与审计日志
+        # 6. 计算最终 Buybox 归属状态
+        if comp_price <= 0:
+            buybox_status = item.buybox_status or "UNKNOWN"
+        elif is_own_store:
+            buybox_status = "WINNING"
+        elif action == "REACHED_FLOOR":
+            buybox_status = "FLOOR_HIT"
+        elif action == "UNDER_CUT" and (item.target_price or 0.0) < comp_price:
+            buybox_status = "WINNING"
+        elif comp_price < (item.target_price or 0.0):
+            buybox_status = "LOSING"
+        elif (item.target_price or 0.0) <= comp_price and (item.target_price or 0.0) > 0:
+            buybox_status = "WINNING"
+        elif seller_count <= 1:
+            buybox_status = "NO_COMPETITOR"
+        else:
+            buybox_status = "UNKNOWN"
+
+        item.buybox_status = buybox_status
+        if comp_price > 0:
+            item.last_competitor_price = comp_price
+
+        # 7. 更新商品记录状态与审计日志
         item.last_reprice_at = datetime.now()
         item.last_reprice_result = f"{action}: {reason[:120]}"
 
