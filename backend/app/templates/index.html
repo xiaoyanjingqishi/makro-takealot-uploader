@@ -2235,7 +2235,7 @@
                 <span>批量导入</span>
               </button>
 
-              <!-- 批量改价 -->
+              <!-- 批量比价 -->
               <button 
                 @click="showBatchPricingPiggybackModal = true"
                 :disabled="piggyback.selectedIds.length === 0"
@@ -2243,6 +2243,27 @@
               >
                 <span>⚡</span>
                 <span>批量比价 ({{ piggyback.selectedIds.length }})</span>
+              </button>
+
+              <!-- 批量自动跟价巡检 -->
+              <button 
+                @click="triggerBatchReprice"
+                :disabled="runningBatchReprice"
+                class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40"
+                title="立即巡检在售跟品前台竞对价格并执行自动调价"
+              >
+                <span>🤖</span>
+                <span>{{ runningBatchReprice ? '跟价中...' : (piggyback.selectedIds.length > 0 ? `跟价选中 (${piggyback.selectedIds.length})` : '全店跟价') }}</span>
+              </button>
+
+              <!-- 调价审计日志 -->
+              <button 
+                @click="openRepriceLogsModal"
+                class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
+                title="查看历史自动调价与防破发日志"
+              >
+                <span>📜</span>
+                <span>调价日志</span>
               </button>
 
               <!-- 批量合规检测 -->
@@ -2362,6 +2383,11 @@
                         <p v-if="item.title_zh" class="text-[11px] text-slate-500 line-clamp-1">
                           🇨🇳 {{ item.title_zh }}
                         </p>
+                        <!-- 规格变体标签 -->
+                        <div v-if="item.variant_name" class="inline-flex items-center space-x-1 px-1.5 py-0.2 bg-purple-50 text-purple-700 border border-purple-200 text-[10px] rounded font-medium mt-0.5">
+                          <span>📦 变体:</span>
+                          <span>{{ item.variant_name }}</span>
+                        </div>
                         <!-- 竞品与跟卖商家情报 -->
                         <div class="text-[10.5px] text-slate-500 flex items-center space-x-1.5 pt-0.5">
                           <span class="text-amber-500 font-bold">🏆</span>
@@ -2393,6 +2419,21 @@
                           -R{{ (item.original_price - item.target_price).toFixed(2) }}
                         </span>
                         <span v-else class="text-slate-400">平价</span>
+                      </div>
+                      <!-- 自动跟价状态与控制 -->
+                      <div class="flex items-center justify-between text-[10px] pt-1 border-t border-slate-100 mt-1">
+                        <span 
+                          @click="toggleItemAutoReprice(item)"
+                          class="cursor-pointer px-1.5 py-0.2 rounded text-[10px] font-medium border transition-colors select-none"
+                          :class="item.auto_reprice ? 'bg-sky-50 text-sky-700 border-sky-300 hover:bg-sky-100' : 'bg-slate-100 text-slate-500 border-slate-300 hover:bg-slate-200'"
+                          :title="item.auto_reprice ? '自动跟价已开启，点击可暂停' : '自动跟价已关闭，点击开启'"
+                        >
+                          {{ item.auto_reprice ? '🤖 跟价: 开' : '⚪ 跟价: 关' }}
+                        </span>
+                        <span class="text-slate-400" :title="'保本底价: R' + (item.min_price_floor || 0)">底: R{{ (item.min_price_floor || 0).toFixed(0) }}</span>
+                      </div>
+                      <div v-if="item.last_reprice_result" class="text-[9.5px] text-slate-400 truncate max-w-[170px]" :title="'上次跟价: ' + item.last_reprice_result + (item.last_reprice_at ? ' (' + item.last_reprice_at + ')' : '')">
+                        ⏱️ {{ item.last_reprice_result }}
                       </div>
                     </div>
                   </td>
@@ -2480,6 +2521,15 @@
                         :title="item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品'"
                       >
                         <span>🚀 跟品</span>
+                      </button>
+
+                      <!-- 立即执行自动跟价 -->
+                      <button 
+                        @click="triggerSingleItemReprice(item)"
+                        class="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded font-medium text-xs transition-colors cursor-pointer"
+                        title="立即探测竞对前台价格并执行自动跟价策略"
+                      >
+                        <span>⚡ 跟价</span>
                       </button>
 
                       <!-- 编辑参数 -->
@@ -6687,6 +6737,23 @@
               <input type="number" v-model.number="editingPiggybackItem.lead_time_days" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
             </div>
           </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">变体规格说明 (如 Pack of 10)</label>
+              <input type="text" v-model="editingPiggybackItem.variant_name" placeholder="无变体可留空" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">自动跟价设置</label>
+              <select v-model="editingPiggybackItem.auto_reprice" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs bg-white">
+                <option :value="true">🤖 开启自动跟价</option>
+                <option :value="false">⚪ 关闭自动跟价</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">最高保护售价 (R，无竞对时保护)</label>
+            <input type="number" step="1" v-model.number="editingPiggybackItem.max_price_ceiling" placeholder="0 (不限)" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+          </div>
           <div class="grid grid-cols-4 gap-2">
             <div>
               <label class="block text-[11px] font-semibold text-slate-600 mb-1">长 (cm)</label>
@@ -6793,6 +6860,101 @@
       </div>
     </div>
 
+    <!-- ================= 弹窗: 智能跟价审计日志 ================= -->
+    <div v-if="showRepriceLogsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-4xl w-full p-5 shadow-2xl border border-slate-200 space-y-4 flex flex-col max-h-[85vh]">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center space-x-2">
+            <span class="text-base">📜</span>
+            <h3 class="text-sm font-bold text-slate-900">Makro 智能跟价审计日志 (共 {{ repriceLogs.total }} 条记录)</h3>
+          </div>
+          <div class="flex items-center space-x-3">
+            <button @click="loadRepriceLogs(repriceLogs.page)" :disabled="loadingRepriceLogs" class="p-1 text-slate-500 hover:text-slate-800 rounded border border-slate-200 text-xs cursor-pointer">
+              <span :class="{'inline-block animate-spin': loadingRepriceLogs}">🔄</span>
+            </button>
+            <button @click="showRepriceLogsModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+          </div>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-auto border border-slate-100 rounded-xl">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 sticky top-0 border-b border-slate-200/80">
+              <tr class="text-slate-600 font-semibold">
+                <th class="py-2 px-3 w-36">时间</th>
+                <th class="py-2 px-3 w-32">货号 SKU / FSN</th>
+                <th class="py-2 px-3 w-32">占位竞对</th>
+                <th class="py-2 px-3 w-24">竞对原价</th>
+                <th class="py-2 px-3 w-32">调前 ➔ 调后</th>
+                <th class="py-2 px-3 w-28 text-center">操作类型</th>
+                <th class="py-2 px-3 min-w-[200px]">调价原因与说明</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 font-mono">
+              <tr v-if="loadingRepriceLogs">
+                <td colspan="7" class="py-12 text-center text-slate-400">⏳ 正在加载调价日志...</td>
+              </tr>
+              <tr v-else-if="repriceLogs.items.length === 0">
+                <td colspan="7" class="py-12 text-center text-slate-400">暂无调价记录，点击商品行「⚡跟价」或开启后台自动巡检即可生成</td>
+              </tr>
+              <tr v-else v-for="log in repriceLogs.items" :key="log.id" class="hover:bg-slate-50/80">
+                <td class="py-2 px-3 text-slate-500 text-[11px]">{{ log.created_at }}</td>
+                <td class="py-2 px-3">
+                  <div class="font-bold text-slate-800">{{ log.seller_sku }}</div>
+                  <div class="text-[10px] text-slate-400">{{ log.makro_product_id }}</div>
+                </td>
+                <td class="py-2 px-3 text-slate-700 font-sans truncate max-w-[120px]" :title="log.competitor_seller">{{ log.competitor_seller || '无/自营' }}</td>
+                <td class="py-2 px-3 text-slate-600">R {{ log.competitor_price.toFixed(2) }}</td>
+                <td class="py-2 px-3">
+                  <span class="text-slate-400 line-through">R {{ log.old_price.toFixed(2) }}</span>
+                  <span class="text-emerald-600 font-bold ml-1">R {{ log.new_price.toFixed(2) }}</span>
+                </td>
+                <td class="py-2 px-3 text-center font-sans">
+                  <span 
+                    class="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                    :class="{
+                      'bg-emerald-100 text-emerald-800': log.action === 'UNDER_CUT',
+                      'bg-sky-100 text-sky-800': log.action === 'WINNING_HOLD',
+                      'bg-amber-100 text-amber-800': log.action === 'REACHED_FLOOR',
+                      'bg-slate-100 text-slate-600': log.action === 'NO_CHANGE',
+                      'bg-rose-100 text-rose-800': log.action === 'FAILED'
+                    }"
+                  >
+                    <template v-if="log.action === 'UNDER_CUT'">📉 降价抢流</template>
+                    <template v-else-if="log.action === 'WINNING_HOLD'">🏆 胜出维持</template>
+                    <template v-else-if="log.action === 'REACHED_FLOOR'">🛡️ 触底保本</template>
+                    <template v-else-if="log.action === 'NO_CHANGE'">⚪ 维持现价</template>
+                    <template v-else>❌ 执行异常</template>
+                  </span>
+                </td>
+                <td class="py-2 px-3 text-slate-600 font-sans text-[11px] leading-tight">{{ log.reason }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 日志分页控制 -->
+        <div class="flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <span>共 {{ repriceLogs.total }} 条调价记录，第 {{ repriceLogs.page }} / {{ Math.ceil(repriceLogs.total / repriceLogs.pageSize) || 1 }} 页</span>
+          <div class="flex items-center space-x-1">
+            <button 
+              @click="loadRepriceLogs(repriceLogs.page - 1)" 
+              :disabled="repriceLogs.page <= 1"
+              class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              上一页
+            </button>
+            <button 
+              @click="loadRepriceLogs(repriceLogs.page + 1)" 
+              :disabled="repriceLogs.page >= Math.ceil(repriceLogs.total / repriceLogs.pageSize)"
+              class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
 
     <div class="fixed top-5 right-5 z-[10000] flex flex-col space-y-2 pointer-events-none max-w-sm">
       <div 
@@ -6875,6 +7037,16 @@
           editingPiggybackItem: null,
           showComplianceDetailModal: false,
           currentComplianceItem: null,
+          showRepriceLogsModal: false,
+          loadingRepriceLogs: false,
+          repriceLogs: {
+            items: [],
+            total: 0,
+            page: 1,
+            pageSize: 15,
+            actionFilter: ''
+          },
+          runningBatchReprice: false,
           translatingTitles: false,
           verticalZhMap: {
             "cases_covers": "手机保护套 / 保护壳",
@@ -7606,6 +7778,9 @@
                 target_price: it.target_price,
                 target_mrp: it.target_mrp,
                 min_price_floor: it.min_price_floor,
+                max_price_ceiling: it.max_price_ceiling,
+                auto_reprice: it.auto_reprice,
+                variant_name: it.variant_name,
                 price_strategy: it.price_strategy,
                 inventory: it.inventory,
                 lead_time_days: it.lead_time_days,
@@ -7627,6 +7802,101 @@
         openComplianceDetails(item) {
           this.currentComplianceItem = item;
           this.showComplianceDetailModal = true;
+        },
+        // ================= 智能自动跟价系统方法组 =================
+        async triggerSingleItemReprice(item) {
+          this.showToast(`正在探测竞对价格并为 [${item.seller_sku}] 执行跟价...`, 'info');
+          try {
+            const res = await fetch(`/api/reprice/trigger-item/${item.id}`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success && data.result) {
+              const r = data.result;
+              const actionMap = {
+                'UNDER_CUT': '📉 已下调抢占黄金购物车',
+                'WINNING_HOLD': '🏆 当前己方已占位，保持原价稳定获利',
+                'REACHED_FLOOR': '🛡️ 竞对过低，已触发保本底线锁定',
+                'NO_CHANGE': '⚪ 计算价格与现售价一致，保持不变'
+              };
+              const actionLabel = actionMap[r.action] || r.action;
+              this.showToast(`${actionLabel} (原R${r.old_price} ➔ 现R${r.new_price})`, 'success');
+              this.loadPiggybackItems(this.piggyback.page);
+            } else {
+              throw new Error(data.result?.reason || '跟价执行未成功');
+            }
+          } catch (e) {
+            this.showToast('执行跟价失败: ' + e.message, 'error');
+          }
+        },
+        async triggerBatchReprice() {
+          const isSelected = this.piggyback.selectedIds.length > 0;
+          const promptText = isSelected 
+            ? `确定立即对选中的 ${this.piggyback.selectedIds.length} 件在售跟品执行自动跟价吗？` 
+            : `确定对当前店铺所有在售且开启自动跟价的商品执行全量巡检跟价吗？`;
+          if (!confirm(promptText)) return;
+
+          this.runningBatchReprice = true;
+          this.showToast('🚀 正在批量探测竞对并执行自动跟价...', 'info');
+          try {
+            const payload = isSelected 
+              ? { ids: this.piggyback.selectedIds } 
+              : { store_id: this.piggyback.store_id || null };
+            const res = await fetch('/api/reprice/trigger-batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            this.showToast(`🤖 批量跟价完成！处理 ${data.total || data.total_items} 件 (降价抢流: ${data.undercut_count || 0}, 胜出保持: ${data.winning_hold_count || 0}, 触底保本: ${data.floor_count || 0})`, 'success');
+            this.loadPiggybackItems(this.piggyback.page);
+          } catch (e) {
+            this.showToast('批量跟价异常: ' + e.message, 'error');
+          } finally {
+            this.runningBatchReprice = false;
+          }
+        },
+        async toggleItemAutoReprice(item) {
+          const nextState = !item.auto_reprice;
+          try {
+            const res = await fetch(`/api/reprice/config/${item.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ auto_reprice: nextState })
+            });
+            if (!res.ok) throw new Error('修改失败');
+            item.auto_reprice = nextState;
+            this.showToast(nextState ? `已开启 [${item.seller_sku}] 自动跟价` : `已暂停 [${item.seller_sku}] 自动跟价`, 'info');
+          } catch (e) {
+            this.showToast('切换自动跟价开关失败: ' + e.message, 'error');
+          }
+        },
+        openRepriceLogsModal() {
+          this.showRepriceLogsModal = true;
+          this.loadRepriceLogs(1);
+        },
+        async loadRepriceLogs(page = 1) {
+          this.loadingRepriceLogs = true;
+          this.repriceLogs.page = page;
+          try {
+            const params = new URLSearchParams({
+              page: page,
+              page_size: this.repriceLogs.pageSize
+            });
+            if (this.repriceLogs.actionFilter) {
+              params.append('action', this.repriceLogs.actionFilter);
+            }
+            if (this.piggyback.store_id) {
+              params.append('store_id', this.piggyback.store_id);
+            }
+            const res = await fetch(`/api/reprice/logs?${params.toString()}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            this.repriceLogs.items = data.items || [];
+            this.repriceLogs.total = data.total || 0;
+          } catch (e) {
+            this.showToast('加载调价日志失败: ' + e.message, 'error');
+          } finally {
+            this.loadingRepriceLogs = false;
+          }
         },
         async loadVerticalTranslations() {
           try {

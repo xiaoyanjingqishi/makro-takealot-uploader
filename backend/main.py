@@ -131,7 +131,7 @@ try:
             _conn.execute(text("ALTER TABLE products ADD COLUMN clean_mode VARCHAR(20) DEFAULT 'text'"))
             _conn.commit()
 
-        # 检查并补充 makro_piggyback_items.item_id 与 seller_count 字段
+        # 检查并补充 makro_piggyback_items.item_id, seller_count, variant, 与 reprice 字段
         pb_tables = [row[0] for row in _conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='makro_piggyback_items'")).fetchall()]
         if pb_tables:
             pb_cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(makro_piggyback_items)")).fetchall()]
@@ -139,7 +139,40 @@ try:
                 _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN item_id VARCHAR(100)"))
             if "seller_count" not in pb_cols:
                 _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN seller_count INTEGER DEFAULT 1"))
+            if "variant_attributes" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN variant_attributes TEXT"))
+            if "variant_name" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN variant_name VARCHAR(200)"))
+            if "auto_reprice" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN auto_reprice BOOLEAN DEFAULT 1"))
+            if "max_price_ceiling" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN max_price_ceiling FLOAT DEFAULT 0.0"))
+            if "last_reprice_at" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN last_reprice_at DATETIME"))
+            if "last_reprice_result" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN last_reprice_result VARCHAR(200)"))
             _conn.commit()
+
+        # 检查并创建 makro_reprice_logs 表
+        _conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS makro_reprice_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                piggyback_id INTEGER NOT NULL,
+                store_id INTEGER NOT NULL,
+                seller_sku VARCHAR(100) NOT NULL,
+                makro_product_id VARCHAR(100) NOT NULL,
+                competitor_seller VARCHAR(100),
+                competitor_price FLOAT DEFAULT 0.0,
+                old_price FLOAT DEFAULT 0.0,
+                new_price FLOAT DEFAULT 0.0,
+                action VARCHAR(50) NOT NULL,
+                reason TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reprice_logs_sku ON makro_reprice_logs (seller_sku)"))
+        _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reprice_logs_created ON makro_reprice_logs (created_at DESC)"))
+        _conn.commit()
 
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_product_variants_product_id ON product_variants (product_id)"))
         _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_status_id ON products (status, id DESC)"))
@@ -187,6 +220,13 @@ try:
     auto_login_scheduler.start()
 except Exception as _als_err:
     print(f"[INIT] 启动自动登录保活调度器失败: {_als_err}")
+
+# 启动智能自动跟价定时巡检调度引擎 (默认每 60 分钟巡检一次在售跟品)
+try:
+    from app.services.auto_reprice_scheduler import auto_reprice_scheduler
+    auto_reprice_scheduler.start()
+except Exception as _reprice_err:
+    print(f"[INIT] 启动自动跟价调度器失败: {_reprice_err}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

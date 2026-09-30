@@ -8,6 +8,7 @@ from .makro_listing import MakroListing
 from .makro_order import MakroOrder
 from .makro_audit_listing import MakroAuditListing
 from .makro_piggyback import MakroPiggybackItem
+from .makro_reprice_log import MakroRepriceLog
 
 __all__ = [
     "User",
@@ -22,5 +23,6 @@ __all__ = [
     "MakroListing",
     "MakroOrder",
     "MakroAuditListing",
-    "MakroPiggybackItem"
+    "MakroPiggybackItem",
+    "MakroRepriceLog"
 ]

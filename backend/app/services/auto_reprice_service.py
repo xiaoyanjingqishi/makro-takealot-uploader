@@ -1,0 +1,261 @@
+import logging
+import requests
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+from sqlalchemy.orm import Session
+
+from ..models.makro_piggyback import MakroPiggybackItem
+from ..models.makro_reprice_log import MakroRepriceLog
+from ..models.store import Store
+from .makro_scraper_service import MakroScraperService
+from .makro_piggyback_service import MakroPiggybackService, MAKRO_HOST
+
+logger = logging.getLogger(__name__)
+
+class AutoRepriceService:
+    """
+    Makro 智能自动跟价引擎
+    核心能力：
+      1. 巡检前台实时在售价格与 Buybox 归属
+      2. 己方胜出保护 (WINNING_HOLD): 己方占位绝不降价内卷
+      3. 保本底线熔断 (REACHED_FLOOR): 竞对恶意低价跌破成本时锁死保本价
+      4. 自动比价 (UNDER_CUT): 比竞对低 R1.00 或 2% 抢占购物车
+      5. 官方 API 极速下发与操作全量审计追踪
+    """
+
+    @classmethod
+    def reprice_single_item(
+        cls,
+        item: MakroPiggybackItem,
+        db: Session,
+        force: bool = False
+    ) -> Dict[str, Any]:
+        """
+        对单件在售跟品执行一次自动跟价巡检与调价
+        """
+        store = item.store
+        if not store:
+            store = db.query(Store).filter(Store.id == item.store_id).first()
+
+        if not store or not store.seller_id or not store.fk_csrf_token or not store.cookie:
+            msg = f"跟品商品 [{item.seller_sku}] 关联店铺凭据不完整，跳过跟价"
+            logger.warning(msg)
+            return {"status": "FAILED", "reason": msg, "item_id": item.id}
+
+        # 检查是否启用了自动跟价 (force 参数可强制单次触发)
+        if not force and not item.auto_reprice:
+            return {"status": "SKIPPED", "reason": "商品未开启自动跟价开关", "item_id": item.id}
+
+        # 1. 获取买家前台最新在售与竞争情报
+        target_ref = item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, item.item_id)
+        scraped = MakroScraperService.scrape_buyer_frontend(target_ref)
+        
+        comp_price = scraped.get("price", 0.0)
+        comp_mrp = scraped.get("mrp", 0.0)
+        comp_seller = (scraped.get("seller_name") or "").strip()
+        seller_count = scraped.get("seller_count", 1)
+
+        # 同步更新原链接情报
+        if comp_price > 0:
+            item.original_price = comp_price
+        if comp_mrp > 0:
+            item.original_mrp = comp_mrp
+        if comp_seller:
+            item.original_seller = comp_seller
+        item.seller_count = seller_count
+
+        old_selling_price = float(item.target_price or 0.0)
+        min_floor = float(item.min_price_floor or 0.0)
+        strategy = item.price_strategy or "MINUS_1"
+
+        action = "NO_CHANGE"
+        reason = ""
+        new_price = old_selling_price
+
+        # 2. 判断当前 Buybox 归属
+        store_names = [store.name.lower()]
+        if store.default_brand:
+            store_names.append(store.default_brand.lower())
+        
+        is_own_store = False
+        if comp_seller and any(sn in comp_seller.lower() or comp_seller.lower() in sn for sn in store_names):
+            is_own_store = True
+
+        if comp_price <= 0:
+            action = "FAILED"
+            reason = "未能获取到前台有效竞对售价"
+        elif is_own_store:
+            # 己方已经赢得黄金购物车！坚决不自我压价！
+            action = "WINNING_HOLD"
+            reason = f"当前店铺已抢占黄金购物车 (Buybox: {comp_seller})，保持现价 R{old_selling_price}，不自我压价"
+            new_price = old_selling_price
+        else:
+            # 3. 计算跟价出价
+            if strategy == "MINUS_1":
+                calc_p = max(comp_price - 1.0, 1.0)
+            elif strategy == "PERCENT_2":
+                calc_p = max(round(comp_price * 0.98, 2), 1.0)
+            elif strategy == "PERCENT_5":
+                calc_p = max(round(comp_price * 0.95, 2), 1.0)
+            else:
+                calc_p = max(comp_price - 1.0, 1.0)
+
+            # 4. 保本底线防穿保护
+            if min_floor > 0 and calc_p < min_floor:
+                new_price = min_floor
+                action = "REACHED_FLOOR"
+                reason = f"竞对 ({comp_seller}) 报价 R{comp_price} 过低，已触发保本底线 R{min_floor} 锁定防护"
+            elif abs(calc_p - old_selling_price) < 0.01:
+                new_price = old_selling_price
+                action = "NO_CHANGE"
+                reason = f"计算跟价 R{calc_p} 与当前本店售价一致，无需重复调价"
+            else:
+                new_price = calc_p
+                action = "UNDER_CUT"
+                reason = f"竞对 ({comp_seller}) 报价 R{comp_price}，下调至 R{new_price} 抢占购物车"
+
+        # 5. 若价格发生实质变动，向 Makro 官方 API 提交更新
+        if action in ["UNDER_CUT", "REACHED_FLOOR"] and abs(new_price - old_selling_price) >= 0.01:
+            try:
+                cls._push_price_to_makro(item, store, new_price)
+                item.target_price = new_price
+                if item.target_mrp and item.target_mrp < new_price:
+                    item.target_mrp = round(new_price * 1.5, 2)
+            except Exception as api_err:
+                logger.error(f"调用 Makro API 更新价格失败 [{item.seller_sku}]: {api_err}")
+                action = "FAILED"
+                reason = f"调价计算成功但推送官方失败: {str(api_err)}"
+
+        # 6. 更新商品记录状态与审计日志
+        item.last_reprice_at = datetime.now()
+        item.last_reprice_result = f"{action}: {reason[:120]}"
+
+        log_entry = MakroRepriceLog(
+            piggyback_id=item.id,
+            store_id=store.id,
+            seller_sku=item.seller_sku,
+            makro_product_id=item.makro_product_id,
+            competitor_seller=comp_seller or "未知/无竞对",
+            competitor_price=comp_price,
+            old_price=old_selling_price,
+            new_price=new_price if action in ["UNDER_CUT", "REACHED_FLOOR"] else old_selling_price,
+            action=action,
+            reason=reason
+        )
+        db.add(log_entry)
+        db.commit()
+        db.refresh(item)
+
+        return {
+            "status": "SUCCESS" if action != "FAILED" else "FAILED",
+            "action": action,
+            "seller_sku": item.seller_sku,
+            "makro_product_id": item.makro_product_id,
+            "competitor_seller": comp_seller,
+            "competitor_price": comp_price,
+            "old_price": old_selling_price,
+            "new_price": item.target_price,
+            "reason": reason
+        }
+
+    @classmethod
+    def _push_price_to_makro(cls, item: MakroPiggybackItem, store: Store, new_price: float):
+        """
+        调用 Makro 官方 create-update-listings 接口即时更新 Listing 售价
+        """
+        url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
+        headers = MakroPiggybackService._build_headers(store)
+
+        ssp_val = str(int(new_price)) if float(new_price).is_integer() else str(round(new_price, 2))
+        mrp_val = str(int(item.target_mrp)) if item.target_mrp and float(item.target_mrp).is_integer() else str(round(item.target_mrp or (new_price * 1.5), 2))
+        lead_time = str(item.lead_time_days or 14)
+
+        payload = {
+            "bulkRequests": [
+                {
+                    "attributeValues": {
+                        "sku_id": [{"value": item.seller_sku, "qualifier": ""}],
+                        "listing_status": [{"value": "ACTIVE", "qualifier": ""}],
+                        "mrp": [{"value": mrp_val, "qualifier": "INR"}],
+                        "flipkart_selling_price": [{"value": ssp_val, "qualifier": "INR"}],
+                        "service_profile": [{"value": "NON_FBF", "qualifier": ""}],
+                        "shipping_days": [{"value": lead_time, "qualifier": "DAY"}],
+                        "forbid_shipping": [{"qualifier": "", "value": "none"}],
+                        "country_of_origin": [{"value": "CN", "qualifier": ""}],
+                        "manufacturer_details": [{"value": "General", "qualifier": ""}],
+                        "packer_details": [{"value": store.default_brand or "Generic", "qualifier": ""}]
+                    },
+                    "context": {
+                        "ignore_warnings": False
+                    },
+                    "productId": item.makro_product_id,
+                    "skuId": item.seller_sku
+                }
+            ],
+            "sellerId": store.seller_id
+        }
+
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code != 200:
+            raise Exception(f"Makro 调价接口 HTTP {resp.status_code}: {resp.text[:200]}")
+
+        res_json = resp.json()
+        bulk_res = res_json.get("result", {}).get("bulkResponse", [])
+        if not bulk_res:
+            raise Exception(f"Makro 调价未返回有效 bulkResponse: {res_json}")
+        
+        single_res = bulk_res[0]
+        status = single_res.get("status")
+        if status not in ["created", "updated", "success"]:
+            errors = single_res.get("globalErrors", []) or single_res.get("attributeErrors", {})
+            raise Exception(f"官方更新失败 (状态: {status}): {errors}")
+
+    @classmethod
+    def run_reprice_for_store(cls, store: Store, db: Session) -> Dict[str, Any]:
+        """
+        为指定店铺中所有在售已激活且开启自动跟价的跟品执行全量跟价巡检
+        """
+        items = db.query(MakroPiggybackItem).filter(
+            MakroPiggybackItem.store_id == store.id,
+            MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]),
+            MakroPiggybackItem.auto_reprice == True
+        ).all()
+
+        total = len(items)
+        success_count = 0
+        undercut_count = 0
+        winning_hold_count = 0
+        floor_count = 0
+        failed_count = 0
+
+        details = []
+
+        for item in items:
+            try:
+                res = cls.reprice_single_item(item, db)
+                action = res.get("action")
+                if action == "UNDER_CUT":
+                    undercut_count += 1
+                elif action == "WINNING_HOLD":
+                    winning_hold_count += 1
+                elif action == "REACHED_FLOOR":
+                    floor_count += 1
+                elif action == "FAILED":
+                    failed_count += 1
+                
+                if res.get("status") == "SUCCESS":
+                    success_count += 1
+                details.append(res)
+            except Exception as e:
+                logger.error(f"批量跟价异常 [ID: {item.id}]: {e}")
+                failed_count += 1
+
+        return {
+            "total_items": total,
+            "success_count": success_count,
+            "undercut_count": undercut_count,
+            "winning_hold_count": winning_hold_count,
+            "floor_count": floor_count,
+            "failed_count": failed_count,
+            "details": details
+        }

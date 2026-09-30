@@ -80,9 +80,15 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         "target_price": item.target_price or 0.0,
         "target_mrp": item.target_mrp or 0.0,
         "min_price_floor": item.min_price_floor or 0.0,
+        "max_price_ceiling": item.max_price_ceiling or 0.0,
+        "auto_reprice": item.auto_reprice if item.auto_reprice is not None else True,
+        "last_reprice_at": item.last_reprice_at.strftime("%Y-%m-%d %H:%M:%S") if item.last_reprice_at else None,
+        "last_reprice_result": item.last_reprice_result or "",
         "price_strategy": item.price_strategy or "MINUS_1",
         "inventory": item.inventory or 99,
         "lead_time_days": item.lead_time_days or 14,
+        "variant_attributes": item.variant_attributes,
+        "variant_name": item.variant_name or "",
         "weight": item.weight or 0.5,
         "length": item.length or 15.0,
         "breadth": item.breadth or 10.0,
@@ -149,11 +155,20 @@ def collect_single_piggyback(
         existing.seller_count = data.get("seller_count", existing.seller_count or 1)
         existing.target_price = target_p
         existing.target_mrp = target_m
-        existing.min_price_floor = req.min_price_floor or existing.min_price_floor
-        existing.price_strategy = req.price_strategy or existing.price_strategy
+        existing.variant_attributes = req.variant_attributes or existing.variant_attributes
+        existing.variant_name = req.variant_name or existing.variant_name
+        if req.auto_reprice is not None:
+            existing.auto_reprice = req.auto_reprice
+        if req.max_price_ceiling is not None:
+            existing.max_price_ceiling = req.max_price_ceiling
         item = existing
     else:
         sku = _generate_piggyback_sku()
+        # 若为变体，在标题与货号中附加变体信息
+        title_zh = data.get("title_zh")
+        if req.variant_name and title_zh:
+            title_zh = f"{title_zh} ({req.variant_name})"
+
         item = MakroPiggybackItem(
             store_id=store.id,
             user_id=current_user.id if current_user else None,
@@ -161,7 +176,7 @@ def collect_single_piggyback(
             item_id=item_id,
             makro_url=data.get("makro_url"),
             title=data.get("title"),
-            title_zh=data.get("title_zh"),
+            title_zh=title_zh,
             brand=data.get("brand"),
             vertical=data.get("vertical"),
             image_url=data.get("image_url"),
@@ -175,10 +190,13 @@ def collect_single_piggyback(
             target_price=target_p,
             target_mrp=target_m,
             min_price_floor=req.min_price_floor or 0.0,
+            max_price_ceiling=req.max_price_ceiling or 0.0,
+            auto_reprice=req.auto_reprice if req.auto_reprice is not None else True,
+            variant_attributes=req.variant_attributes,
+            variant_name=req.variant_name,
             price_strategy=req.price_strategy or "MINUS_1",
             inventory=99,
             lead_time_days=14,
-            location_id=store.default_location_id,
             compliance_status="PENDING_CHECK",
             status="PENDING"
         )
@@ -209,7 +227,7 @@ def collect_single_piggyback(
         "item": _format_piggyback_item(item)
     }
 
-@router.post("/batch-collect", summary="批量采集 Makro 链接或 FSN 入库")
+@router.post("/batch-collect", summary="批量采集 Makro 链接、FSN 或搜索页/变体富数据入库")
 def batch_collect_piggyback(
     req: BatchCollectPiggybackRequest,
     current_user: User = Depends(get_current_user),
@@ -219,76 +237,164 @@ def batch_collect_piggyback(
     success_count = 0
     failed_items = []
 
-    for raw in req.items:
-        clean_text = raw.strip()
-        if not clean_text:
-            continue
-        try:
-            data = MakroScraperService.resolve_piggyback_product(clean_text, store)
-            fsn = data["makro_product_id"]
-            item_id = data.get("item_id")
+    # 1. 优先处理来自插件扩展的结构化富数据 (搜索页批量采集 / 多变体采集)
+    if req.rich_items and len(req.rich_items) > 0:
+        for rit in req.rich_items:
+            try:
+                fsn = (rit.get("fsn") or rit.get("makro_product_id") or rit.get("pid") or "").strip().upper()
+                if not fsn:
+                    continue
+                item_id = rit.get("item_id")
+                raw_url = rit.get("url") or MakroScraperService.format_canonical_makro_url(fsn, item_id)
+                title = rit.get("title") or fsn
+                price = float(rit.get("price") or 0.0)
+                mrp = float(rit.get("mrp") or (price * 1.5 if price > 0 else 0.0))
+                image_url = rit.get("image_url") or ""
+                seller_name = rit.get("seller_name") or ""
+                seller_count = int(rit.get("seller_count") or 1)
+                variant_name = rit.get("variant_name") or ""
+                variant_attributes = rit.get("variant_attributes")
+                if isinstance(variant_attributes, (dict, list)):
+                    variant_attributes = json.dumps(variant_attributes, ensure_ascii=False)
 
-            target_p, target_m = MakroPiggybackService.calculate_price(
-                original_price=data.get("original_price", 0.0),
-                strategy=req.price_strategy or "MINUS_1",
-                min_floor=req.min_price_floor or 0.0,
-                original_mrp=data.get("original_mrp", 0.0)
-            )
-
-            existing = db.query(MakroPiggybackItem).filter(
-                MakroPiggybackItem.store_id == store.id,
-                MakroPiggybackItem.makro_product_id == fsn
-            ).first()
-
-            if existing:
-                existing.item_id = item_id or existing.item_id
-                existing.makro_url = data.get("makro_url", existing.makro_url)
-                existing.image_url = data.get("image_url") or existing.image_url
-                existing.original_price = data.get("original_price", existing.original_price)
-                existing.original_mrp = data.get("original_mrp", existing.original_mrp)
-                existing.original_seller = data.get("original_seller") or existing.original_seller
-                existing.seller_count = data.get("seller_count") or existing.seller_count or 1
-                existing.target_price = target_p
-                existing.target_mrp = target_m
-            else:
-                sku = _generate_piggyback_sku()
-                new_item = MakroPiggybackItem(
-                    store_id=store.id,
-                    user_id=current_user.id if current_user else None,
-                    makro_product_id=fsn,
-                    item_id=item_id,
-                    makro_url=data.get("makro_url"),
-                    title=data.get("title"),
-                    title_zh=data.get("title_zh"),
-                    brand=data.get("brand"),
-                    vertical=data.get("vertical"),
-                    image_url=data.get("image_url"),
-                    model_number=data.get("model_number"),
-                    barcode=data.get("barcode"),
-                    original_price=data.get("original_price", 0.0),
-                    original_mrp=data.get("original_mrp", 0.0),
-                    original_seller=data.get("original_seller"),
-                    seller_count=data.get("seller_count", 1),
-                    seller_sku=sku,
-                    target_price=target_p,
-                    target_mrp=target_m,
-                    min_price_floor=req.min_price_floor or 0.0,
-                    price_strategy=req.price_strategy or "MINUS_1",
-                    inventory=99,
-                    lead_time_days=14,
-                    location_id=store.default_location_id,
-                    compliance_status="PENDING_CHECK",
-                    status="PENDING"
+                target_p, target_m = MakroPiggybackService.calculate_price(
+                    original_price=price,
+                    strategy=req.price_strategy or "MINUS_1",
+                    min_floor=req.min_price_floor or 0.0,
+                    original_mrp=mrp
                 )
-                db.add(new_item)
-            success_count += 1
-        except Exception as e:
-            failed_items.append({"item": clean_text, "error": str(e)})
+
+                existing = db.query(MakroPiggybackItem).filter(
+                    MakroPiggybackItem.store_id == store.id,
+                    MakroPiggybackItem.makro_product_id == fsn
+                ).first()
+
+                if existing:
+                    existing.item_id = item_id or existing.item_id
+                    existing.makro_url = raw_url
+                    existing.image_url = image_url or existing.image_url
+                    existing.original_price = price or existing.original_price
+                    existing.original_mrp = mrp or existing.original_mrp
+                    existing.original_seller = seller_name or existing.original_seller
+                    existing.seller_count = seller_count or existing.seller_count
+                    existing.target_price = target_p
+                    existing.target_mrp = target_m
+                    if variant_name:
+                        existing.variant_name = variant_name
+                    if variant_attributes:
+                        existing.variant_attributes = variant_attributes
+                else:
+                    sku = _generate_piggyback_sku()
+                    title_zh = rit.get("title_zh") or title or fsn
+                    if variant_name:
+                        title_zh = f"{title_zh} ({variant_name})"
+
+                    new_item = MakroPiggybackItem(
+                        store_id=store.id,
+                        user_id=current_user.id if current_user else None,
+                        makro_product_id=fsn,
+                        item_id=item_id,
+                        makro_url=raw_url,
+                        title=title,
+                        title_zh=title_zh,
+                        brand="Generic",
+                        vertical="general",
+                        image_url=image_url,
+                        original_price=price,
+                        original_mrp=mrp,
+                        original_seller=seller_name,
+                        seller_count=seller_count,
+                        seller_sku=sku,
+                        target_price=target_p,
+                        target_mrp=target_m,
+                        min_price_floor=req.min_price_floor or 0.0,
+                        price_strategy=req.price_strategy or "MINUS_1",
+                        auto_reprice=True,
+                        variant_name=variant_name,
+                        variant_attributes=variant_attributes,
+                        inventory=99,
+                        lead_time_days=14,
+                        compliance_status="PENDING_CHECK",
+                        status="PENDING"
+                    )
+                    db.add(new_item)
+                success_count += 1
+            except Exception as re_err:
+                failed_items.append({"item": str(rit.get("fsn") or rit.get("title")), "error": str(re_err)})
+
+    # 2. 处理纯字符串链接或 FSN 列表
+    if req.items and len(req.items) > 0:
+        for raw in req.items:
+            clean_text = raw.strip()
+            if not clean_text:
+                continue
+            try:
+                data = MakroScraperService.resolve_piggyback_product(clean_text, store)
+                fsn = data["makro_product_id"]
+                item_id = data.get("item_id")
+
+                target_p, target_m = MakroPiggybackService.calculate_price(
+                    original_price=data.get("original_price", 0.0),
+                    strategy=req.price_strategy or "MINUS_1",
+                    min_floor=req.min_price_floor or 0.0,
+                    original_mrp=data.get("original_mrp", 0.0)
+                )
+
+                existing = db.query(MakroPiggybackItem).filter(
+                    MakroPiggybackItem.store_id == store.id,
+                    MakroPiggybackItem.makro_product_id == fsn
+                ).first()
+
+                if existing:
+                    existing.item_id = item_id or existing.item_id
+                    existing.makro_url = data.get("makro_url", existing.makro_url)
+                    existing.image_url = data.get("image_url") or existing.image_url
+                    existing.original_price = data.get("original_price", existing.original_price)
+                    existing.original_mrp = data.get("original_mrp", existing.original_mrp)
+                    existing.original_seller = data.get("original_seller") or existing.original_seller
+                    existing.seller_count = data.get("seller_count") or existing.seller_count or 1
+                    existing.target_price = target_p
+                    existing.target_mrp = target_m
+                else:
+                    sku = _generate_piggyback_sku()
+                    new_item = MakroPiggybackItem(
+                        store_id=store.id,
+                        user_id=current_user.id if current_user else None,
+                        makro_product_id=fsn,
+                        item_id=item_id,
+                        makro_url=data.get("makro_url"),
+                        title=data.get("title"),
+                        title_zh=data.get("title_zh"),
+                        brand=data.get("brand"),
+                        vertical=data.get("vertical"),
+                        image_url=data.get("image_url"),
+                        model_number=data.get("model_number"),
+                        barcode=data.get("barcode"),
+                        original_price=data.get("original_price", 0.0),
+                        original_mrp=data.get("original_mrp", 0.0),
+                        original_seller=data.get("original_seller"),
+                        seller_count=data.get("seller_count", 1),
+                        seller_sku=sku,
+                        target_price=target_p,
+                        target_mrp=target_m,
+                        min_price_floor=req.min_price_floor or 0.0,
+                        price_strategy=req.price_strategy or "MINUS_1",
+                        auto_reprice=True,
+                        inventory=99,
+                        lead_time_days=14,
+                        compliance_status="PENDING_CHECK",
+                        status="PENDING"
+                    )
+                    db.add(new_item)
+                success_count += 1
+            except Exception as e:
+                failed_items.append({"item": clean_text, "error": str(e)})
 
     db.commit()
+    total_requested = (len(req.items) if req.items else 0) + (len(req.rich_items) if req.rich_items else 0)
     return {
         "success": True,
-        "total_requested": len(req.items),
+        "total_requested": total_requested,
         "success_count": success_count,
         "failed_count": len(failed_items),
         "failed_items": failed_items
@@ -384,6 +490,12 @@ def update_piggyback_item(
         item.target_mrp = float(req.target_mrp)
     if req.min_price_floor is not None:
         item.min_price_floor = float(req.min_price_floor)
+    if req.max_price_ceiling is not None:
+        item.max_price_ceiling = float(req.max_price_ceiling)
+    if req.auto_reprice is not None:
+        item.auto_reprice = req.auto_reprice
+    if req.variant_name is not None:
+        item.variant_name = req.variant_name.strip()
     if req.price_strategy is not None:
         item.price_strategy = req.price_strategy
     if req.inventory is not None:

@@ -36,13 +36,21 @@ class MakroPiggybackItem(Base):
     price_strategy = Column(String(50), default="MINUS_1") # MINUS_1, PERCENT_2, MANUAL
     inventory = Column(Integer, default=99)         # 默认上架库存
     lead_time_days = Column(Integer, default=14)    # 发货时效 (SLA，官方默认 14 天)
-    location_id = Column(String(100), nullable=True)# 仓库位置 ID
+    # 变体规格与多属性管理
+    variant_attributes = Column(Text, nullable=True)   # JSON: {"Packaging Type": "Pack of 10"}
+    variant_name = Column(String(200), nullable=True)  # 变体展示名 (如 "Pack of 10")
 
     # 包装与物流规格 (官方挂靠必须)
     weight = Column(Float, default=0.5)
     length = Column(Float, default=15.0)
     breadth = Column(Float, default=10.0)
     height = Column(Float, default=5.0)
+
+    # 自动跟价控制
+    auto_reprice = Column(Boolean, default=True)       # 是否开启自动跟价
+    max_price_ceiling = Column(Float, default=0.0)     # 最高保护价
+    last_reprice_at = Column(DateTime, nullable=True)  # 最近一次跟价巡检时间
+    last_reprice_result = Column(String(200), nullable=True) # 最近一次跟价巡检执行摘要
 
     # AI 侵权与合规检测状态与详情
     # PENDING_CHECK (待检测), SAFE (合规安全), RISK (黄线风险), PROHIBITED (红线禁售), DISPUTED (分歧待仲裁)

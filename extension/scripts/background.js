@@ -212,7 +212,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           mrp: request.mrp || null,
           image_url: request.image_url || null,
           seller_name: request.seller_name || null,
-          seller_count: request.seller_count || 1
+          seller_count: request.seller_count || 1,
+          variant_name: request.variant_name || null,
+          variant_attributes: request.variant_attributes || null
         })
       })
         .then(async (res) => {
@@ -225,6 +227,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         .then(data => sendResponse({ success: true, data }))
         .catch(err => {
           console.error("跟品采集推送到后端失败:", err);
+          sendResponse({ success: false, error: err.message });
+        });
+    });
+    return true;
+  }
+
+  // 5.1 Makro 官网买家端批量采集跟品 (搜索页批量 / 多变体批量采集)
+  if (request.action === "COLLECT_MAKRO_PIGGYBACK_BATCH") {
+    getBackendUrl().then((backendUrl) => {
+      fetch(`${backendUrl}/api/piggyback/batch-collect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rich_items: request.rich_items || [],
+          store_id: request.store_id || null,
+          price_strategy: request.price_strategy || "MINUS_1",
+          min_price_floor: request.min_price_floor || 0.0
+        })
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `HTTP ${res.status}`);
+          }
+          return res.json();
+        })
+        .then(data => sendResponse({ success: true, data }))
+        .catch(err => {
+          console.error("批量跟品采集推送到后端失败:", err);
           sendResponse({ success: false, error: err.message });
         });
     });

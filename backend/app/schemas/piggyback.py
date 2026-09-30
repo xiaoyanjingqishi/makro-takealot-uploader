@@ -16,9 +16,14 @@ class CollectPiggybackRequest(BaseModel):
     seller_name: Optional[str] = Field(None, description="当前在售/占位卖家名称")
     seller_count: Optional[int] = Field(1, description="当前在售商家总数")
     auto_compliance: Optional[bool] = Field(None, description="采集时是否自动执行合规检测 (默认不自动，手动触发)")
+    variant_attributes: Optional[str] = Field(None, description="变体规格 JSON")
+    variant_name: Optional[str] = Field(None, description="变体展示名 (如 Pack of 10)")
+    auto_reprice: Optional[bool] = Field(True, description="是否开启自动跟价")
+    max_price_ceiling: Optional[float] = Field(0.0, description="最高保护价")
 
 class BatchCollectPiggybackRequest(BaseModel):
-    items: List[str] = Field(..., description="多个 Makro 链接或 FSN 列表")
+    items: Optional[List[str]] = Field(None, description="多个 Makro 链接或 FSN 字符串列表")
+    rich_items: Optional[List[Dict[str, Any]]] = Field(None, description="扩展端批量传递的富结构商品数组 (搜索页/多变体批量采集)")
     store_id: Optional[int] = Field(None, description="目标跟品店铺 ID")
     price_strategy: Optional[str] = Field("MINUS_1", description="比价策略")
     min_price_floor: Optional[float] = Field(0.0, description="保本底价")
@@ -29,10 +34,13 @@ class PiggybackItemUpdate(BaseModel):
     target_price: Optional[float] = None
     target_mrp: Optional[float] = None
     min_price_floor: Optional[float] = None
+    max_price_ceiling: Optional[float] = None
+    auto_reprice: Optional[bool] = None
     price_strategy: Optional[str] = None
     inventory: Optional[int] = None
     lead_time_days: Optional[int] = None
     store_id: Optional[int] = None
+    variant_name: Optional[str] = None
     weight: Optional[float] = None
     length: Optional[float] = None
     breadth: Optional[float] = None
@@ -76,9 +84,15 @@ class PiggybackItemResponse(BaseModel):
     target_price: float
     target_mrp: float
     min_price_floor: float
+    max_price_ceiling: Optional[float] = 0.0
+    auto_reprice: Optional[bool] = True
+    last_reprice_at: Optional[str] = None
+    last_reprice_result: Optional[str] = None
     price_strategy: str
     inventory: int
     lead_time_days: int
+    variant_attributes: Optional[str] = None
+    variant_name: Optional[str] = None
     weight: Optional[float] = None
     length: Optional[float] = None
     breadth: Optional[float] = None
@@ -90,6 +104,25 @@ class PiggybackItemResponse(BaseModel):
     error_message: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True,
+        "protected_namespaces": ()
+    }
+
+class RepriceLogResponse(BaseModel):
+    id: int
+    piggyback_id: int
+    store_id: int
+    seller_sku: str
+    makro_product_id: str
+    competitor_seller: Optional[str] = None
+    competitor_price: float
+    old_price: float
+    new_price: float
+    action: str
+    reason: Optional[str] = None
+    created_at: Optional[str] = None
 
     model_config = {
         "from_attributes": True,

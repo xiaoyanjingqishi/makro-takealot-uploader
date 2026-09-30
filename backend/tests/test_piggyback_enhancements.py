@@ -1,5 +1,8 @@
 import unittest
-from backend.app.services.makro_scraper_service import MakroScraperService
+try:
+    from app.services.makro_scraper_service import MakroScraperService
+except ImportError:
+    from backend.app.services.makro_scraper_service import MakroScraperService
 
 class TestPiggybackEnhancements(unittest.TestCase):
     def test_user_provided_url_extraction(self):
