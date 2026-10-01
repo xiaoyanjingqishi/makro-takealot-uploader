@@ -385,6 +385,21 @@
                 <span>🧮</span>
                 <span>选品定价测算</span>
               </a>
+
+              <!-- 员工个人今日战报胶囊 (实时统计与正向激励) -->
+              <button 
+                v-if="currentUser"
+                @click="showMyDailySummaryModal = true; loadMyDailySummary()" 
+                class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300/80 shadow-xs transition select-none cursor-pointer active:scale-95"
+                title="点击查看今日个人作业量统计与团队排名战报"
+              >
+                <span>🏆</span>
+                <span class="hidden sm:inline">今日战报</span>
+                <span class="font-mono text-[10.5px] bg-emerald-600 text-white px-1.5 py-0.2 rounded font-bold">
+                  {{ myDailySummary.today_actions || 0 }}
+                </span>
+              </button>
+
               
               <!-- 后台异步任务轻量指示胶囊 (当有任务时灵动呈现，点击展开/收起详情或跳至日志) -->
               <div v-if="activeBgTasks.length > 0" class="flex items-center space-x-1">
@@ -4347,7 +4362,743 @@
         </div>
       </div>
 
-      <!-- ================= AI 侵权与合规诊断弹窗 (全新双 AI 会审架构) ================= -->
+      <!-- ================= Tab: 管理驾驶舱 (团队人效与员工工作量看板，仅管理员可见) ================= -->
+      <div v-if="currentTab === 'management' && currentUser && currentUser.role === 'ADMIN'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
+        
+        <!-- 1. 顶层全局多维控制台 (Toolbar) -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between flex-wrap gap-3">
+          <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-lg shadow-xs">
+              📊
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+                <span>团队人效管理驾驶舱</span>
+                <span class="text-[11px] font-mono px-2 py-0.2 bg-purple-50 text-purple-700 border border-purple-200/70 rounded-full font-bold">
+                  管理端专属
+                </span>
+              </h2>
+              <p class="text-xs text-slate-500 mt-0.5">
+                全生命周期作业量 · 员工人效排行榜 · 24小时作息时段节律 · 员工操作流水穿透溯源
+              </p>
+            </div>
+          </div>
+
+          <!-- 右侧控制器：时间跨度快捷键 + 人员筛选 + 店铺筛选 + 导出与刷新 -->
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <!-- 时间跨度快捷切换器 -->
+            <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+              <button 
+                v-for="r in [
+                  { id: 'today', label: '今日' },
+                  { id: 'yesterday', label: '昨日' },
+                  { id: '7d', label: '近7天' },
+                  { id: '30d', label: '近30天' },
+                  { id: 'custom', label: '自定义' }
+                ]" 
+                :key="r.id"
+                @click="setManagementDateRange(r.id)"
+                :class="[
+                  'px-2.5 py-1 rounded-md font-medium transition cursor-pointer select-none',
+                  management.dateRange === r.id 
+                    ? 'bg-white text-indigo-600 font-bold shadow-2xs' 
+                    : 'text-slate-600 hover:text-slate-900'
+                ]"
+              >
+                {{ r.label }}
+              </button>
+            </div>
+
+            <!-- 自定义日期起止输入框 -->
+            <div v-if="management.dateRange === 'custom'" class="flex items-center space-x-1 text-xs">
+              <input 
+                type="date" 
+                v-model="management.customStart" 
+                class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <span class="text-slate-400">至</span>
+              <input 
+                type="date" 
+                v-model="management.customEnd" 
+                class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <button 
+                @click="loadManagementData" 
+                class="px-2.5 py-1 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition cursor-pointer"
+              >
+                确定
+              </button>
+            </div>
+
+            <!-- 员工筛选器 -->
+            <div class="flex items-center space-x-1 bg-white px-2 py-1 rounded-lg border border-slate-200 text-xs">
+              <span class="text-slate-400">👤</span>
+              <select 
+                v-model="management.filterUserId" 
+                @change="loadManagementData"
+                class="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+              >
+                <option :value="null">全体员工</option>
+                <option v-for="u in userList" :key="u.id" :value="u.id">
+                  {{ u.nickname || u.username }} ({{ u.role === 'ADMIN' ? '管理' : '员工' }})
+                </option>
+              </select>
+            </div>
+
+            <!-- 店铺筛选器 -->
+            <div class="flex items-center space-x-1 bg-white px-2 py-1 rounded-lg border border-slate-200 text-xs">
+              <span class="text-slate-400">🏪</span>
+              <select 
+                v-model="management.filterStoreId" 
+                @change="loadManagementData"
+                class="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+              >
+                <option :value="null">全部店铺</option>
+                <option v-for="s in stores" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                </option>
+              </select>
+            </div>
+
+            <!-- 刷新 -->
+            <button 
+              @click="loadManagementData" 
+              class="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg text-xs font-medium text-slate-700 shadow-2xs cursor-pointer flex items-center space-x-1 transition active:scale-95"
+              title="刷新管理驾驶舱数据"
+            >
+              <span>{{ management.loading ? '⏳' : '🔄' }}</span>
+              <span>刷新</span>
+            </button>
+
+            <!-- 导出 CSV -->
+            <button 
+              @click="exportManagementWorkload" 
+              class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 transition active:scale-95"
+              title="导出当前时间段员工人效与工作量统计表格 (Excel 兼容 CSV 格式)"
+            >
+              <span>📥</span>
+              <span>导出考勤/人效报表</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 2. 核心 KPI 宏观指标卡 (5张现代科技感卡片) -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          
+          <!-- 卡片 1: 选品采集量 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">📦</span>
+                <span>选品采集总量</span>
+              </div>
+              <span 
+                v-if="management.overview?.sourcing?.growth_rate !== undefined"
+                :class="[
+                  'text-[10px] font-bold px-1.5 py-0.2 rounded font-mono',
+                  management.overview?.sourcing?.growth_rate >= 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-200/60' : 'bg-rose-50 text-rose-600 border border-rose-200/60'
+                ]"
+              >
+                {{ management.overview.sourcing.growth_rate >= 0 ? '↑' : '↓' }} {{ Math.abs(management.overview.sourcing.growth_rate) }}%
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.sourcing?.total || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">件录入</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>上周期: {{ management.overview?.sourcing?.prev_total || 0 }} 件</span>
+              <span class="text-indigo-600 font-medium">Takealot 商品池</span>
+            </div>
+          </div>
+
+          <!-- 卡片 2: AI 清洗与合规质检 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">🧹</span>
+                <span>AI清洗 / 质检</span>
+              </div>
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-600 border border-indigo-200/60 font-mono">
+                AI 自动化
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.cleaning?.total || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">次规范化</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>合规质检: {{ management.overview?.compliance?.total || 0 }} 次</span>
+              <span class="text-purple-600 font-medium">多模态双AI会审</span>
+            </div>
+          </div>
+
+          <!-- 卡片 3: 店铺刊登发布 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">🚀</span>
+                <span>店铺刊登发布</span>
+              </div>
+              <span 
+                :class="[
+                  'text-[10px] font-bold px-1.5 py-0.2 rounded font-mono',
+                  (management.overview?.publishing?.success_rate || 100) >= 90 ? 'bg-emerald-50 text-emerald-600 border border-emerald-200/60' : 'bg-amber-50 text-amber-600 border border-amber-200/60'
+                ]"
+              >
+                成功率 {{ management.overview?.publishing?.success_rate || 100 }}%
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.publishing?.total || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">次上品提交</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span class="text-emerald-600 font-semibold">成 {{ management.overview?.publishing?.success || 0 }}</span>
+              <span class="text-rose-500 font-semibold">败 {{ management.overview?.publishing?.failed || 0 }}</span>
+              <span class="text-slate-400">跨店铺分发</span>
+            </div>
+          </div>
+
+          <!-- 卡片 4: Makro 站内跟品 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">🎯</span>
+                <span>Makro 跟品作业</span>
+              </div>
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200/60 font-mono">
+                智能破价
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.piggyback?.collected || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">件采集</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>已上架: {{ management.overview?.piggyback?.published || 0 }}</span>
+              <span class="text-amber-600 font-bold">🏆 领跑 {{ management.overview?.piggyback?.winning || 0 }} 个</span>
+            </div>
+          </div>
+
+          <!-- 卡片 5: 团队综合人效 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between col-span-2 sm:col-span-1">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">👥</span>
+                <span>团队人均产出</span>
+              </div>
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-mono">
+                {{ management.overview?.team_metrics?.active_operators || 0 }}/{{ management.overview?.team_metrics?.total_operators || 0 }} 在岗
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-indigo-600 font-mono tracking-tight">
+                {{ management.overview?.team_metrics?.per_capita_actions || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">项/人均</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>总流水: {{ management.overview?.team_metrics?.total_actions || 0 }} 笔</span>
+              <span class="text-emerald-600 font-medium">高效运转</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 3. 员工人效排行榜与工作量矩阵表 (Team Leaderboard Matrix) -->
+        <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
+          <!-- 表头栏：标题与排序切换器 -->
+          <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center space-x-2">
+              <span class="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
+                <span>🏆 员工人效排行榜与工作量矩阵</span>
+              </span>
+              <span class="text-xs text-slate-400 hidden md:inline">
+                (支持点击员工一键穿透下钻至个人详细作息节律与操作流水)
+              </span>
+            </div>
+
+            <!-- 排序维度切换 -->
+            <div class="flex items-center space-x-1.5 text-xs text-slate-500">
+              <span class="font-medium">排序维度:</span>
+              <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <button 
+                  v-for="s in [
+                    { id: 'total_actions', label: '综合产出' },
+                    { id: 'sourcing', label: '选品采集' },
+                    { id: 'publishing', label: '刊登发布' },
+                    { id: 'piggyback', label: 'Makro跟品' }
+                  ]"
+                  :key="s.id"
+                  @click="management.sortBy = s.id; loadManagementLeaderboard()"
+                  :class="[
+                    'px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer',
+                    management.sortBy === s.id ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  ]"
+                >
+                  {{ s.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 表格主体 -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="bg-slate-50/90 text-slate-500 font-semibold text-[11px] uppercase tracking-wider border-b border-slate-100">
+                <tr>
+                  <th class="py-2.5 px-3 w-16 text-center">排名</th>
+                  <th class="py-2.5 px-3 w-40">员工账号 / 姓名</th>
+                  <th class="py-2.5 px-3 w-24 text-center">系统角色</th>
+                  <th class="py-2.5 px-3 w-36">授权负责店铺</th>
+                  <th class="py-2.5 px-3 text-right">选品采集</th>
+                  <th class="py-2.5 px-3 text-right">AI清洗</th>
+                  <th class="py-2.5 px-3 text-right">合规质检</th>
+                  <th class="py-2.5 px-3 text-center w-36">刊登发布(成/总)</th>
+                  <th class="py-2.5 px-3 text-right">跟品采集/上架</th>
+                  <th class="py-2.5 px-3 text-right">改价调价</th>
+                  <th class="py-2.5 px-3 text-right font-bold text-slate-900">综合总产出</th>
+                  <th class="py-2.5 px-3 text-center w-32">活跃工时跨度</th>
+                  <th class="py-2.5 px-3 text-right w-24">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-if="management.leaderboard.length === 0">
+                  <td colspan="13" class="text-center py-10 text-slate-400">
+                    暂无所选时间段内的员工操作数据
+                  </td>
+                </tr>
+                <tr 
+                  v-for="item in management.leaderboard" 
+                  :key="item.user_id" 
+                  class="hover:bg-slate-50/80 transition-colors"
+                  :class="{ 'bg-indigo-50/30': management.filterUserId === item.user_id }"
+                >
+                  <!-- 排名 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <span 
+                      v-if="item.rank === 1" 
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-400/20 text-amber-600 font-black text-xs border border-amber-400/50"
+                      title="团队销冠 · 第 1 名"
+                    >
+                      🥇
+                    </span>
+                    <span 
+                      v-else-if="item.rank === 2" 
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-600 font-black text-xs border border-slate-300"
+                      title="第 2 名"
+                    >
+                      🥈
+                    </span>
+                    <span 
+                      v-else-if="item.rank === 3" 
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-700/20 text-amber-800 font-black text-xs border border-amber-700/40"
+                      title="第 3 名"
+                    >
+                      🥉
+                    </span>
+                    <span v-else class="font-mono font-bold text-slate-400 text-xs">
+                      #{{ item.rank }}
+                    </span>
+                  </td>
+
+                  <!-- 员工姓名与账号 -->
+                  <td class="py-2.5 px-3">
+                    <div class="flex items-center space-x-2">
+                      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+                        {{ (item.nickname || item.username).slice(0, 1).toUpperCase() }}
+                      </div>
+                      <div class="min-w-0">
+                        <div class="font-bold text-slate-900 truncate">{{ item.nickname || item.username }}</div>
+                        <div class="text-[10px] text-slate-400 font-mono truncate">@{{ item.username }}</div>
+                      </div>
+                    </div>
+                  </td>
+
+                  <!-- 角色 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <span 
+                      :class="item.role === 'ADMIN' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-200'"
+                      class="px-1.5 py-0.2 rounded text-[10px] font-bold border inline-block"
+                    >
+                      {{ item.role === 'ADMIN' ? '主管' : '员工' }}
+                    </span>
+                  </td>
+
+                  <!-- 负责店铺 -->
+                  <td class="py-2.5 px-3">
+                    <div class="flex items-center space-x-1 flex-wrap gap-y-0.5">
+                      <span 
+                        v-for="sname in (item.store_names || [])" 
+                        :key="sname" 
+                        class="px-1.5 py-0.2 rounded text-[9.5px] bg-slate-100 text-slate-600 border border-slate-200/80 font-medium"
+                      >
+                        {{ sname }}
+                      </span>
+                      <span v-if="!item.store_names || item.store_names.length === 0" class="text-slate-400 text-[10px]">
+                        全部授权
+                      </span>
+                    </div>
+                  </td>
+
+                  <!-- 选品采集数 -->
+                  <td class="py-2.5 px-3 text-right font-mono font-bold text-slate-800">
+                    {{ item.sourcing_count }}
+                  </td>
+
+                  <!-- AI清洗数 -->
+                  <td class="py-2.5 px-3 text-right font-mono text-slate-700">
+                    {{ item.cleaning_count }}
+                  </td>
+
+                  <!-- 合规质检数 -->
+                  <td class="py-2.5 px-3 text-right font-mono text-slate-700">
+                    {{ item.compliance_count }}
+                  </td>
+
+                  <!-- 刊登发布(成/总) -->
+                  <td class="py-2.5 px-3">
+                    <div class="flex flex-col items-center">
+                      <div class="flex items-center justify-between w-full text-[10.5px] font-mono">
+                        <span class="font-bold text-emerald-600">{{ item.publish_success }}成</span>
+                        <span class="text-slate-400">/ {{ item.publish_total }}次</span>
+                        <span class="text-slate-500 font-semibold">{{ item.publish_success_rate }}%</span>
+                      </div>
+                      <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-1">
+                        <div 
+                          class="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                          :style="{ width: item.publish_success_rate + '%' }"
+                        ></div>
+                      </div>
+                    </div>
+                  </td>
+
+                  <!-- 跟品采集/上架 -->
+                  <td class="py-2.5 px-3 text-right font-mono">
+                    <span class="font-bold text-amber-700">{{ item.piggyback_published }}</span>
+                    <span class="text-slate-400 text-[10px]"> / {{ item.piggyback_count }}</span>
+                  </td>
+
+                  <!-- 改价调价 -->
+                  <td class="py-2.5 px-3 text-right font-mono text-slate-700">
+                    {{ item.reprice_count }}
+                  </td>
+
+                  <!-- 综合总产出 (重点高亮) -->
+                  <td class="py-2.5 px-3 text-right">
+                    <span class="font-mono text-sm font-black text-indigo-600 px-2 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200/50">
+                      {{ item.total_actions }}
+                    </span>
+                  </td>
+
+                  <!-- 活跃工时跨度 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <div class="inline-flex items-center space-x-1 text-[10.5px] font-mono text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60">
+                      <span>⏰</span>
+                      <span>{{ item.work_span }}</span>
+                    </div>
+                  </td>
+
+                  <!-- 操作：穿透查看流水 -->
+                  <td class="py-2.5 px-3 text-right">
+                    <button 
+                      @click="drillDownUser(item.user_id)" 
+                      class="px-2 py-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded border border-indigo-200/80 cursor-pointer transition active:scale-95"
+                      title="穿透查看该员工详细操作流水与时段图"
+                    >
+                      🔍 穿透
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 4. 24小时作业时段节奏图 + 实时员工操作审计流水 (下半部分左右分栏) -->
+        <div id="management-stream-section" class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          
+          <!-- 左侧：24小时作业节奏波形图 (5 Cols) -->
+          <div class="lg:col-span-5 bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <div class="flex items-center space-x-2">
+                  <span class="text-base">⏱️</span>
+                  <div>
+                    <h3 class="text-xs font-bold text-slate-900">24小时作业节奏波形分布</h3>
+                    <p class="text-[10.5px] text-slate-400 mt-0.2">描绘员工出勤节奏与波峰波谷</p>
+                  </div>
+                </div>
+                <div v-if="management.filterUserId" class="flex items-center space-x-1.5">
+                  <span class="text-[10px] font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200">
+                    员工: {{ getUserDisplayName(management.filterUserId) }}
+                  </span>
+                  <button 
+                    @click="clearUserDrillDown" 
+                    class="text-[10px] text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title="清除员工筛选，查看全员"
+                  >
+                    ✕ 全员
+                  </button>
+                </div>
+              </div>
+
+              <!-- 统计概要胶囊 -->
+              <div class="grid grid-cols-2 gap-2 my-3">
+                <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/60">
+                  <div class="text-[10px] text-slate-400 font-medium">全天波峰时段</div>
+                  <div class="text-sm font-bold text-indigo-600 mt-0.5 font-mono">
+                    {{ management.hourly.peak_hour }}
+                  </div>
+                </div>
+                <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/60">
+                  <div class="text-[10px] text-slate-400 font-medium">统计区间作业总笔数</div>
+                  <div class="text-sm font-bold text-slate-900 mt-0.5 font-mono">
+                    {{ management.hourly.total_actions }} 笔
+                  </div>
+                </div>
+              </div>
+
+              <!-- SVG 柱状图可视化 -->
+              <div class="mt-4 pt-2">
+                <div class="h-36 w-full flex items-end justify-between space-x-1 px-1 border-b border-slate-200">
+                  <div 
+                    v-for="(cnt, idx) in management.hourly.counts" 
+                    :key="idx"
+                    class="flex-1 flex flex-col items-center group relative h-full justify-end cursor-pointer"
+                  >
+                    <!-- 浮动提示 Tooltip -->
+                    <div class="absolute -top-8 bg-slate-900 text-white text-[9.5px] font-mono px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-20 pointer-events-none shadow-md">
+                      {{ management.hourly.hours[idx] }}:00 · {{ cnt }} 次
+                    </div>
+
+                    <!-- 柱子条 -->
+                    <div 
+                      class="w-full rounded-t transition-all duration-200 group-hover:opacity-80"
+                      :class="[
+                        cnt > 0 
+                          ? (management.hourly.peak_hour.startsWith(management.hourly.hours[idx]) ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-xs' : 'bg-indigo-400') 
+                          : 'bg-slate-100'
+                      ]"
+                      :style="{ 
+                        height: (management.hourly.max_hourly_count > 0 ? Math.max(4, Math.round((cnt / management.hourly.max_hourly_count) * 100)) : 4) + '%' 
+                      }"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- X 轴刻度标签 (00, 04, 08, 12, 16, 20, 23) -->
+                <div class="flex justify-between text-[9.5px] font-mono text-slate-400 mt-1.5 px-1">
+                  <span>00:00</span>
+                  <span>06:00</span>
+                  <span>12:00</span>
+                  <span>18:00</span>
+                  <span>23:00</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部工作节奏健康度提示 -->
+            <div class="mt-4 p-2.5 bg-indigo-50/50 rounded-lg border border-indigo-100 text-[10.5px] text-slate-600 leading-relaxed">
+              💡 <strong>作息洞察</strong>：通常电商团队核心作业高峰在 09:30~12:00 及 14:00~18:00。波峰高度直接体现当下运营工作密集度。
+            </div>
+          </div>
+
+          <!-- 右侧：实时员工操作审计日志流水 (7 Cols) -->
+          <div class="lg:col-span-7 bg-white rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between overflow-hidden">
+            <div>
+              <!-- 顶部工具栏：筛选与搜索 -->
+              <div class="p-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center space-x-2">
+                  <span class="text-base">📋</span>
+                  <span class="text-xs font-bold text-slate-900">员工实时操作审计流水</span>
+                  <span class="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                    共 {{ management.logs.total }} 笔记录
+                  </span>
+                </div>
+
+                <!-- 筛选控件集 -->
+                <div class="flex items-center space-x-2 text-xs flex-wrap gap-y-1">
+                  <!-- 任务类型筛选 -->
+                  <select 
+                    v-model="management.logs.taskType" 
+                    @change="loadManagementLogs(1)"
+                    class="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">全部任务类型</option>
+                    <option value="COLLECT">选品采集</option>
+                    <option value="CLEAN">AI清洗规范化</option>
+                    <option value="BATCH_CLEAN">批量AI清洗</option>
+                    <option value="COMPLIANCE">合规质检</option>
+                    <option value="BATCH_COMPLIANCE">批量合规质检</option>
+                    <option value="SUBMIT_LISTING">店铺刊登</option>
+                    <option value="BATCH_PUBLISH">批量刊登发布</option>
+                    <option value="PIGGYBACK_COLLECT">跟品采集</option>
+                    <option value="PIGGYBACK_PUBLISH">跟品挂靠上架</option>
+                    <option value="REPRICE_UPDATE">调价改价</option>
+                    <option value="PIGGYBACK_BATCH_FLOOR">批量底价维护</option>
+                  </select>
+
+                  <!-- 结果状态筛选 -->
+                  <select 
+                    v-model="management.logs.status" 
+                    @change="loadManagementLogs(1)"
+                    class="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">全部结果状态</option>
+                    <option value="SUCCESS">成功 (SUCCESS)</option>
+                    <option value="FAILED">失败 (FAILED)</option>
+                    <option value="RUNNING">运行中 (RUNNING)</option>
+                  </select>
+
+                  <!-- 搜索关键词 -->
+                  <div class="relative">
+                    <input 
+                      type="text" 
+                      v-model="management.logs.keyword" 
+                      @keyup.enter="loadManagementLogs(1)"
+                      placeholder="搜商品ID/消息/凭据..." 
+                      class="pl-6 pr-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 w-36 focus:w-44 transition-all focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <span class="absolute left-2 top-1.5 text-slate-400 text-xs">🔍</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 流水列表表格 -->
+              <div class="overflow-x-auto max-h-[380px] custom-scrollbar">
+                <table class="w-full text-left border-collapse text-xs">
+                  <thead class="sticky top-0 bg-slate-50/95 backdrop-blur-xs text-slate-500 font-semibold text-[10.5px] uppercase tracking-wider border-b border-slate-100 z-10">
+                    <tr>
+                      <th class="py-2 px-3 w-28">时间</th>
+                      <th class="py-2 px-3 w-24">操作人</th>
+                      <th class="py-2 px-3 w-24 text-center">类型</th>
+                      <th class="py-2 px-3">操作描述与回执概要</th>
+                      <th class="py-2 px-3 w-16 text-center">状态</th>
+                      <th class="py-2 px-3 w-16 text-right">回执</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    <tr v-if="management.logs.loading">
+                      <td colspan="6" class="text-center py-10 text-slate-400">
+                        <div class="inline-block w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-1"></div>
+                        <div>正在检索操作日志...</div>
+                      </td>
+                    </tr>
+                    <tr v-else-if="management.logs.items.length === 0">
+                      <td colspan="6" class="text-center py-8 text-slate-400">
+                        暂无符合条件的审计流水
+                      </td>
+                    </tr>
+                    <tr 
+                      v-for="log in management.logs.items" 
+                      :key="log.id"
+                      class="hover:bg-slate-50/80 transition-colors text-[11px]"
+                    >
+                      <!-- 时间 -->
+                      <td class="py-2 px-3 font-mono text-slate-400 text-[10px] whitespace-nowrap">
+                        {{ log.created_at ? log.created_at.slice(11, 19) : '--' }}
+                      </td>
+
+                      <!-- 操作人 -->
+                      <td class="py-2 px-3">
+                        <div class="flex items-center space-x-1 truncate max-w-[90px]">
+                          <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block"></span>
+                          <span class="font-semibold text-slate-800 truncate" :title="log.operator_name">
+                            {{ log.operator_name || '系统' }}
+                          </span>
+                        </div>
+                      </td>
+
+                      <!-- 任务类型徽标 -->
+                      <td class="py-2 px-3 text-center">
+                        <span 
+                          :class="[
+                            'px-1.5 py-0.2 rounded text-[9.5px] font-bold border inline-block whitespace-nowrap',
+                            log.task_type.includes('COLLECT') ? 'bg-sky-50 text-sky-700 border-sky-200' :
+                            (log.task_type.includes('CLEAN') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                            (log.task_type.includes('PUBLISH') || log.task_type.includes('LISTING') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            (log.task_type.includes('COMPLIANCE') ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-slate-50 text-slate-700 border-slate-200')))
+                          ]"
+                        >
+                          {{ log.task_type }}
+                        </span>
+                      </td>
+
+                      <!-- 消息描述 -->
+                      <td class="py-2 px-3 text-slate-700 leading-snug">
+                        <div class="line-clamp-2" :title="log.message">
+                          {{ log.message }}
+                        </div>
+                      </td>
+
+                      <!-- 状态 -->
+                      <td class="py-2 px-3 text-center">
+                        <span 
+                          :class="[
+                            'px-1.5 py-0.2 rounded text-[9.5px] font-bold',
+                            log.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' :
+                            (log.status === 'FAILED' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')
+                          ]"
+                        >
+                          {{ log.status === 'SUCCESS' ? '成功' : (log.status === 'FAILED' ? '失败' : log.status) }}
+                        </span>
+                      </td>
+
+                      <!-- 查看回执 -->
+                      <td class="py-2 px-3 text-right">
+                        <button 
+                          v-if="log.detail_logs"
+                          @click="openLogDetail(log)"
+                          class="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer underline text-[10px]"
+                        >
+                          明细
+                        </button>
+                        <span v-else class="text-slate-300 text-[10px]">-</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 底部分页控制器 -->
+            <div class="p-2.5 border-t border-slate-100 flex items-center justify-between text-xs bg-slate-50/50">
+              <span class="text-slate-400 text-[11px]">
+                第 {{ management.logs.page }} 页 / 共 {{ Math.max(1, Math.ceil(management.logs.total / management.logs.pageSize)) }} 页
+              </span>
+              <div class="flex items-center space-x-1.5">
+                <button 
+                  @click="loadManagementLogs(management.logs.page - 1)" 
+                  :disabled="management.logs.page <= 1"
+                  class="px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  上一页
+                </button>
+                <button 
+                  @click="loadManagementLogs(management.logs.page + 1)" 
+                  :disabled="management.logs.page >= Math.ceil(management.logs.total / management.logs.pageSize)"
+                  class="px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
       <div v-if="complianceModalItem" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
         <div class="bg-white rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden border border-slate-200/90 flex flex-col max-h-[90vh] ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
           <!-- 弹窗顶栏 -->
@@ -5341,6 +6092,10 @@
                 <span :class="getStatusBadgeClass(activeLogDetail.status)" class="px-2 py-0.5 rounded-md text-[11px] font-bold">
                   {{ activeLogDetail.status }}
                 </span>
+              </div>
+              <div v-if="activeLogDetail.operator_name" class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">执行员工:</span>
+                <span class="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">{{ activeLogDetail.operator_name }} (UID: {{ activeLogDetail.user_id || '-' }})</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-slate-500 font-medium">记录时间:</span>
@@ -7304,6 +8059,154 @@
       </div>
     </div>
 
+    <!-- ================= 员工个人今日战报模态框 ================= -->
+    <div 
+      v-if="showMyDailySummaryModal" 
+      class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      @click.self="showMyDailySummaryModal = false"
+    >
+      <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col">
+        <!-- 顶部装饰色条与标题 -->
+        <div class="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 px-6 py-5 text-white relative overflow-hidden">
+          <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+          <div class="flex items-center justify-between relative z-10">
+            <div class="flex items-center space-x-3">
+              <span class="text-3xl">🏆</span>
+              <div>
+                <h3 class="text-base font-bold tracking-tight">今日个人战报</h3>
+                <p class="text-xs text-emerald-100 font-medium opacity-90 mt-0.5">
+                  {{ currentUser?.nickname || currentUser?.username }} · 今日高效作业成果
+                </p>
+              </div>
+            </div>
+            <button 
+              @click="showMyDailySummaryModal = false" 
+              class="w-7 h-7 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/20 transition-colors text-sm cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- 战报主体内容 -->
+        <div class="p-6 space-y-4">
+          <!-- 激励文案横幅 -->
+          <div class="p-3.5 bg-gradient-to-br from-amber-50 to-orange-50/60 border border-amber-200/80 rounded-xl flex items-center space-x-3 shadow-2xs">
+            <span class="text-2xl shrink-0">✨</span>
+            <div class="text-xs text-amber-900 font-semibold leading-relaxed">
+              {{ myDailySummary.encouragement || '新的一天开始了，加油冲榜！' }}
+            </div>
+          </div>
+
+          <!-- 团队今日排名勋章卡片 -->
+          <div class="p-4 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-10 h-10 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center font-bold text-amber-800 text-sm shadow-xs">
+                <template v-if="myDailySummary.team_rank === 1">🥇</template>
+                <template v-else-if="myDailySummary.team_rank === 2">🥈</template>
+                <template v-else-if="myDailySummary.team_rank === 3">🥉</template>
+                <template v-else>#{{ myDailySummary.team_rank }}</template>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-slate-800">团队今日产出榜</div>
+                <div class="text-[11px] text-slate-500 mt-0.5">
+                  全队共 {{ myDailySummary.total_operators }} 位小伙伴参与作业
+                </div>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-xs text-slate-500 block">今日位列</span>
+              <span class="text-base font-extrabold text-amber-600 font-mono">
+                第 {{ myDailySummary.team_rank }} 名
+              </span>
+            </div>
+          </div>
+
+          <!-- 四大业务核心产出矩阵 -->
+          <div class="grid grid-cols-2 gap-3">
+            <!-- 1. 采集录入 -->
+            <div class="p-3 rounded-xl bg-blue-50/60 border border-blue-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-blue-700">
+                <span class="text-[11px] font-semibold">📥 采集录入</span>
+                <span class="text-xs">Takealot</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-blue-900">
+                {{ myDailySummary.today_sourcing }}
+                <span class="text-[10px] text-blue-600 font-normal ml-0.5">件</span>
+              </div>
+            </div>
+
+            <!-- 2. AI清洗合规 -->
+            <div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-indigo-700">
+                <span class="text-[11px] font-semibold">⚡ 清洗合规</span>
+                <span class="text-xs">AI审核</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-indigo-900">
+                {{ myDailySummary.today_cleaning }}
+                <span class="text-[10px] text-indigo-600 font-normal ml-0.5">次</span>
+              </div>
+            </div>
+
+            <!-- 3. Makro 铺货上架 -->
+            <div class="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-emerald-700">
+                <span class="text-[11px] font-semibold">🚀 铺货刊登</span>
+                <span class="text-xs">上架发品</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-emerald-900">
+                {{ myDailySummary.today_publishing }}
+                <span class="text-[10px] text-emerald-600 font-normal ml-0.5">条</span>
+              </div>
+            </div>
+
+            <!-- 4. Makro 跟品管理 -->
+            <div class="p-3 rounded-xl bg-sky-50/60 border border-sky-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-sky-700">
+                <span class="text-[11px] font-semibold">🎯 爆款跟品</span>
+                <span class="text-xs">跟品截流</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-sky-900">
+                {{ myDailySummary.today_piggyback }}
+                <span class="text-[10px] text-sky-600 font-normal ml-0.5">件</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 综合业务总动销动作 -->
+          <div class="p-3 rounded-xl bg-slate-900 text-white flex items-center justify-between shadow-xs">
+            <div class="flex items-center space-x-2.5">
+              <span class="text-lg">🔥</span>
+              <div>
+                <div class="text-xs font-semibold">今日综合业务操作总次数</div>
+                <div class="text-[10px] text-slate-400">涵盖采集、清洗、合规裁定、刊登、跟品跟价</div>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-lg font-mono font-bold text-emerald-400">{{ myDailySummary.today_actions }}</span>
+              <span class="text-[11px] text-slate-300 ml-1">次</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部按钮区 -->
+        <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+          <button 
+            @click="loadMyDailySummary()" 
+            class="text-xs text-slate-600 hover:text-slate-900 flex items-center space-x-1 cursor-pointer"
+          >
+            <span>🔄</span>
+            <span>刷新战报</span>
+          </button>
+          <button 
+            @click="showMyDailySummaryModal = false" 
+            class="px-5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
+          >
+            知道了，继续加油
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div class="fixed top-5 right-5 z-[10000] flex flex-col space-y-2 pointer-events-none max-w-sm">
       <div 
@@ -7370,7 +8273,36 @@
             selectAll: false,
             autoCompliance: localStorage.getItem('makro_piggyback_auto_compliance') === 'true'
           },
+          // 管理驾驶舱状态 (团队人效与员工工作量看板)
+          management: {
+            dateRange: 'today', // 'today', 'yesterday', '7d', '30d', 'custom'
+            customStart: '',
+            customEnd: '',
+            filterUserId: null,
+            filterStoreId: null,
+            sortBy: 'total_actions',
+            loading: false,
+            overview: null,
+            leaderboard: [],
+            hourly: { hours: [], counts: [], peak_hour: '--', total_actions: 0, max_hourly_count: 0 },
+            logs: { items: [], total: 0, page: 1, pageSize: 15, taskType: '', status: '', keyword: '', loading: false },
+            selectedLog: null,
+            showLogModal: false
+          },
+          // 员工个人今日战报小组件
+          myDailySummary: {
+            today_sourcing: 0,
+            today_cleaning: 0,
+            today_publishing: 0,
+            today_piggyback: 0,
+            today_actions: 0,
+            team_rank: 1,
+            total_operators: 1,
+            encouragement: '新的一天开始了，加油冲榜！'
+          },
+          showMyDailySummaryModal: false,
           inlineEditing: {
+
             id: null,
             field: null,
             tempValue: null,
@@ -7756,9 +8688,11 @@
             { id: 'tasks', name: '任务日志', icon: '📋', hasActiveTask: (this.activeBgTasks || []).some(t => t.status === 'RUNNING'), desc: '后台多模态图文异步调度引擎与执行日志' }
           ];
           if (this.currentUser && this.currentUser.role === 'ADMIN') {
+            list.push({ id: 'management', name: '人效驾驶舱', icon: '📊', badge: '管理', badgeType: 'admin', desc: '团队人效看板 · 员工工作量矩阵 · 24h时段工时与操作审计' });
             list.push({ id: 'settings', name: '系统设置', icon: '⚙️', badge: '管理', badgeType: 'admin', desc: '系统全局参数 · 凭据保活与模型配置' });
             list.push({ id: 'users', name: '用户管理', icon: '👥', badge: '管理', badgeType: 'admin', desc: '团队子账号管理 · 店铺访问控制与 RBAC 权限分配' });
           }
+
           return list;
         },
         visibleTabs() {
@@ -7916,7 +8850,9 @@
           this.checkActiveTasks();
           this.loadNetworkInfo();
           this.loadVerticalTranslations();
+          this.loadMyDailySummary();
         }
+
         window.addEventListener('keydown', (e) => {
           if (e.key === 'Escape' && this.previewImageUrl) {
             this.closeImagePreview();
@@ -9186,6 +10122,164 @@
             alert('保存店铺授权网络异常: ' + e);
           }
         },
+        // ================= 管理驾驶舱方法 =================
+        getManagementDateParams() {
+          let s = '', e = '';
+          const now = new Date();
+          const formatDate = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          };
+          const todayStr = formatDate(now);
+
+          if (this.management.dateRange === 'today') {
+            s = todayStr;
+            e = todayStr;
+          } else if (this.management.dateRange === 'yesterday') {
+            const y = new Date(now);
+            y.setDate(y.getDate() - 1);
+            const yStr = formatDate(y);
+            s = yStr;
+            e = yStr;
+          } else if (this.management.dateRange === '7d') {
+            const past7 = new Date(now);
+            past7.setDate(past7.getDate() - 6);
+            s = formatDate(past7);
+            e = todayStr;
+          } else if (this.management.dateRange === '30d') {
+            const past30 = new Date(now);
+            past30.setDate(past30.getDate() - 29);
+            s = formatDate(past30);
+            e = todayStr;
+          } else if (this.management.dateRange === 'custom') {
+            s = this.management.customStart || todayStr;
+            e = this.management.customEnd || todayStr;
+          }
+          return { start_date: s, end_date: e };
+        },
+        setManagementDateRange(range) {
+          this.management.dateRange = range;
+          if (range !== 'custom') {
+            this.loadManagementData();
+          }
+        },
+        async loadManagementData() {
+          if (!this.currentUser || this.currentUser.role !== 'ADMIN') return;
+          this.management.loading = true;
+          try {
+            await Promise.all([
+              this.loadManagementOverview(),
+              this.loadManagementLeaderboard(),
+              this.loadManagementHourly(),
+              this.loadManagementLogs(1)
+            ]);
+          } finally {
+            this.management.loading = false;
+          }
+        },
+        async loadManagementOverview() {
+          try {
+            const { start_date, end_date } = this.getManagementDateParams();
+            let url = `/api/management/overview?start_date=${start_date}&end_date=${end_date}`;
+            if (this.management.filterUserId) url += `&user_id=${this.management.filterUserId}`;
+            if (this.management.filterStoreId) url += `&store_id=${this.management.filterStoreId}`;
+            const res = await fetch(url, { headers: this.getAuthHeaders() });
+            if (res.ok) {
+              this.management.overview = await res.json();
+            }
+          } catch (e) {
+            console.error('加载管理概览失败:', e);
+          }
+        },
+        async loadManagementLeaderboard() {
+          try {
+            const { start_date, end_date } = this.getManagementDateParams();
+            let url = `/api/management/leaderboard?start_date=${start_date}&end_date=${end_date}&sort_by=${this.management.sortBy}`;
+            if (this.management.filterStoreId) url += `&store_id=${this.management.filterStoreId}`;
+            const res = await fetch(url, { headers: this.getAuthHeaders() });
+            if (res.ok) {
+              const data = await res.json();
+              this.management.leaderboard = data.leaderboard || [];
+            }
+          } catch (e) {
+            console.error('加载人效排行榜失败:', e);
+          }
+        },
+        async loadManagementHourly() {
+          try {
+            const { start_date, end_date } = this.getManagementDateParams();
+            let url = `/api/management/hourly-distribution?start_date=${start_date}&end_date=${end_date}`;
+            if (this.management.filterUserId) url += `&user_id=${this.management.filterUserId}`;
+            const res = await fetch(url, { headers: this.getAuthHeaders() });
+            if (res.ok) {
+              this.management.hourly = await res.json();
+            }
+          } catch (e) {
+            console.error('加载时段节奏失败:', e);
+          }
+        },
+        async loadManagementLogs(page = 1) {
+          this.management.logs.loading = true;
+          try {
+            const { start_date, end_date } = this.getManagementDateParams();
+            let url = `/api/management/activity-logs?page=${page}&page_size=${this.management.logs.pageSize}&start_date=${start_date}&end_date=${end_date}`;
+            if (this.management.filterUserId) url += `&user_id=${this.management.filterUserId}`;
+            if (this.management.logs.taskType) url += `&task_type=${this.management.logs.taskType}`;
+            if (this.management.logs.status) url += `&status=${this.management.logs.status}`;
+            if (this.management.logs.keyword) url += `&keyword=${encodeURIComponent(this.management.logs.keyword.trim())}`;
+            const res = await fetch(url, { headers: this.getAuthHeaders() });
+            if (res.ok) {
+              const data = await res.json();
+              this.management.logs.items = data.items || [];
+              this.management.logs.total = data.total || 0;
+              this.management.logs.page = page;
+            }
+          } catch (e) {
+            console.error('加载审计日志失败:', e);
+          } finally {
+            this.management.logs.loading = false;
+          }
+        },
+        drillDownUser(userId) {
+          this.management.filterUserId = userId;
+          this.loadManagementOverview();
+          this.loadManagementHourly();
+          this.loadManagementLogs(1);
+          this.$nextTick(() => {
+            const el = document.getElementById('management-stream-section');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          });
+        },
+        clearUserDrillDown() {
+          this.management.filterUserId = null;
+          this.loadManagementOverview();
+          this.loadManagementHourly();
+          this.loadManagementLogs(1);
+        },
+        exportManagementWorkload() {
+          const { start_date, end_date } = this.getManagementDateParams();
+          const token = localStorage.getItem('makro_auth_token') || '';
+          window.open(`/api/management/export-workload?start_date=${start_date}&end_date=${end_date}&token=${token}`);
+        },
+        async loadMyDailySummary() {
+          if (!this.currentUser) return;
+          try {
+            const res = await fetch('/api/management/my-summary', { headers: this.getAuthHeaders() });
+            if (res.ok) {
+              this.myDailySummary = await res.json();
+            }
+          } catch (e) {
+            console.error('加载个人今日战报失败:', e);
+          }
+        },
+        getUserDisplayName(userId) {
+          if (!userId) return '系统/未分配';
+          const u = (this.userList || []).find(it => it.id === userId);
+          return u ? (u.nickname || u.username) : `用户#${userId}`;
+        },
+
         async loadNetworkInfo() {
           try {
             const res = await fetch('/api/settings/network-info');
@@ -9383,7 +10477,7 @@
           this.loadProducts(1);
         },
         switchTab(tabId) {
-          if ((tabId === 'settings' || tabId === 'users') && (!this.currentUser || this.currentUser.role !== 'ADMIN')) {
+          if ((tabId === 'settings' || tabId === 'users' || tabId === 'management') && (!this.currentUser || this.currentUser.role !== 'ADMIN')) {
             this.showToast('⛔ 无权访问：该功能仅限系统管理员使用', 'error');
             this.currentTab = 'products';
             return;
@@ -9411,7 +10505,11 @@
           if (tabId === 'users' && this.currentUser && this.currentUser.role === 'ADMIN') {
             this.loadUsers();
           }
+          if (tabId === 'management' && this.currentUser && this.currentUser.role === 'ADMIN') {
+            this.loadManagementData();
+          }
         },
+
         returnToProducts() {
           this.currentTab = 'products';
           if (this.lastInspectedId) {

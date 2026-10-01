@@ -8,10 +8,13 @@ class TaskLogResponse(BaseModel):
     task_type: str
     status: str
     request_id: Optional[str] = None
+    user_id: Optional[int] = None
+    operator_name: Optional[str] = None
     message: Optional[str] = None
     detail_logs: Optional[str] = None
     created_at: datetime
     finished_at: Optional[datetime] = None
+
 
     class Config:
         from_attributes = True

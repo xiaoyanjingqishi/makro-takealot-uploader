@@ -12,10 +12,13 @@ from .store_orders import router as store_orders_router
 from .store_audits import router as store_audits_router
 from .piggyback import router as piggyback_router
 from .reprice import router as reprice_router
+from .management import router as management_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
+api_router.include_router(management_router)
+
 api_router.include_router(products_router)
 api_router.include_router(piggyback_router)
 api_router.include_router(reprice_router)

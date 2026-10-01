@@ -26,7 +26,9 @@ from ..schemas.piggyback import (
 from ..services.makro_scraper_service import MakroScraperService
 from ..services.makro_piggyback_service import MakroPiggybackService
 from ..services.task_manager import task_manager, TaskManager
+from ..services.audit_logger import record_audit_log
 from ..utils.auth import get_current_user
+
 
 logger = logging.getLogger(__name__)
 
@@ -225,11 +227,22 @@ def collect_single_piggyback(
         except Exception as comp_err:
             logger.warning(f"采集后自动合规检测跳过: {comp_err}")
 
+    record_audit_log(
+        task_type="PIGGYBACK_COLLECT",
+        status="SUCCESS",
+        message=f"Makro跟品采集: {item.title[:35]} (FSN: {item.makro_product_id})",
+        detail_logs={"fsn": item.makro_product_id, "title": item.title, "sku": item.seller_sku, "store_id": item.store_id},
+        user_id=current_user.id,
+        operator_name=current_user.nickname or current_user.username,
+        db=db
+    )
+
     return {
         "success": True,
         "message": f"成功采集商品「{item.title[:30]}...」入库",
         "item": _format_piggyback_item(item)
     }
+
 
 @router.post("/batch-collect", summary="批量采集 Makro 链接、FSN 或搜索页/变体富数据入库")
 def batch_collect_piggyback(
@@ -405,6 +418,15 @@ def batch_collect_piggyback(
 
     db.commit()
     total_requested = (len(req.items) if req.items else 0) + (len(req.rich_items) if req.rich_items else 0)
+    record_audit_log(
+        task_type="PIGGYBACK_COLLECT",
+        status="SUCCESS" if success_count > 0 else "FAILED",
+        message=f"批量跟品采集: 成功 {success_count}/{total_requested} 件商品入库",
+        detail_logs={"total": total_requested, "success": success_count, "failed": len(failed_items)},
+        user_id=current_user.id,
+        operator_name=current_user.nickname or current_user.username,
+        db=db
+    )
     return {
         "success": True,
         "total_requested": total_requested,
@@ -412,6 +434,7 @@ def batch_collect_piggyback(
         "failed_count": len(failed_items),
         "failed_items": failed_items
     }
+
 
 @router.get("/kpi-stats", summary="获取跟品与跟价运营驾驶舱 6 大核心 KPI 统计")
 def get_piggyback_kpi_stats(
@@ -487,11 +510,21 @@ def batch_set_floor(
         updated_count += 1
 
     db.commit()
+    record_audit_log(
+        task_type="PIGGYBACK_BATCH_FLOOR",
+        status="SUCCESS",
+        message=f"批量设置跟品底价: 成功修改 {updated_count} 件商品底价 (模式: {mode}, 参数: {val})",
+        detail_logs={"total": len(req.ids), "updated_count": updated_count, "mode": mode, "value": val},
+        user_id=current_user.id,
+        operator_name=current_user.nickname or current_user.username,
+        db=db
+    )
     return {
         "success": True,
         "total_requested": len(req.ids),
         "updated_count": updated_count
     }
+
 
 @router.post("/check-existence", summary="核验一组 FSN/PID 是否已存在于跟品库中 (用于扩展排重感知)")
 def check_piggyback_existence(
@@ -683,6 +716,16 @@ def update_piggyback_item(
 
     db.commit()
     db.refresh(item)
+    if price_changed or req.min_price_floor is not None or req.auto_reprice is not None:
+        record_audit_log(
+            task_type="REPRICE_UPDATE",
+            status="SUCCESS",
+            message=f"更新跟品定价: {item.title[:35]} (售价: R{item.target_price}, 底价: R{item.min_price_floor})",
+            detail_logs={"item_id": item.id, "target_price": item.target_price, "floor": item.min_price_floor, "auto_reprice": item.auto_reprice},
+            user_id=current_user.id,
+            operator_name=current_user.nickname or current_user.username,
+            db=db
+        )
     return {"success": True, "item": _format_piggyback_item(item), "sync_message": push_msg}
 
 @router.post("/check-compliance/{item_id}", summary="对单件商品执行 AI 侵权与合规检测")
@@ -696,6 +739,15 @@ def check_single_compliance(
         raise HTTPException(status_code=404, detail="未找到该跟品商品")
 
     res = MakroPiggybackService.check_compliance_for_item(item, db)
+    record_audit_log(
+        task_type="PIGGYBACK_COMPLIANCE",
+        status="SUCCESS",
+        message=f"跟品合规检测: {item.title[:35]} -> 状态={item.compliance_status}",
+        detail_logs={"item_id": item.id, "compliance_status": item.compliance_status, "details": res},
+        user_id=current_user.id,
+        operator_name=current_user.nickname or current_user.username,
+        db=db
+    )
     return {
         "success": True,
         "compliance_status": item.compliance_status,
@@ -717,11 +769,22 @@ def batch_check_compliance(
         except Exception as e:
             results[it.id] = {"status": "ERROR", "error": str(e)}
 
+    record_audit_log(
+        task_type="PIGGYBACK_COMPLIANCE",
+        status="SUCCESS",
+        message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查",
+        detail_logs={"total": len(items), "results": results},
+        user_id=current_user.id,
+        operator_name=current_user.nickname or current_user.username,
+        db=db
+    )
+
     return {
         "success": True,
         "total_checked": len(items),
         "results": results
     }
+
 
 @router.post("/batch-apply-pricing", summary="批量应用智能比价策略")
 def batch_apply_pricing(
@@ -764,8 +827,26 @@ def publish_single_piggyback(
     store = item.store or _get_target_store(db, item.store_id)
     try:
         res = MakroPiggybackService.publish_piggyback_listing(item, store, db)
+        record_audit_log(
+            task_type="PIGGYBACK_PUBLISH",
+            status="SUCCESS",
+            message=f"跟品挂靠上架成功: {item.title[:35]} (SKU: {item.seller_sku})",
+            detail_logs={"item_id": item.id, "sku": item.seller_sku, "result": res},
+            user_id=current_user.id,
+            operator_name=current_user.nickname or current_user.username,
+            db=db
+        )
         return {"success": True, "result": res}
     except Exception as e:
+        record_audit_log(
+            task_type="PIGGYBACK_PUBLISH",
+            status="FAILED",
+            message=f"跟品挂靠上架失败: {item.title[:35]} (原因: {str(e)})",
+            detail_logs={"item_id": item.id, "sku": item.seller_sku, "error": str(e)},
+            user_id=current_user.id,
+            operator_name=current_user.nickname or current_user.username,
+            db=db
+        )
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/batch-publish", summary="批量异步执行 Makro 挂靠跟品")
@@ -778,6 +859,9 @@ def batch_publish_piggyback(
     items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
     if not items:
         raise HTTPException(status_code=400, detail="未指定合法的跟品商品")
+
+    u_id = current_user.id
+    op_name = current_user.nickname or current_user.username
 
     # 创建任务
     task_id = str(uuid.uuid4())
@@ -805,7 +889,20 @@ def batch_publish_piggyback(
                     errs += 1
                     logger.error(f"批量跟品 ID {pid} 挂靠异常: {ex}")
                 task_manager.update_task_progress(t_id, done + errs, f"已处理 {done + errs}/{len(p_ids)} 件 (成功 {done}, 失败 {errs})")
-            task_manager.complete_task(t_id, f"批量挂靠完成: 成功 {done} 件, 失败 {errs} 件")
+            
+            status = "SUCCESS" if done > 0 else "FAILED"
+            msg = f"批量挂靠完成: 成功 {done} 件, 失败 {errs} 件"
+            task_manager.complete_task(t_id, msg)
+            record_audit_log(
+                task_type="PIGGYBACK_PUBLISH",
+                status=status,
+                message=msg,
+                detail_logs={"total": len(p_ids), "success": done, "failed": errs, "item_ids": p_ids[:50]},
+                user_id=u_id,
+                operator_name=op_name,
+                db=worker_db
+            )
+
 
     background_tasks.add_task(_worker, task_id, req.ids)
 

@@ -13,7 +13,10 @@ from ..schemas.product import BatchCleanRequest, ProductResponse
 from ..services.ai_cleaner_service import AICleanerService, truncate_title_safely, format_title_with_specs, clean_spec_value
 from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
+from ..models.user import User
+from ..utils.auth import get_optional_current_user
 from .products import _format_product
+
 
 class ArbitrateComplianceRequest(BaseModel):
     human_verdict: str  # 'SAFE', 'RISK', 'PROHIBITED'
@@ -32,22 +35,29 @@ LISTING_ONLY_ATTRS = {
 def clean_single_product(
     product_id: int,
     mode: Optional[str] = Query(None, description="清洗模式: 'text'(纯文本) 或 'vision'(图文多模态)"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
 
+    u_id = current_user.id if current_user else product.user_id
+    op_name = (current_user.nickname or current_user.username) if current_user else None
+
     mode_label = "图文多模态" if mode == "vision" else "纯文本"
     task = TaskLog(
         product_id=product.id,
         task_type="CLEAN",
         status="RUNNING",
+        user_id=u_id,
+        operator_name=op_name,
         message=f"正在对商品 {product.id} 执行 AI {mode_label}清洗...",
         created_at=datetime.now()
     )
     db.add(task)
     db.commit()
+
 
     try:
         ai_service = AICleanerService.from_db(db)
@@ -184,9 +194,16 @@ def clean_single_product(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/batch-clean", summary="批量执行 AI 数据清洗 (后台异步多线程任务，支持同SPU变体协同与软预检)")
-def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
+def batch_clean_products(
+    req: BatchCleanRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "errors": [], "message": "未选择商品"}
+
+    u_id = current_user.id if current_user else None
+    op_name = (current_user.nickname or current_user.username) if current_user else None
 
     ai_service = AICleanerService.from_db(db)
     total = len(req.product_ids)
@@ -194,6 +211,7 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
     mode_label = "图文多模态" if clean_mode == "vision" else ("纯文本" if clean_mode == "text" else "默认模式")
     task = task_manager.create_task("BATCH_CLEAN", f"批量AI数据清洗 ({mode_label})", total, req.product_ids)
     task_id = task["id"]
+
 
     # 阶段 2: 提取商品母体标识 (takealot_id 或 group_code) 实现 SPU 变体协同清洗
     prods_meta = db.query(Product.id, Product.takealot_id, Product.group_code).filter(Product.id.in_(req.product_ids)).all()
@@ -442,7 +460,17 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
         succ = t_now["success_count"] if t_now else 0
         fail = t_now["fail_count"] if t_now else 0
         status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
-        tm.finish_task(tid, status=status, message=f"批量AI清洗完成: 成功 {succ} 件, 失败 {fail} 件")
+        msg = f"批量AI清洗完成: 成功 {succ} 件, 失败 {fail} 件"
+        tm.finish_task(tid, status=status, message=msg)
+        record_audit_log(
+            task_type="BATCH_CLEAN",
+            status=status,
+            message=msg,
+            detail_logs={"total": total, "success": succ, "failed": fail, "product_ids": req.product_ids[:50]},
+            user_id=u_id,
+            operator_name=op_name
+        )
+
 
     task_manager.start_task(task_id, _worker)
 
@@ -454,9 +482,16 @@ def batch_clean_products(req: BatchCleanRequest, db: Session = Depends(get_db)):
     }
 
 @router.post("/batch-compliance", summary="批量执行 AI 侵权与合规检测 (后台异步多线程任务)")
-def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)):
+def batch_check_compliance(
+    req: BatchCleanRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "errors": [], "message": "未选择商品"}
+
+    u_id = current_user.id if current_user else None
+    op_name = (current_user.nickname or current_user.username) if current_user else None
 
     from ..services.compliance_service import ComplianceService
     cs = ComplianceService.from_db(db)
@@ -464,6 +499,7 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
     concurrency_limit = max(1, min(req.concurrency or 20, 50))
     task = task_manager.create_task("BATCH_COMPLIANCE", f"批量合规与侵权排查 ({concurrency_limit}线程并发)", total, req.product_ids)
     task_id = task["id"]
+
 
     def _worker(tm: TaskManager, tid: str):
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -522,7 +558,16 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
         succ = t_now["success_count"] if t_now else 0
         fail = t_now["fail_count"] if t_now else 0
         status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
-        tm.finish_task(tid, status=status, message=f"批量合规排查完成: 成功 {succ} 件, 失败 {fail} 件 ({concurrency_limit}线程)")
+        msg = f"批量合规排查完成: 成功 {succ} 件, 失败 {fail} 件 ({concurrency_limit}线程)"
+        tm.finish_task(tid, status=status, message=msg)
+        record_audit_log(
+            task_type="BATCH_COMPLIANCE",
+            status=status,
+            message=msg,
+            detail_logs={"total": total, "success": succ, "failed": fail, "product_ids": req.product_ids[:50]},
+            user_id=u_id,
+            operator_name=op_name
+        )
 
     task_manager.start_task(task_id, _worker)
 
@@ -535,10 +580,17 @@ def batch_check_compliance(req: BatchCleanRequest, db: Session = Depends(get_db)
     }
 
 @router.post("/check-compliance/{product_id}", summary="单品独立触发 AI 侵权与违禁品全量检测 (含首图视觉)")
-def check_single_compliance(product_id: int, db: Session = Depends(get_db)):
+def check_single_compliance(
+    product_id: int,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
+
+    u_id = current_user.id if current_user else product.user_id
+    op_name = (current_user.nickname or current_user.username) if current_user else None
 
     from ..services.compliance_service import ComplianceService
     cs = ComplianceService.from_db(db)
@@ -567,6 +619,8 @@ def check_single_compliance(product_id: int, db: Session = Depends(get_db)):
         message=f"商品 ID {product.id} 合规检测完成: 状态={product.compliance_status}",
         product_id=product.id,
         detail_logs=comp_res,
+        user_id=u_id,
+        operator_name=op_name,
         db=db
     )
 
@@ -580,6 +634,7 @@ def check_single_compliance(product_id: int, db: Session = Depends(get_db)):
 def arbitrate_compliance(
     product_id: int,
     req: ArbitrateComplianceRequest,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     product = db.query(Product).filter(Product.id == product_id).first()
@@ -665,6 +720,8 @@ def arbitrate_compliance(
     db.refresh(product)
 
     # 记录操作审计日志
+    u_id = current_user.id if current_user else product.user_id
+    op_name = (current_user.nickname or current_user.username) if current_user else None
     record_audit_log(
         task_type="ARBITRATION",
         status="SUCCESS",
@@ -677,6 +734,8 @@ def arbitrate_compliance(
             "deepseek_status": deepseek_status,
             "notes": req.human_notes
         },
+        user_id=u_id,
+        operator_name=op_name,
         db=db
     )
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from ..database import get_db
 from ..models.product import Product, ProductVariant
+from ..models.user import User
 from ..models.setting import SystemSetting
 from ..models.task import TaskLog
 from ..schemas.setting import SyncCredentialsRequest
@@ -19,8 +20,10 @@ from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
 from ..services.compliance_service import PROTECTED_ENTERTAINMENT_IPS
 from ..services.ai_cleaner_service import truncate_title_safely
+from ..utils.auth import get_optional_current_user
 from ..config import settings
 from .products import _format_product
+
 
 router = APIRouter(prefix="/makro", tags=["Makro上品引擎"])
 logger = logging.getLogger(__name__)
@@ -574,7 +577,8 @@ def _record_store_listing(
     msg: Optional[str],
     selling_price: Optional[float] = None,
     mrp: Optional[float] = None,
-    brand: Optional[str] = None
+    brand: Optional[str] = None,
+    user_id: Optional[int] = None
 ):
     """记录或更新商品在特定店铺的上架状态与凭据"""
     if not target_store:
@@ -600,6 +604,9 @@ def _record_store_listing(
             )
             db.add(listing)
 
+        if user_id:
+            listing.user_id = user_id
+
         listing.brand = brand or getattr(target_store, "default_brand", None) or "Beishi"
         listing.status = "SUBMITTED" if is_success else "FAILED"
         if sku_id and (is_success or not listing.makro_sku_id):
@@ -615,6 +622,7 @@ def _record_store_listing(
         db.commit()
     except Exception as ex:
         logger.error(f"记录 ProductStoreListing 异常: {ex}", exc_info=True)
+
 
 def _auto_heal_payload(payload: dict, err_details: dict, allowed_attrs: dict) -> bool:
     """
@@ -804,8 +812,10 @@ def _publish_single_product(
         msg=msg,
         selling_price=product.makro_selling_price,
         mrp=product.makro_mrp,
-        brand=brand
+        brand=brand,
+        user_id=getattr(product, "user_id", None)
     )
+
 
     return {
         "product_id": product.id,
@@ -934,11 +944,16 @@ def publish_product_to_makro(
     store_id: Optional[int] = None,
     publish_all_stores: bool = False,
     force: bool = False,
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="商品未找到")
+
+    u_id = current_user.id if current_user else product.user_id
+    op_name = (current_user.nickname or current_user.username) if current_user else None
+
 
     # 违禁品安全防护
     if product.compliance_status == "PROHIBITED" and not force:
@@ -994,6 +1009,8 @@ def publish_product_to_makro(
             product_id=product.id,
             task_type="SUBMIT_LISTING",
             status="RUNNING",
+            user_id=u_id,
+            operator_name=op_name,
             message=f"开始向店铺【{s_name}】(刊登品牌: {brand}) 执行 Makro 上品调用...",
             created_at=datetime.now()
         )
@@ -1012,8 +1029,10 @@ def publish_product_to_makro(
                 msg=msg,
                 selling_price=product.makro_selling_price,
                 mrp=product.makro_mrp,
-                brand=brand
+                brand=brand,
+                user_id=u_id
             )
+
             task.status = "FAILED"
             task.message = msg
             task.finished_at = datetime.now()
@@ -1118,8 +1137,11 @@ def publish_product_to_makro(
         status="SUCCESS" if any_success else "FAILED",
         message=f"商品 #{product.id} 完成跨店铺上品 (成功店铺: {succ_names})",
         detail_logs={"product_id": product.id, "store_results": store_results},
+        user_id=u_id,
+        operator_name=op_name,
         db=db
     )
+
 
     return {
         "success": any_success,
@@ -1130,11 +1152,20 @@ def publish_product_to_makro(
     }
 
 @router.post("/batch-publish", summary="批量上品到 Makro (支持受控多线程并发与店铺间并行，后台异步执行)")
-def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = None, db: Session = Depends(get_db)):
+def batch_publish_products(
+    req: BatchPublishRequest,
+    force: Optional[bool] = None,
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db)
+):
     if not req.product_ids:
         return {"total": 0, "success": 0, "failed": 0, "results": [], "message": "未选择商品"}
 
+    u_id = current_user.id if current_user else None
+    op_name = (current_user.nickname or current_user.username) if current_user else None
+
     effective_force = bool(getattr(req, "force", False) or (force is True))
+
 
     # 读取批量上品并发度配置 (支持请求显式指定，默认取系统配置 publish_concurrency，限制 1~5 线程)
     from ..models.setting import SystemSetting
@@ -1236,7 +1267,7 @@ def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = Non
                             completed_count += 1
                             cur_c = completed_count
                         tm.update_progress(tid, current=cur_c, current_title=disp_title, fail_inc=1, error=f"店铺【{s_name}】未配置 Cookie")
-                        _record_store_listing(local_db, product.id, s_item, False, None, None, f"店铺【{s_name}】未配置 Cookie", product.makro_selling_price, product.makro_mrp, brand=brand)
+                        _record_store_listing(local_db, product.id, s_item, False, None, None, f"店铺【{s_name}】未配置 Cookie", product.makro_selling_price, product.makro_mrp, brand=brand, user_id=u_id)
                         continue
 
                     try:
@@ -1272,7 +1303,17 @@ def batch_publish_products(req: BatchPublishRequest, force: Optional[bool] = Non
         succ = t_now["success_count"] if t_now else 0
         fail = t_now["fail_count"] if t_now else 0
         status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if fail == 0 else ("FAILED" if succ == 0 else "SUCCESS"))
-        tm.finish_task(tid, status=status, message=f"批量上品完成 (受控并发度: {actual_workers} 线程): 成功 {succ} 次, 失败 {fail} 次")
+        msg = f"批量上品完成 (受控并发度: {actual_workers} 线程): 成功 {succ} 次, 失败 {fail} 次"
+        tm.finish_task(tid, status=status, message=msg)
+        record_audit_log(
+            task_type="BATCH_PUBLISH",
+            status=status,
+            message=msg,
+            detail_logs={"total": total_ops, "success": succ, "failed": fail, "product_ids": req.product_ids[:50]},
+            user_id=u_id,
+            operator_name=op_name
+        )
+
 
     task_manager.start_task(task_id, _worker)
 

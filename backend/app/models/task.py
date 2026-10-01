@@ -10,7 +10,10 @@ class TaskLog(Base):
     task_type = Column(String(50), nullable=False)  # CLEAN, UPLOAD_IMAGES, SUBMIT_LISTING
     status = Column(String(50), default="RUNNING")  # RUNNING, SUCCESS, FAILED
     request_id = Column(String(100), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    operator_name = Column(String(100), nullable=True, index=True)
     message = Column(String(500), nullable=True)
     detail_logs = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     finished_at = Column(DateTime, nullable=True)
+

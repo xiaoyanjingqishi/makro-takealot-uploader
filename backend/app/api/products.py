@@ -247,12 +247,15 @@ def collect_product(
     products = TakealotService.save_collected_product(db, req, user_id=user_id)
     v_count = len(products) if isinstance(products, list) else 1
     p_obj = products[0] if isinstance(products, list) else products
+    op_name = (current_user.nickname or current_user.username) if current_user else (req.collector_username or None)
     record_audit_log(
         task_type="COLLECT",
         status="SUCCESS",
         message=f"浏览器插件采集: {req.takealot_title[:35]} (共 {v_count} 个独立变体, 归属用户ID: {user_id})",
         product_id=p_obj.id if p_obj else None,
         detail_logs={"url": req.takealot_url, "title": req.takealot_title, "variants_count": v_count, "plid": req.takealot_id, "user_id": user_id},
+        user_id=user_id,
+        operator_name=op_name,
         db=db
     )
     if isinstance(products, list):
@@ -301,12 +304,15 @@ def collect_by_plid(
         products = TakealotService.fetch_and_save_by_plid(plid_or_url, db, custom_url=raw_url, user_id=user_id)
         v_count = len(products) if isinstance(products, list) else 1
         p_obj = products[0] if isinstance(products, list) else products
+        op_name = (current_user.nickname or current_user.username) if current_user else None
         record_audit_log(
             task_type="COLLECT",
             status="SUCCESS",
             message=f"PLID极速采集: {plid_or_url} (入库 {v_count} 个变体, 归属用户ID: {user_id})",
             product_id=p_obj.id if p_obj else None,
             detail_logs={"plid_or_url": plid_or_url, "variants_count": v_count, "user_id": user_id},
+            user_id=user_id,
+            operator_name=op_name,
             db=db
         )
         if isinstance(products, list):
@@ -324,6 +330,8 @@ def collect_by_plid(
             status="FAILED",
             message=f"PLID极速采集失败: {plid_or_url} 原因: {err_msg}",
             detail_logs={"plid_or_url": plid_or_url, "error": err_msg},
+            user_id=user_id,
+            operator_name=op_name if 'op_name' in locals() else None,
             db=db
         )
         raise HTTPException(status_code=400, detail=err_msg)
@@ -333,6 +341,8 @@ def collect_by_plid(
             status="FAILED",
             message=f"PLID极速采集失败: {plid_or_url} 异常: {str(e)}",
             detail_logs={"plid_or_url": plid_or_url, "error": str(e)},
+            user_id=user_id,
+            operator_name=op_name if 'op_name' in locals() else None,
             db=db
         )
         raise HTTPException(status_code=500, detail=f"采集异常: {str(e)}")

@@ -41,6 +41,7 @@ class ProductStoreListing(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
     store_id = Column(Integer, ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     status = Column(String(50), default="PENDING", index=True)  # PENDING, SUBMITTED, ACTIVE, FAILED
     brand = Column(String(100), nullable=True)  # 实际刊登品牌

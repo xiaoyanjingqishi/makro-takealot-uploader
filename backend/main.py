@@ -67,9 +67,23 @@ try:
             _conn.execute(text("ALTER TABLE stores ADD COLUMN last_auto_login_at DATETIME"))
         if "last_auto_login_status" not in cols:
             _conn.execute(text("ALTER TABLE stores ADD COLUMN last_auto_login_status VARCHAR(255)"))
+        
+        # 确保 task_logs 表具备 user_id 与 operator_name 字段 (支持员工工作量与人效审计追踪)
+        task_cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(task_logs)"))]
+        if "user_id" not in task_cols:
+            _conn.execute(text("ALTER TABLE task_logs ADD COLUMN user_id INTEGER"))
+        if "operator_name" not in task_cols:
+            _conn.execute(text("ALTER TABLE task_logs ADD COLUMN operator_name VARCHAR(100)"))
+
+        # 确保 product_store_listings 具备 user_id 字段 (支持按员工统计各店铺刊登产出)
+        psl_cols = [row[1] for row in _conn.execute(text("PRAGMA table_info(product_store_listings)"))]
+        if "user_id" not in psl_cols:
+            _conn.execute(text("ALTER TABLE product_store_listings ADD COLUMN user_id INTEGER"))
+
         _conn.commit()
-except Exception:
-    pass
+except Exception as _mig_err:
+    print(f"[INIT] 数据库字段自检迁移提示: {_mig_err}")
+
 
 
 # 确保多店铺初始数据迁移 (如果 stores 为空，从现有系统配置无缝迁移首个默认店铺)

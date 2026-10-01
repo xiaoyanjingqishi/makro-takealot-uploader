@@ -15,16 +15,20 @@ def record_audit_log(
     product_id: Optional[int] = None,
     request_id: Optional[str] = None,
     detail_logs: Optional[Any] = None,
+    user_id: Optional[int] = None,
+    operator_name: Optional[str] = None,
     db: Optional[Session] = None
 ) -> Optional[TaskLog]:
     """
-    统一记录全系统操作日志
-    :param task_type: COLLECT, CLEAN, BATCH_CLEAN, COMPLIANCE, BATCH_COMPLIANCE, BATCH_PRICE, BATCH_DELETE, SUBMIT_LISTING, BATCH_PUBLISH, SETTINGS_UPDATE
+    统一记录全系统操作日志 (支持操作员工溯源与工作量统计)
+    :param task_type: COLLECT, CLEAN, BATCH_CLEAN, COMPLIANCE, BATCH_COMPLIANCE, BATCH_PRICE, BATCH_DELETE, SUBMIT_LISTING, BATCH_PUBLISH, PIGGYBACK_COLLECT, PIGGYBACK_PUBLISH, PIGGYBACK_COMPLIANCE, REPRICE_UPDATE, SETTINGS_UPDATE
     :param status: SUCCESS, FAILED, RUNNING, WARNING
     :param message: 操作描述
     :param product_id: 关联商品 ID
     :param request_id: 关联 Makro RequestId 或其他凭据
     :param detail_logs: 详细数据回执 (dict, list 或 str)
+    :param user_id: 操作员工用户 ID
+    :param operator_name: 操作员工姓名/昵称
     :param db: 外部传入的 DB Session，若无则自动创建独立连接
     """
     close_session = False
@@ -40,12 +44,25 @@ def record_audit_log(
             else:
                 detail_str = str(detail_logs)
 
+        # 若提供了 user_id 但未提供 operator_name，尝试从 DB 获取操作人显示名
+        final_operator_name = operator_name
+        if user_id and not final_operator_name:
+            try:
+                from ..models.user import User
+                u = db.query(User).filter(User.id == user_id).first()
+                if u:
+                    final_operator_name = u.nickname or u.username
+            except Exception:
+                pass
+
         now = datetime.now()
         log_entry = TaskLog(
             product_id=product_id,
             task_type=task_type,
             status=status,
             request_id=request_id,
+            user_id=user_id,
+            operator_name=final_operator_name,
             message=(message or "")[:500],
             detail_logs=detail_str,
             created_at=now,
@@ -65,6 +82,8 @@ def record_audit_log(
                     task_type=task_type,
                     status=status,
                     request_id=request_id,
+                    user_id=user_id,
+                    operator_name=final_operator_name,
                     message=(message or "")[:500],
                     detail_logs=detail_str,
                     created_at=now,
