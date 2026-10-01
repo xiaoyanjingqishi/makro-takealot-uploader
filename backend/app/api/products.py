@@ -6,7 +6,7 @@ import requests
 from typing import List, Optional, Union
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, UploadFile, File, Form, Request
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import Session, selectinload, joinedload
 from ..database import get_db, SessionLocal
 from ..models.product import Product, ProductVariant
@@ -503,6 +503,8 @@ def list_products(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     user_id: Optional[str] = Query(None, description="按员工用户ID过滤 (管理员可用, 支持 'unassigned')"),
+    store_id: Optional[int] = Query(None, description="按目标店铺ID过滤"),
+    publish_status: Optional[str] = Query(None, description="店铺刊登状态过滤: PUBLISHED(已上架某店), UNPUBLISHED(未上架某店), ANY_PUBLISHED(任意店铺已上架), NONE_PUBLISHED(全店未上架)"),
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
@@ -512,6 +514,18 @@ def list_products(
             detail="请先登录系统以访问选品数据",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+    # 规范化参数类型 (兼容 FastAPI 注入与 Python 直接调用)
+    status = status if isinstance(status, str) else None
+    compliance_status = compliance_status if isinstance(compliance_status, str) else None
+    search = search if isinstance(search, str) else None
+    min_price = min_price if isinstance(min_price, (int, float)) else None
+    max_price = max_price if isinstance(max_price, (int, float)) else None
+    page = page if isinstance(page, int) and page >= 1 else 1
+    page_size = page_size if isinstance(page_size, int) and page_size >= 1 else 50
+    user_id = user_id if isinstance(user_id, (str, int)) else None
+    store_id = store_id if isinstance(store_id, int) else None
+    publish_status = publish_status if isinstance(publish_status, str) else None
 
     query = db.query(Product)
 
@@ -533,6 +547,30 @@ def list_products(
         query = query.filter(Product.user_id.is_(None))
     elif filter_user_id is not None:
         query = query.filter(Product.user_id == filter_user_id)
+
+    # 店铺刊登状态过滤
+    if store_id is not None:
+        if publish_status == "PUBLISHED":
+            # 已经上架到该特定店铺 (且状态为成功提交或已在售)
+            query = query.filter(Product.store_listings.any(
+                and_(
+                    ProductStoreListing.store_id == store_id,
+                    ProductStoreListing.status.in_(["SUBMITTED", "ACTIVE"])
+                )
+            ))
+        elif publish_status == "UNPUBLISHED":
+            # 尚未上架到该特定店铺 (用于精准选品补发)
+            query = query.filter(~Product.store_listings.any(
+                and_(
+                    ProductStoreListing.store_id == store_id,
+                    ProductStoreListing.status.in_(["SUBMITTED", "ACTIVE"])
+                )
+            ))
+    else:
+        if publish_status == "ANY_PUBLISHED":
+            query = query.filter(Product.store_listings.any(ProductStoreListing.status.in_(["SUBMITTED", "ACTIVE"])))
+        elif publish_status == "NONE_PUBLISHED":
+            query = query.filter(~Product.store_listings.any(ProductStoreListing.status.in_(["SUBMITTED", "ACTIVE"])))
 
     if status:
         query = query.filter(Product.status == status)

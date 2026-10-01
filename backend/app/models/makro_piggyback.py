@@ -69,3 +69,4 @@ class MakroPiggybackItem(Base):
 
     store = relationship("Store")
     creator = relationship("User")
+    user = relationship("User", overlaps="creator")

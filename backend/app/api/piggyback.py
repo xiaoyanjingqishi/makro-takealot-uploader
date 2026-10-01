@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
 
 from ..database import get_db
@@ -61,11 +61,18 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         except Exception:
             pass
 
+    op_name = None
+    if getattr(item, "creator", None):
+        op_name = item.creator.nickname or item.creator.username
+    elif getattr(item, "user", None):
+        op_name = item.user.nickname or item.user.username
+
     return {
         "id": item.id,
         "store_id": item.store_id,
         "store_name": item.store.name if item.store else "未知店铺",
         "user_id": item.user_id,
+        "operator_name": op_name,
         "makro_product_id": item.makro_product_id,
         "item_id": item.item_id,
         "makro_url": item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, item.item_id),
@@ -515,8 +522,8 @@ def batch_set_floor(
         status="SUCCESS",
         message=f"批量设置跟品底价: 成功修改 {updated_count} 件商品底价 (模式: {mode}, 参数: {val})",
         detail_logs={"total": len(req.ids), "updated_count": updated_count, "mode": mode, "value": val},
-        user_id=current_user.id,
-        operator_name=current_user.nickname or current_user.username,
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
         db=db
     )
     return {
@@ -566,15 +573,18 @@ def list_piggyback_items(
     buybox_status: Optional[str] = None,
     compliance_status: Optional[str] = None,
     store_id: Optional[int] = None,
+    user_id: Optional[int] = None,
     search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     query = db.query(MakroPiggybackItem)
 
-    # 员工权限隔离
+    # 员工权限隔离与管理员指定采品人过滤
     if current_user and current_user.role != "ADMIN":
         query = query.filter(MakroPiggybackItem.user_id == current_user.id)
+    elif user_id is not None:
+        query = query.filter(MakroPiggybackItem.user_id == user_id)
 
     if isinstance(store_id, int):
         query = query.filter(MakroPiggybackItem.store_id == store_id)
@@ -583,6 +593,8 @@ def list_piggyback_items(
     stat_query = db.query(MakroPiggybackItem)
     if current_user and current_user.role != "ADMIN":
         stat_query = stat_query.filter(MakroPiggybackItem.user_id == current_user.id)
+    elif user_id is not None:
+        stat_query = stat_query.filter(MakroPiggybackItem.user_id == user_id)
     if isinstance(store_id, int):
         stat_query = stat_query.filter(MakroPiggybackItem.store_id == store_id)
 
@@ -590,6 +602,7 @@ def list_piggyback_items(
     pending_count = stat_query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
     active_count = stat_query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"])).count()
     failed_count = stat_query.filter(MakroPiggybackItem.status == "FAILED").count()
+    pending_check_count = stat_query.filter(MakroPiggybackItem.compliance_status == "PENDING_CHECK").count()
     safe_count = stat_query.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
     risk_count = stat_query.filter(MakroPiggybackItem.compliance_status == "RISK").count()
     prohibited_count = stat_query.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
@@ -630,7 +643,16 @@ def list_piggyback_items(
         )
 
     filtered_total = query.count()
-    items = query.order_by(MakroPiggybackItem.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    items = (
+        query.options(
+            joinedload(MakroPiggybackItem.creator),
+            joinedload(MakroPiggybackItem.store)
+        )
+        .order_by(MakroPiggybackItem.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
 
     return {
         "total": filtered_total,
@@ -641,6 +663,7 @@ def list_piggyback_items(
             "pending_count": pending_count,
             "active_count": active_count,
             "failed_count": failed_count,
+            "pending_check_count": pending_check_count,
             "safe_count": safe_count,
             "risk_count": risk_count,
             "prohibited_count": prohibited_count

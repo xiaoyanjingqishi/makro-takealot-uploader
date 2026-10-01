@@ -72,25 +72,67 @@ class AutoRepriceService:
         reason = ""
         new_price = old_selling_price
 
-        # 2. 判断当前 Buybox 归属
-        store_names = [store.name.lower()]
-        if store.default_brand:
-            store_names.append(store.default_brand.lower())
-        
-        is_own_store = False
-        if comp_seller and any(sn in comp_seller.lower() or comp_seller.lower() in sn for sn in store_names):
-            is_own_store = True
+        # 2. 判断当前 Buybox 归属 (全矩阵多店铺协同防内卷识别)
+        all_active_stores = db.query(Store).filter(Store.is_active == True).all()
+
+        is_own_current_store = False
+        is_matrix_sister_store = False
+        winning_store_name = None
+
+        if comp_seller:
+            comp_seller_clean = comp_seller.strip().lower()
+            for s in all_active_stores:
+                # 收集店铺全量可能的前台展示标识：店铺名称、默认品牌、卖家 SellerID
+                identifiers = []
+                if s.name:
+                    identifiers.append(s.name.strip().lower())
+                if s.default_brand:
+                    identifiers.append(s.default_brand.strip().lower())
+                if s.seller_id:
+                    identifiers.append(s.seller_id.strip().lower())
+
+                if any(ident in comp_seller_clean or comp_seller_clean in ident for ident in identifiers if ident):
+                    if s.id == store.id:
+                        is_own_current_store = True
+                        winning_store_name = s.name
+                    else:
+                        is_matrix_sister_store = True
+                        winning_store_name = s.name
+                    break
+
+        # 辅助多店铺同品跨店关联校验：
+        # 若 comp_seller 未能直接文本匹配（例如 Makro 前台只显示了局部缩写），
+        # 但我们本地同矩阵其他启用的店铺也挂靠了同一 FSN，且其在售价正好等于 comp_price
+        if not is_own_current_store and not is_matrix_sister_store and comp_price > 0:
+            sister_items = db.query(MakroPiggybackItem).filter(
+                MakroPiggybackItem.makro_product_id == item.makro_product_id,
+                MakroPiggybackItem.id != item.id,
+                MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"])
+            ).all()
+            for s_it in sister_items:
+                if s_it.target_price and abs(float(s_it.target_price) - comp_price) < 0.05:
+                    is_matrix_sister_store = True
+                    s_name = s_it.store.name if s_it.store else f"店铺#{s_it.store_id}"
+                    winning_store_name = f"{s_name} (同款在售)"
+                    break
+
+        is_own_any_store = is_own_current_store or is_matrix_sister_store
 
         if comp_price <= 0:
             action = "FAILED"
             reason = "未能获取到前台有效竞对售价"
-        elif is_own_store:
-            # 己方已经赢得黄金购物车！坚决不自我压价！
+        elif is_own_current_store:
+            # 本店铺自己已经赢得黄金购物车！坚决不自我压价！
             action = "WINNING_HOLD"
-            reason = f"当前店铺已抢占黄金购物车 (Buybox: {comp_seller})，保持现价 R{old_selling_price}，不自我压价"
+            reason = f"当前店铺已抢占黄金购物车 (Buybox: {comp_seller or store.name})，保持现价 R{old_selling_price}，不自我压价"
+            new_price = old_selling_price
+        elif is_matrix_sister_store:
+            # 矩阵内兄弟店铺已经赢得黄金购物车！坚决不自相残杀，不压价内卷！
+            action = "WINNING_HOLD"
+            reason = f"矩阵友军店铺 [{winning_store_name or comp_seller}] 已占位黄金购物车，为避免内部互相压价削减利润，本店铺维持现价 R{old_selling_price}，不内卷跟价"
             new_price = old_selling_price
         else:
-            # 3. 计算跟价出价
+            # 外部竞对占位，计算抢流出价
             if strategy == "MINUS_1":
                 calc_p = max(comp_price - 1.0, 1.0)
             elif strategy == "PERCENT_2":
@@ -100,7 +142,7 @@ class AutoRepriceService:
             else:
                 calc_p = max(comp_price - 1.0, 1.0)
 
-            # 4. 保本底线防穿保护
+            # 保本底线防穿保护
             if min_floor > 0 and calc_p < min_floor:
                 new_price = min_floor
                 action = "REACHED_FLOOR"
@@ -129,7 +171,7 @@ class AutoRepriceService:
         # 6. 计算最终 Buybox 归属状态
         if comp_price <= 0:
             buybox_status = item.buybox_status or "UNKNOWN"
-        elif is_own_store:
+        elif is_own_any_store:
             buybox_status = "WINNING"
         elif action == "REACHED_FLOOR":
             buybox_status = "FLOOR_HIT"

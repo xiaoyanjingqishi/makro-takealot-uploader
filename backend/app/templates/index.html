@@ -728,6 +728,41 @@
                   </option>
                 </select>
 
+                <!-- 店铺刊登状态筛选器 (多店铺上架精准选品与补发) -->
+                <div class="flex items-center space-x-1.5 border border-slate-200 rounded-lg px-2.5 py-1 bg-white text-xs text-slate-700 shadow-2xs">
+                  <span class="text-slate-400 text-xs shrink-0">🏪</span>
+                  <select 
+                    v-model="storePublishFilterStoreId" 
+                    @change="loadProducts(1)"
+                    class="text-xs bg-transparent border-none focus:outline-none text-slate-700 font-medium cursor-pointer"
+                    title="选择目标店铺"
+                  >
+                    <option :value="null">全部店铺</option>
+                    <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+                  </select>
+
+                  <span class="text-slate-200">|</span>
+
+                  <select 
+                    v-model="storePublishStatus" 
+                    @change="loadProducts(1)"
+                    class="text-xs bg-transparent border-none focus:outline-none font-semibold cursor-pointer"
+                    :class="storePublishStatus !== 'ALL' ? 'text-indigo-600 font-bold' : 'text-slate-600'"
+                    title="按上架状态筛选"
+                  >
+                    <template v-if="!storePublishFilterStoreId">
+                      <option value="ALL">全部刊登状态</option>
+                      <option value="ANY_PUBLISHED">🌐 任意店铺已刊登</option>
+                      <option value="NONE_PUBLISHED">📦 全店从未上架</option>
+                    </template>
+                    <template v-else>
+                      <option value="ALL">全部状态</option>
+                      <option value="PUBLISHED">🟢 已上架此店铺</option>
+                      <option value="UNPUBLISHED">⚪ 未上架此店铺 (待补发)</option>
+                    </template>
+                  </select>
+                </div>
+
                 <!-- 价格区间过滤胶囊 -->
                 <div class="flex items-center space-x-1 border border-slate-200 rounded-lg px-2 py-1 bg-white text-xs text-slate-600 shadow-2xs">
                   <span class="text-slate-400 text-[11px] font-bold font-mono">R</span>
@@ -2260,11 +2295,12 @@
                 </button>
               </div>
 
-              <!-- 合规状态筛选 -->
+              <!-- 合规状态筛选 (支持独立的待检测商品筛选) -->
               <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
                 <button 
                   v-for="cst in [
                     { key: 'ALL', label: '全部风控' },
+                    { key: 'PENDING_CHECK', label: '⏳ 待检测', count: piggyback.stats.pending_check_count },
                     { key: 'SAFE', label: '🟢 合规' },
                     { key: 'RISK', label: '🟡 风险' },
                     { key: 'PROHIBITED', label: '🔴 禁售' }
@@ -2272,11 +2308,26 @@
                   :key="cst.key"
                   @click="changePiggybackCompliance(cst.key)"
                   :class="piggyback.compliance_status === cst.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
-                  class="px-2.5 py-1 text-xs rounded-md transition-all cursor-pointer select-none"
+                  class="px-2 py-1 text-xs rounded-md transition-all cursor-pointer select-none flex items-center space-x-1"
                 >
                   <span>{{ cst.label }}</span>
+                  <span v-if="cst.count !== undefined" class="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[9.5px] rounded-full font-mono">{{ cst.count }}</span>
                 </button>
               </div>
+
+              <!-- 采品员工筛选下拉 (管理员专属) -->
+              <select 
+                v-if="currentUser && currentUser.role === 'ADMIN'"
+                v-model="piggyback.user_id" 
+                @change="loadPiggybackItems(1)"
+                class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
+                title="按采集员工过滤跟品商品"
+              >
+                <option :value="null">👤 全部采品人</option>
+                <option v-for="op in operatorsList" :key="op.id" :value="op.id">
+                  👤 {{ op.nickname || op.username }} ({{ op.role === 'ADMIN' ? '管理员' : '员工' }})
+                </option>
+              </select>
 
               <!-- 店铺筛选下拉 -->
               <select 
@@ -2644,6 +2695,12 @@
                       <div class="text-[10px] text-slate-400 flex items-center space-x-2">
                         <span>库存: {{ item.inventory }}</span>
                         <span>SLA: {{ item.lead_time_days }}天</span>
+                      </div>
+                      <div class="text-[10px] text-slate-500 flex items-center space-x-1 pt-0.5 border-t border-slate-100">
+                        <span class="text-slate-400">👤 采品:</span>
+                        <span class="font-medium text-indigo-700 bg-indigo-50 px-1 py-0.2 rounded border border-indigo-100 truncate max-w-[100px]" :title="'采品员工: ' + (item.operator_name || getUserDisplayName(item.user_id))">
+                          {{ item.operator_name || getUserDisplayName(item.user_id) }}
+                        </span>
                       </div>
                     </div>
                   </td>
@@ -8248,12 +8305,14 @@
             buybox_status: 'ALL',
             compliance_status: 'ALL',
             store_id: null,
+            user_id: null,
             search: '',
             stats: {
               total_all: 0,
               pending_count: 0,
               active_count: 0,
               failed_count: 0,
+              pending_check_count: 0,
               safe_count: 0,
               risk_count: 0,
               prohibited_count: 0
@@ -8624,6 +8683,8 @@
           statusFilter: '',
           complianceFilter: '',
           userFilter: '',
+          storePublishFilterStoreId: null,
+          storePublishStatus: 'ALL',
           operatorsList: [],
           showBatchAssignModal: false,
           batchAssignTargetUserId: '',
@@ -9035,6 +9096,9 @@
             }
             if (this.piggyback.store_id) {
               params.append('store_id', this.piggyback.store_id);
+            }
+            if (this.piggyback.user_id) {
+              params.append('user_id', this.piggyback.user_id);
             }
             if (this.piggyback.search) {
               params.append('search', this.piggyback.search.trim());
@@ -10626,6 +10690,8 @@
             if (this.statusFilter) url += `&status=${this.statusFilter}`;
             if (this.complianceFilter) url += `&compliance_status=${this.complianceFilter}`;
             if (this.userFilter) url += `&user_id=${encodeURIComponent(this.userFilter)}`;
+            if (this.storePublishFilterStoreId) url += `&store_id=${this.storePublishFilterStoreId}`;
+            if (this.storePublishStatus && this.storePublishStatus !== 'ALL') url += `&publish_status=${this.storePublishStatus}`;
             if (this.minPriceFilter !== null && this.minPriceFilter !== undefined && this.minPriceFilter !== '') {
               url += `&min_price=${this.minPriceFilter}`;
             }

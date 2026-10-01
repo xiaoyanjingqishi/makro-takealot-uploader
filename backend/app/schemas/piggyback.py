@@ -66,6 +66,7 @@ class PiggybackItemResponse(BaseModel):
     store_id: int
     store_name: Optional[str] = None
     user_id: Optional[int] = None
+    operator_name: Optional[str] = None
     makro_product_id: str
     item_id: Optional[str] = None
     makro_url: Optional[str] = None
