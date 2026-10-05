@@ -18,6 +18,7 @@ from ..schemas.piggyback import (
     BatchApplyPricingRequest,
     BatchCheckComplianceRequest,
     BatchPublishPiggybackRequest,
+    BatchSetStoreRequest,
     BatchDeletePiggybackRequest,
     BatchSetFloorRequest,
     CheckExistenceRequest,
@@ -840,6 +841,7 @@ def batch_apply_pricing(
 @router.post("/publish/{item_id}", summary="单品执行 Makro 官方挂靠跟品")
 def publish_single_piggyback(
     item_id: int,
+    store_id: Optional[int] = Query(None, description="指定挂靠目标店铺 ID"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -847,14 +849,20 @@ def publish_single_piggyback(
     if not item:
         raise HTTPException(status_code=404, detail="未找到该跟品商品")
 
-    store = item.store or _get_target_store(db, item.store_id)
+    if store_id:
+        store = db.query(Store).filter(Store.id == store_id).first()
+        if not store:
+            raise HTTPException(status_code=400, detail=f"指定的店铺 ID {store_id} 不存在")
+        item.store_id = store.id
+    else:
+        store = item.store or _get_target_store(db, item.store_id)
     try:
         res = MakroPiggybackService.publish_piggyback_listing(item, store, db)
         record_audit_log(
             task_type="PIGGYBACK_PUBLISH",
             status="SUCCESS",
-            message=f"跟品挂靠上架成功: {item.title[:35]} (SKU: {item.seller_sku})",
-            detail_logs={"item_id": item.id, "sku": item.seller_sku, "result": res},
+            message=f"跟品挂靠上架成功: {item.title[:35]} (SKU: {item.seller_sku}, 店铺: {store.name})",
+            detail_logs={"item_id": item.id, "sku": item.seller_sku, "store_id": store.id, "store_name": store.name, "result": res},
             user_id=current_user.id,
             operator_name=current_user.nickname or current_user.username,
             db=db
@@ -865,7 +873,7 @@ def publish_single_piggyback(
             task_type="PIGGYBACK_PUBLISH",
             status="FAILED",
             message=f"跟品挂靠上架失败: {item.title[:35]} (原因: {str(e)})",
-            detail_logs={"item_id": item.id, "sku": item.seller_sku, "error": str(e)},
+            detail_logs={"item_id": item.id, "sku": item.seller_sku, "store_id": store.id if store else item.store_id, "error": str(e)},
             user_id=current_user.id,
             operator_name=current_user.nickname or current_user.username,
             db=db
@@ -875,7 +883,6 @@ def publish_single_piggyback(
 @router.post("/batch-publish", summary="批量异步执行 Makro 挂靠跟品")
 def batch_publish_piggyback(
     req: BatchPublishPiggybackRequest,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -883,56 +890,129 @@ def batch_publish_piggyback(
     if not items:
         raise HTTPException(status_code=400, detail="未指定合法的跟品商品")
 
+    target_store = None
+    if req.store_id:
+        target_store = db.query(Store).filter(Store.id == req.store_id).first()
+        if not target_store:
+            raise HTTPException(status_code=400, detail=f"指定的跟品目标店铺 ID {req.store_id} 不存在")
+
     u_id = current_user.id
     op_name = current_user.nickname or current_user.username
+    store_desc = f"至 [{target_store.name}]" if target_store else "至各所属店铺"
 
-    # 创建任务
-    task_id = str(uuid.uuid4())
-    task_manager.create_task(
-        task_id=task_id,
+    # 创建中台标准异步任务 (与 cleaner/makro 批处理标准完全对齐)
+    task = task_manager.create_task(
         task_type="MAKRO_PIGGYBACK",
-        title=f"批量跟品挂靠 ({len(items)} 件)",
-        total=len(items)
+        name=f"批量跟品挂靠 {store_desc} ({len(items)} 件)",
+        total=len(items),
+        product_ids=req.ids
     )
+    task_id = task["id"]
+    target_store_id = target_store.id if target_store else None
 
-    def _worker(t_id: str, p_ids: List[int]):
+    def _worker(tm: TaskManager, tid: str):
         from ..database import SessionLocal
-        with SessionLocal() as worker_db:
+        local_db = SessionLocal()
+        try:
             done = 0
             errs = 0
-            for pid in p_ids:
-                p_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == pid).first()
+            for idx, pid in enumerate(req.ids):
+                if tm.is_cancelled(tid):
+                    break
+                p_item = local_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == pid).first()
                 if not p_item:
                     continue
-                p_store = p_item.store or worker_db.query(Store).filter(Store.id == p_item.store_id).first()
+
+                if target_store_id:
+                    p_store = local_db.query(Store).filter(Store.id == target_store_id).first()
+                    p_item.store_id = target_store_id
+                    try:
+                        local_db.commit()
+                    except Exception as ce:
+                        local_db.rollback()
+                        logger.warning(f"批量跟品变更店铺失败 [{pid}]: {ce}")
+                else:
+                    p_store = p_item.store or local_db.query(Store).filter(Store.id == p_item.store_id).first()
+                if not p_store:
+                    p_store = _get_target_store(local_db)
+
                 try:
-                    MakroPiggybackService.publish_piggyback_listing(p_item, p_store, worker_db)
+                    MakroPiggybackService.publish_piggyback_listing(p_item, p_store, local_db)
                     done += 1
+                    tm.update_progress(
+                        tid,
+                        current=done + errs,
+                        current_title=f"已成功挂靠: {p_item.title[:35]}",
+                        success_inc=1
+                    )
                 except Exception as ex:
                     errs += 1
                     logger.error(f"批量跟品 ID {pid} 挂靠异常: {ex}")
-                task_manager.update_task_progress(t_id, done + errs, f"已处理 {done + errs}/{len(p_ids)} 件 (成功 {done}, 失败 {errs})")
-            
-            status = "SUCCESS" if done > 0 else "FAILED"
+                    tm.update_progress(
+                        tid,
+                        current=done + errs,
+                        current_title=f"挂靠失败: {p_item.title[:35]}",
+                        fail_inc=1,
+                        error=str(ex)
+                    )
+
+            status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if done > 0 else "FAILED")
             msg = f"批量挂靠完成: 成功 {done} 件, 失败 {errs} 件"
-            task_manager.complete_task(t_id, msg)
+            tm.finish_task(tid, status=status, message=msg)
             record_audit_log(
                 task_type="PIGGYBACK_PUBLISH",
                 status=status,
                 message=msg,
-                detail_logs={"total": len(p_ids), "success": done, "failed": errs, "item_ids": p_ids[:50]},
+                detail_logs={"total": len(req.ids), "success": done, "failed": errs, "target_store_id": target_store_id, "item_ids": req.ids[:50]},
                 user_id=u_id,
                 operator_name=op_name,
-                db=worker_db
+                db=local_db
             )
+        finally:
+            local_db.close()
 
-
-    background_tasks.add_task(_worker, task_id, req.ids)
+    task_manager.start_task(task_id, _worker)
 
     return {
         "success": True,
         "task_id": task_id,
-        "message": f"已成功启动 {len(items)} 件商品的异步挂靠任务"
+        "message": f"已成功启动 {len(items)} 件商品的异步批量挂靠任务 ({store_desc})"
+    }
+
+@router.post("/batch-set-store", summary="批量修改选定跟品商品的所属店铺")
+def batch_set_store(
+    req: BatchSetStoreRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="请至少选择一件商品")
+    store = db.query(Store).filter(Store.id == req.store_id).first()
+    if not store:
+        raise HTTPException(status_code=400, detail=f"指定的店铺 ID {req.store_id} 不存在")
+
+    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    updated_count = 0
+    for it in items:
+        it.store_id = store.id
+        updated_count += 1
+    db.commit()
+
+    record_audit_log(
+        task_type="PIGGYBACK_BATCH_STORE",
+        status="SUCCESS",
+        message=f"批量转移跟品店铺: 成功将 {updated_count} 件商品归属转移至店铺 [{store.name}]",
+        detail_logs={"total": len(req.ids), "updated_count": updated_count, "store_id": store.id, "store_name": store.name},
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+    return {
+        "success": True,
+        "total_requested": len(req.ids),
+        "updated_count": updated_count,
+        "store_id": store.id,
+        "store_name": store.name
     }
 
 @router.delete("/items/{item_id}", summary="删除单件跟品商品")

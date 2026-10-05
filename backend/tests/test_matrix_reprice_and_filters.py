@@ -5,15 +5,26 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from unittest.mock import patch
 
-from backend.app.database import Base
-from backend.app.models.user import User
-from backend.app.models.store import Store, ProductStoreListing
-from backend.app.models.product import Product
-from backend.app.models.makro_piggyback import MakroPiggybackItem
-from backend.app.models.makro_reprice_log import MakroRepriceLog
-from backend.app.services.auto_reprice_service import AutoRepriceService
-from backend.app.api.piggyback import list_piggyback_items
-from backend.app.api.products import list_products
+try:
+    from backend.app.database import Base
+    from backend.app.models.user import User
+    from backend.app.models.store import Store, ProductStoreListing
+    from backend.app.models.product import Product
+    from backend.app.models.makro_piggyback import MakroPiggybackItem
+    from backend.app.models.makro_reprice_log import MakroRepriceLog
+    from backend.app.services.auto_reprice_service import AutoRepriceService
+    from backend.app.api.piggyback import list_piggyback_items
+    from backend.app.api.products import list_products
+except ImportError:
+    from app.database import Base
+    from app.models.user import User
+    from app.models.store import Store, ProductStoreListing
+    from app.models.product import Product
+    from app.models.makro_piggyback import MakroPiggybackItem
+    from app.models.makro_reprice_log import MakroRepriceLog
+    from app.services.auto_reprice_service import AutoRepriceService
+    from app.api.piggyback import list_piggyback_items
+    from app.api.products import list_products
 
 class TestMatrixRepriceAndFilters(unittest.TestCase):
     @classmethod
@@ -84,7 +95,7 @@ class TestMatrixRepriceAndFilters(unittest.TestCase):
             "seller_count": 2
         }
 
-        with patch("backend.app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend", return_value=mock_scraped):
+        with patch("app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend", return_value=mock_scraped):
             res = AutoRepriceService.reprice_single_item(item2, self.db, force=True)
 
         self.assertEqual(res["status"], "SUCCESS")
@@ -115,8 +126,8 @@ class TestMatrixRepriceAndFilters(unittest.TestCase):
             "seller_count": 3
         }
 
-        with patch("backend.app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend", return_value=mock_scraped):
-            with patch("backend.app.services.auto_reprice_service.AutoRepriceService._push_price_to_makro", return_value=True):
+        with patch("app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend", return_value=mock_scraped):
+            with patch("app.services.auto_reprice_service.AutoRepriceService._push_price_to_makro", return_value=True):
                 res = AutoRepriceService.reprice_single_item(item, self.db, force=True)
 
         self.assertEqual(res["status"], "SUCCESS")

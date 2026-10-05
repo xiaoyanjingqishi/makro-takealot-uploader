@@ -2436,9 +2436,20 @@
                 <span>AI质检 ({{ piggyback.selectedIds.length }})</span>
               </button>
 
-              <!-- 批量挂靠跟品 -->
+              <!-- 批量改店铺 -->
               <button 
-                @click="handleBatchPublishPiggyback"
+                @click="openBatchSetStoreModal" 
+                :disabled="piggyback.selectedIds.length === 0"
+                class="px-2.5 py-1.5 text-xs bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title="一键批量将选中的跟品商品转移归属到指定店铺"
+              >
+                <span>🏪</span>
+                <span>改店铺 ({{ piggyback.selectedIds.length }})</span>
+              </button>
+
+              <!-- 批量挂靠跟品 (支持选定目标店铺) -->
+              <button 
+                @click="openBatchPublishPiggybackModal" 
                 :disabled="piggyback.selectedIds.length === 0"
                 class="px-3 py-1.5 text-xs bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -2842,13 +2853,23 @@
               <span class="text-slate-300">已选</span>
             </div>
 
-            <!-- 批量一键挂靠 -->
+            <!-- 批量一键挂靠 (支持选定目标店铺) -->
             <button 
-              @click="handleBatchPublishPiggyback"
+              @click="openBatchPublishPiggybackModal"
               class="px-3 py-1.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition cursor-pointer"
             >
               <span>🚀</span>
               <span>一键跟卖</span>
+            </button>
+
+            <!-- 批量改店铺 -->
+            <button 
+              @click="openBatchSetStoreModal"
+              class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition cursor-pointer"
+              title="一键批量将选中的商品转移归属到指定店铺"
+            >
+              <span>🏪</span>
+              <span>改店铺</span>
             </button>
 
             <!-- 批量公式算底价 -->
@@ -7700,6 +7721,135 @@
       </div>
     </div>
 
+    <!-- ================= 弹窗: 批量挂靠跟品上架 (支持选定目标店铺) ================= -->
+    <div v-if="showBatchPublishPiggybackModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
+        <div class="p-4 bg-gradient-to-r from-sky-600 to-blue-600 text-white flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="text-xl">🚀</span>
+            <div>
+              <h3 class="font-bold text-sm">批量挂靠跟品上架 (Makro 官方通道)</h3>
+              <p class="text-[11px] text-sky-100">已选择 {{ piggyback.selectedIds.length }} 件跟品商品，直接激活库存挂靠在售</p>
+            </div>
+          </div>
+          <button @click="showBatchPublishPiggybackModal = false" class="text-white/80 hover:text-white text-base cursor-pointer">✕</button>
+        </div>
+
+        <div class="p-5 space-y-4 text-xs">
+          <!-- 目标店铺选择 -->
+          <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+            <label class="font-bold text-slate-800 flex items-center space-x-1.5">
+              <span>🏪</span>
+              <span>选择挂靠目标店铺:</span>
+            </label>
+
+            <!-- 模式 1: 统一发布至指定店铺 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition select-none"
+              :class="batchPublishPiggybackStoreMode === 'target' ? 'border-sky-500 bg-sky-50/70 shadow-2xs' : 'border-slate-200 hover:bg-white'">
+              <input type="radio" value="target" v-model="batchPublishPiggybackStoreMode" class="mt-0.5 text-sky-600 focus:ring-sky-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">统一发布至指定店铺 (推荐)</span>
+                <p class="text-slate-500 text-[11px]">将选中的所有商品统一挂靠跟卖到该店铺下（自动更新商品所属店铺）</p>
+                <div v-if="batchPublishPiggybackStoreMode === 'target'" class="mt-2">
+                  <select v-model="batchPublishPiggybackTargetStoreId" class="w-full px-2.5 py-1.5 border border-sky-300 rounded font-semibold text-slate-800 bg-white text-xs">
+                    <option v-for="s in activeStores" :key="s.id" :value="s.id">
+                      🏪 {{ s.name }} ({{ s.default_brand || '默认品牌' }}) {{ s.is_default ? '★默认店' : '' }}
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </label>
+
+            <!-- 模式 2: 按商品各自绑定的店铺发布 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition select-none"
+              :class="batchPublishPiggybackStoreMode === 'original' ? 'border-sky-500 bg-sky-50/70 shadow-2xs' : 'border-slate-200 hover:bg-white'">
+              <input type="radio" value="original" v-model="batchPublishPiggybackStoreMode" class="mt-0.5 text-sky-600 focus:ring-sky-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">按各商品原本所属店铺发布</span>
+                <p class="text-slate-500 text-[11px]">保持列表中各商品现有的归属店铺，多店铺并行分别挂靠</p>
+              </div>
+            </label>
+          </div>
+
+          <!-- 合规前置排查提示 -->
+          <div class="p-3 rounded-xl border space-y-1.5"
+            :class="selectedPiggybackProhibitedCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'">
+            <div class="font-bold flex items-center justify-between text-xs">
+              <span class="flex items-center space-x-1">
+                <span>🛡️</span>
+                <span>AI合规风控诊断摘要:</span>
+              </span>
+              <span class="font-mono font-normal text-[11px]">
+                合规安全: <strong class="text-emerald-700">{{ selectedPiggybackSafeCount }}</strong> / 
+                待质检: <strong class="text-slate-700">{{ selectedPiggybackPendingCount }}</strong>
+              </span>
+            </div>
+            <div v-if="selectedPiggybackProhibitedCount > 0" class="text-[11px] text-rose-700 font-semibold pt-1 flex items-start space-x-1">
+              <span>⛔</span>
+              <span>已检测到 {{ selectedPiggybackProhibitedCount }} 件红线侵权禁售品！系统已自动为您剔除拦截，绝不会挂靠至官方，保护店铺安全！</span>
+            </div>
+            <div v-else class="text-[11px] text-emerald-700 pt-0.5">
+              ✅ 选中商品无红线禁售风险，可放心挂靠跟卖！
+            </div>
+          </div>
+
+          <div class="text-[11px] text-slate-500 leading-relaxed">
+            💡 挂靠提交后，系统将通过官方网关直接激活库存与定价，并将自动纳入每小时自动跟价与防破发底价监控引擎中。
+          </div>
+        </div>
+
+        <div class="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-2">
+          <button @click="showBatchPublishPiggybackModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 cursor-pointer">取消</button>
+          <button 
+            @click="executeBatchPublishPiggyback" 
+            :disabled="isBatchPublishingPiggyback || selectedPiggybackValidCount === 0"
+            class="px-4 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1"
+          >
+            <span v-if="isBatchPublishingPiggyback" class="inline-block animate-spin">⏳</span>
+            <span>{{ isBatchPublishingPiggyback ? '正在启动挂靠...' : `🚀 立即挂靠 (${selectedPiggybackValidCount} 件)` }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 批量修改所属店铺 ================= -->
+    <div v-if="showBatchSetStoreModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <span>🏪</span>
+            <span>批量转移所属店铺</span>
+          </h3>
+          <button @click="showBatchSetStoreModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <p class="text-slate-600">已选择 <strong class="text-sky-600 font-bold font-mono">{{ piggyback.selectedIds.length }}</strong> 件跟品商品，请选择要转移到的目标店铺：</p>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">目标店铺</label>
+            <select v-model="batchSetStoreTargetId" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-medium text-slate-800">
+              <option v-for="s in activeStores" :key="s.id" :value="s.id">
+                🏪 {{ s.name }} ({{ s.default_brand || '默认品牌' }}) {{ s.is_default ? '★默认店' : '' }}
+              </option>
+            </select>
+          </div>
+          <p class="text-[11px] text-slate-400">转移店铺后，商品将自动绑定至该店铺凭据，挂靠与跟价均按该店铺执行。</p>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+          <button @click="showBatchSetStoreModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer">取消</button>
+          <button 
+            @click="executeBatchSetStore" 
+            :disabled="isBatchSettingStore || !batchSetStoreTargetId"
+            class="px-4 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+          >
+            <span v-if="isBatchSettingStore" class="inline-block animate-spin">⏳</span>
+            <span>{{ isBatchSettingStore ? '正在转移...' : '确认转移' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- ================= 弹窗: 批量保本底价计算器 ================= -->
     <div v-if="showBatchFloorModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
       <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
@@ -8374,6 +8524,13 @@
             auto_enable_reprice: true
           },
           submittingBatchFloor: false,
+          showBatchPublishPiggybackModal: false,
+          batchPublishPiggybackTargetStoreId: null,
+          batchPublishPiggybackStoreMode: 'target', // 'target' | 'original'
+          isBatchPublishingPiggyback: false,
+          showBatchSetStoreModal: false,
+          batchSetStoreTargetId: null,
+          isBatchSettingStore: false,
           loadingPiggyback: false,
           showCollectPiggybackModal: false,
           collectPiggybackForm: {
@@ -8773,6 +8930,23 @@
         },
         activeStores() {
           return (this.stores || []).filter(s => s.is_active);
+        },
+        selectedPiggybackItems() {
+          if (!this.piggyback.items || !this.piggyback.selectedIds.length) return [];
+          const s = new Set(this.piggyback.selectedIds);
+          return this.piggyback.items.filter(it => s.has(it.id));
+        },
+        selectedPiggybackSafeCount() {
+          return this.selectedPiggybackItems.filter(it => it.compliance_status === 'SAFE').length;
+        },
+        selectedPiggybackPendingCount() {
+          return this.selectedPiggybackItems.filter(it => it.compliance_status === 'PENDING_CHECK').length;
+        },
+        selectedPiggybackProhibitedCount() {
+          return this.selectedPiggybackItems.filter(it => it.compliance_status === 'PROHIBITED').length;
+        },
+        selectedPiggybackValidCount() {
+          return this.selectedPiggybackItems.filter(it => it.compliance_status !== 'PROHIBITED').length;
         },
         isAllSelected() {
           if (!this.products.items || this.products.items.length === 0) return false;
@@ -9268,7 +9442,13 @@
           item.status = 'SUBMITTING';
           try {
             const res = await fetch(`/api/piggyback/publish/${item.id}`, { method: 'POST' });
-            const data = await res.json();
+            let data = {};
+            try {
+              data = await res.json();
+            } catch (jsonErr) {
+              const rawText = await res.text().catch(() => '');
+              data = { detail: rawText || `HTTP ${res.status}` };
+            }
             if (!res.ok) throw new Error(data.detail || '跟品失败');
             this.showToast('🚀 挂靠跟品成功！已上线在售', 'success');
             item.status = 'ACTIVE';
@@ -9279,27 +9459,88 @@
             this.showToast('跟品挂靠失败: ' + e.message, 'error');
           }
         },
-        async handleBatchPublishPiggyback() {
+        openBatchPublishPiggybackModal() {
           if (this.piggyback.selectedIds.length === 0) return;
-          const prohibited = this.piggyback.items.filter(it => this.piggyback.selectedIds.includes(it.id) && it.compliance_status === 'PROHIBITED');
-          if (prohibited.length > 0) {
-            this.showToast(`⛔ 选中的商品中包含 ${prohibited.length} 件【红线侵权禁售】商品，请取消勾选后再提交！`, 'error');
+          this.batchPublishPiggybackStoreMode = 'target';
+          if (this.piggyback.store_id) {
+            this.batchPublishPiggybackTargetStoreId = this.piggyback.store_id;
+          } else if (this.activeStores.length > 0 && !this.batchPublishPiggybackTargetStoreId) {
+            this.batchPublishPiggybackTargetStoreId = this.activeStores[0].id;
+          }
+          this.showBatchPublishPiggybackModal = true;
+        },
+        async executeBatchPublishPiggyback() {
+          if (this.piggyback.selectedIds.length === 0 || this.isBatchPublishingPiggyback) return;
+          const validIds = this.piggyback.items
+            .filter(it => this.piggyback.selectedIds.includes(it.id) && it.compliance_status !== 'PROHIBITED')
+            .map(it => it.id);
+          if (validIds.length === 0) {
+            this.showToast('⛔ 选中的商品均为【红线侵权禁售】商品，已被系统拦截，无法挂靠！', 'error');
             return;
           }
-          if (!confirm(`确认批量将 ${this.piggyback.selectedIds.length} 件商品挂靠跟卖至对应店铺吗？`)) return;
+          const targetStoreId = this.batchPublishPiggybackStoreMode === 'target' ? this.batchPublishPiggybackTargetStoreId : null;
+          this.isBatchPublishingPiggyback = true;
+          this.showToast('正在向后台任务引擎分发批量挂靠任务...', 'info');
           try {
             const res = await fetch('/api/piggyback/batch-publish', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ ids: this.piggyback.selectedIds })
+              body: JSON.stringify({ ids: validIds, store_id: targetStoreId })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || '启动失败');
-            this.showToast(data.message || '已启动异步批量挂靠任务', 'success');
+            let data = {};
+            try {
+              data = await res.json();
+            } catch (jsonErr) {
+              const rawText = await res.text().catch(() => '');
+              data = { detail: rawText || `HTTP ${res.status}` };
+            }
+            if (!res.ok) throw new Error(data.detail || '启动批量跟品失败');
+            this.showBatchPublishPiggybackModal = false;
+            this.showToast(data.message || '已成功启动异步批量挂靠任务', 'success');
             this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
             this.showToast('批量跟品启动异常: ' + e.message, 'error');
+          } finally {
+            this.isBatchPublishingPiggyback = false;
           }
+        },
+        openBatchSetStoreModal() {
+          if (this.piggyback.selectedIds.length === 0) return;
+          if (this.piggyback.store_id) {
+            this.batchSetStoreTargetId = this.piggyback.store_id;
+          } else if (this.activeStores.length > 0 && !this.batchSetStoreTargetId) {
+            this.batchSetStoreTargetId = this.activeStores[0].id;
+          }
+          this.showBatchSetStoreModal = true;
+        },
+        async executeBatchSetStore() {
+          if (this.piggyback.selectedIds.length === 0 || !this.batchSetStoreTargetId || this.isBatchSettingStore) return;
+          this.isBatchSettingStore = true;
+          try {
+            const res = await fetch('/api/piggyback/batch-set-store', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids: this.piggyback.selectedIds, store_id: this.batchSetStoreTargetId })
+            });
+            let data = {};
+            try {
+              data = await res.json();
+            } catch (jsonErr) {
+              const rawText = await res.text().catch(() => '');
+              data = { detail: rawText || `HTTP ${res.status}` };
+            }
+            if (!res.ok) throw new Error(data.detail || '修改店铺失败');
+            this.showBatchSetStoreModal = false;
+            this.showToast(`✅ 成功将 ${data.updated_count} 件商品归属转移至店铺「${data.store_name}」`, 'success');
+            this.loadPiggybackItems(this.piggyback.page);
+          } catch (e) {
+            this.showToast('批量改店铺异常: ' + e.message, 'error');
+          } finally {
+            this.isBatchSettingStore = false;
+          }
+        },
+        async handleBatchPublishPiggyback() {
+          this.openBatchPublishPiggybackModal();
         },
         async handleDeletePiggyback(item) {
           if (!confirm(`确认从跟品池移除「${item.title.substring(0, 30)}...」吗？`)) return;

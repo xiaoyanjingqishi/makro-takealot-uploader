@@ -139,7 +139,7 @@ class MakroPiggybackService:
         if not store.seller_id or not store.fk_csrf_token or not store.cookie:
             raise ValueError(f"店铺「{store.name}」凭据未配置完整 (缺少 seller_id/fk_csrf_token/cookie)，请先同步登录态。")
 
-        target_loc = item.location_id or store.default_location_id
+        target_loc = getattr(item, "location_id", None) or store.default_location_id
         if not target_loc:
             raise ValueError(f"店铺「{store.name}」未配置仓库 Location ID，无法设置库存与物流。")
 

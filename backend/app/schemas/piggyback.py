@@ -57,6 +57,11 @@ class BatchCheckComplianceRequest(BaseModel):
 
 class BatchPublishPiggybackRequest(BaseModel):
     ids: List[int] = Field(..., description="需要批量挂靠上架的跟品商品 ID 列表")
+    store_id: Optional[int] = Field(None, description="指定挂靠目标店铺 ID，若未填则使用各商品原所属店铺")
+
+class BatchSetStoreRequest(BaseModel):
+    ids: List[int] = Field(..., description="需要修改所属店铺的商品 ID 列表")
+    store_id: int = Field(..., description="目标店铺 ID")
 
 class BatchDeletePiggybackRequest(BaseModel):
     ids: List[int] = Field(..., description="需要批量删除的跟品商品 ID 列表")

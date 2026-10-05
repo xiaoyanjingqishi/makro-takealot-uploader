@@ -122,5 +122,81 @@ class TestPiggybackAPI(unittest.TestCase):
         self.assertEqual(del_resp.status_code, 200)
         print("[OK] Piggyback API lifecycle test passed successfully!")
 
+    def test_batch_set_store_and_batch_publish_with_target_store(self):
+        # 准备两个店铺：Store 1 和 Store 2
+        store2 = self.db.query(Store).filter(Store.name == "备用测试店铺").first()
+        if not store2:
+            store2 = Store(
+                name="备用测试店铺",
+                seller_id="sec80491bf0a34dc5",
+                fk_csrf_token="sec_token",
+                cookie="sec_cookie",
+                default_brand="Store2Brand",
+                default_location_id="LOC_TEST_2",
+                is_active=True,
+                is_default=False
+            )
+            self.db.add(store2)
+            self.db.commit()
+            self.db.refresh(store2)
+
+        # 创建属于 store 1 的跟品条目
+        item = MakroPiggybackItem(
+            store_id=self.store.id,
+            user_id=self.user.id,
+            makro_product_id="TESTFSN000000001",
+            title="Batch Store Test Item",
+            seller_sku="GPTESTSTORE001",
+            original_price=199.0,
+            target_price=198.0,
+            target_mrp=299.0,
+            min_price_floor=100.0,
+            inventory=50,
+            status="PENDING",
+            compliance_status="SAFE"
+        )
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        item_id = item.id
+
+        try:
+            # 1. 测试批量修改店铺接口 POST /api/piggyback/batch-set-store
+            resp = self.client.post(
+                "/api/piggyback/batch-set-store",
+                headers=self.headers,
+                json={"ids": [item_id], "store_id": store2.id}
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data["success"])
+            self.assertEqual(data["updated_count"], 1)
+            self.assertEqual(data["store_id"], store2.id)
+
+            # 验证数据库中店铺已变更为 store2
+            self.db.refresh(item)
+            self.assertEqual(item.store_id, store2.id)
+
+            # 2. 测试批量挂靠接口 POST /api/piggyback/batch-publish (指定目标店铺)
+            with patch("app.services.makro_piggyback_service.MakroPiggybackService.publish_piggyback_listing") as mock_pub:
+                mock_pub.return_value = {"listing_id": "LSTGTEST001", "status": "created"}
+                pub_resp = self.client.post(
+                    "/api/piggyback/batch-publish",
+                    headers=self.headers,
+                    json={"ids": [item_id], "store_id": self.store.id}
+                )
+                self.assertEqual(pub_resp.status_code, 200)
+                pub_data = pub_resp.json()
+                self.assertTrue(pub_data["success"])
+                self.assertIn("task_id", pub_data)
+                print(f"[OK] Batch publish with target store returned task_id: {pub_data['task_id']}")
+        finally:
+            import time
+            time.sleep(0.1)
+            del_item = self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == item_id).first()
+            if del_item:
+                self.db.delete(del_item)
+                self.db.commit()
+
 if __name__ == "__main__":
     unittest.main()
