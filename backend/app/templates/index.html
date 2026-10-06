@@ -2784,9 +2784,12 @@
                           'bg-slate-100 text-slate-600 border-slate-300': item.compliance_status === 'PENDING_CHECK'
                         }"
                       >
-                        <span v-if="item.compliance_status === 'SAFE'">🟢 合规安全</span>
+                        <span v-if="item.compliance_status === 'SAFE'">
+                          <template v-if="item.compliance_details && item.compliance_details.is_white_label">🛡️ 白牌合规</template>
+                          <template v-else>🟢 合规安全</template>
+                        </span>
                         <span v-else-if="item.compliance_status === 'RISK'">🟡 风险提示</span>
-                        <span v-else-if="item.compliance_status === 'PROHIBITED'">🔴 严禁跟卖</span>
+                        <span v-else-if="item.compliance_status === 'PROHIBITED'">🚫 大牌禁跟</span>
                         <span v-else-if="item.compliance_status === 'DISPUTED'">⚖️ 待仲裁</span>
                         <span v-else>⚪ 待检测</span>
                       </button>
@@ -8163,82 +8166,352 @@
       </div>
     </div>
 
-    <!-- ================= 弹窗: AI 侵权与合规检测详情报告 ================= -->
+    <!-- ================= 弹窗: AI 侵权与合规检测详情报告 (双轮多模态 + 白牌豁免 + 人工终审) ================= -->
     <div v-if="showComplianceDetailModal && currentComplianceItem" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-      <div class="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
-            <span>🛡️</span>
-            <span>双 AI 会审合规质检报告</span>
-          </h3>
-          <button @click="showComplianceDetailModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+      <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] flex flex-col">
+        <!-- 弹窗标题栏 -->
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+          <div class="flex items-center space-x-2">
+            <span class="text-lg">🛡️</span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Makro 跟品双轮 AI 侵权与合规质检报告</h3>
+              <p class="text-[10px] text-slate-400">第一轮文本风控 + 第二轮主图视觉看图 + 白牌规则自动豁免</p>
+            </div>
+          </div>
+          <button @click="showComplianceDetailModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer p-1">✕</button>
         </div>
-        <div class="space-y-3 text-xs max-h-[70vh] overflow-y-auto pr-1">
-          <!-- 头部结论 -->
+
+        <div class="space-y-4 text-xs overflow-y-auto pr-1 flex-1">
+          <!-- 头部结论 Banner -->
           <div 
-            class="p-3 rounded-xl border flex items-center space-x-3"
+            class="p-4 rounded-xl border flex items-center justify-between shadow-2xs"
             :class="{
-              'bg-emerald-50 text-emerald-900 border-emerald-200': currentComplianceItem.compliance_status === 'SAFE',
-              'bg-amber-50 text-amber-900 border-amber-200': currentComplianceItem.compliance_status === 'RISK',
-              'bg-rose-50 text-rose-900 border-rose-200': currentComplianceItem.compliance_status === 'PROHIBITED',
-              'bg-slate-50 text-slate-900 border-slate-200': currentComplianceItem.compliance_status === 'PENDING_CHECK'
+              'bg-emerald-50 text-emerald-950 border-emerald-200': currentComplianceItem.compliance_status === 'SAFE',
+              'bg-amber-50 text-amber-950 border-amber-200': currentComplianceItem.compliance_status === 'RISK',
+              'bg-rose-50 text-rose-950 border-rose-200': currentComplianceItem.compliance_status === 'PROHIBITED',
+              'bg-purple-50 text-purple-950 border-purple-200': currentComplianceItem.compliance_status === 'DISPUTED',
+              'bg-slate-50 text-slate-900 border-slate-200': !currentComplianceItem.compliance_status || currentComplianceItem.compliance_status === 'PENDING_CHECK'
             }"
           >
-            <span class="text-2xl shrink-0">
-              <template v-if="currentComplianceItem.compliance_status === 'SAFE'">🟢</template>
-              <template v-else-if="currentComplianceItem.compliance_status === 'RISK'">🟡</template>
-              <template v-else-if="currentComplianceItem.compliance_status === 'PROHIBITED'">🔴</template>
-              <template v-else>⚪</template>
-            </span>
-            <div>
-              <p class="font-bold text-sm">
-                <template v-if="currentComplianceItem.compliance_status === 'SAFE'">合规安全 (准予跟卖)</template>
-                <template v-else-if="currentComplianceItem.compliance_status === 'RISK'">中度风险 (需核验配件兼容性)</template>
-                <template v-else-if="currentComplianceItem.compliance_status === 'PROHIBITED'">侵权与违规红线 (系统强制禁止跟品)</template>
-                <template v-else>待检测</template>
-              </p>
-              <p class="text-[11px] opacity-80 mt-0.5">
-                {{ (currentComplianceItem.compliance_details && currentComplianceItem.compliance_details.summary) || '暂无详细诊断摘要' }}
-              </p>
+            <div class="flex items-center space-x-3">
+              <span class="text-3xl shrink-0">
+                <template v-if="currentComplianceItem.compliance_status === 'SAFE'">🟢</template>
+                <template v-else-if="currentComplianceItem.compliance_status === 'RISK'">🟡</template>
+                <template v-else-if="currentComplianceItem.compliance_status === 'PROHIBITED'">🔴</template>
+                <template v-else-if="currentComplianceItem.compliance_status === 'DISPUTED'">⚖️</template>
+                <template v-else>⚪</template>
+              </span>
+              <div>
+                <p class="font-bold text-sm flex items-center space-x-2">
+                  <span>
+                    <template v-if="currentComplianceItem.compliance_status === 'SAFE'">
+                      <template v-if="currentComplianceItem.compliance_details?.is_white_label">合规安全 · 卖家自造白牌 (准予挂靠跟品)</template>
+                      <template v-else>合规安全 (准予跟卖)</template>
+                    </template>
+                    <template v-else-if="currentComplianceItem.compliance_status === 'RISK'">中度风险预警 (建议人工核查)</template>
+                    <template v-else-if="currentComplianceItem.compliance_status === 'PROHIBITED'">红线侵权/平台违禁 (系统强制禁止跟品)</template>
+                    <template v-else-if="currentComplianceItem.compliance_status === 'DISPUTED'">会审分歧待仲裁 (需人工审阅)</template>
+                    <template v-else>待执行 AI 会审检测</template>
+                  </span>
+                </p>
+                <p class="text-[11px] opacity-85 mt-1 leading-relaxed">
+                  {{ currentComplianceItem.compliance_details?.reconciliation_summary || currentComplianceItem.compliance_details?.summary || '暂无诊断摘要' }}
+                </p>
+              </div>
+            </div>
+            <!-- 右侧重新检测按钮 -->
+            <button 
+              @click="handleCheckCompliance(currentComplianceItem)" 
+              class="shrink-0 ml-3 px-3 py-1.5 bg-white/90 hover:bg-white text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition active:scale-95 cursor-pointer flex items-center space-x-1"
+            >
+              <span>🔄</span>
+              <span>重新质检 (双AI)</span>
+            </button>
+          </div>
+
+          <!-- ★★★ 卖家自造白牌豁免通行证 (White-Label Piggyback Clearance) ★★★ -->
+          <div v-if="currentComplianceItem.compliance_details?.white_label_notice || currentComplianceItem.compliance_details?.is_white_label" class="p-3.5 bg-sky-50/90 border border-sky-200 rounded-xl space-y-1.5 text-sky-950">
+            <div class="flex items-center space-x-2 font-bold text-xs text-sky-900">
+              <span class="text-sm">🏷️</span>
+              <span>Makro 白牌跟品规则豁免通行说明</span>
+              <span class="px-2 py-0.2 rounded-full text-[10px] bg-sky-200 text-sky-800 font-normal">官方规则允许跟卖</span>
+            </div>
+            <p class="text-[11px] leading-relaxed">
+              {{ currentComplianceItem.compliance_details?.white_label_notice || ('Listing 前缀品牌「' + (currentComplianceItem.brand || '无') + '」经查证属于卖家自造白牌/杂牌，未设立商标保护壁垒。依照 Makro 官方跟卖规则，该商品完全支持自由挂靠。') }}
+            </p>
+          </div>
+
+          <!-- 商品基础信息卡片 -->
+          <div class="p-3 bg-slate-50 rounded-xl space-y-1.5 border border-slate-200/70">
+            <div class="flex items-start justify-between">
+              <p class="font-semibold text-slate-800 flex-1 pr-2 leading-snug">{{ currentComplianceItem.title }}</p>
+              <a :href="currentComplianceItem.makro_url" target="_blank" class="text-indigo-600 hover:text-indigo-800 text-[11px] underline shrink-0 font-medium">查看 Makro 前台 ↗</a>
+            </div>
+            <div class="flex items-center space-x-3 text-slate-500 font-mono text-[11px] flex-wrap gap-y-1">
+              <span>FSN: <strong class="text-slate-700">{{ currentComplianceItem.makro_product_id }}</strong></span>
+              <span>前缀品牌: <strong class="text-indigo-700">{{ currentComplianceItem.brand || 'Generic' }}</strong></span>
+              <span>类目: <strong class="text-slate-700">{{ currentComplianceItem.vertical }}</strong></span>
+              <span v-if="currentComplianceItem.original_seller">在售竞对: <strong class="text-amber-700">{{ currentComplianceItem.original_seller }}</strong></span>
             </div>
           </div>
 
-          <!-- 商品信息 -->
-          <div class="p-3 bg-slate-50 rounded-xl space-y-1">
-            <p class="font-semibold text-slate-800">{{ currentComplianceItem.title }}</p>
-            <p class="text-slate-500 font-mono text-[11px]">FSN: {{ currentComplianceItem.makro_product_id }} · 品牌: {{ currentComplianceItem.brand || '无标' }} · 类目: {{ currentComplianceItem.vertical }}</p>
+          <!-- 运营防守与避坑建议 -->
+          <div v-if="currentComplianceItem.compliance_details?.suggestions?.length" class="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-amber-900 space-y-1">
+            <div class="font-bold text-[11px] flex items-center space-x-1">
+              <span>💡</span>
+              <span>跟品运营防守与履约建议:</span>
+            </div>
+            <ul class="list-disc list-inside space-y-0.5 text-[11px] opacity-90 pl-1 leading-relaxed">
+              <li v-for="(sug, sIdx) in currentComplianceItem.compliance_details.suggestions" :key="sIdx">{{ sug }}</li>
+            </ul>
           </div>
 
-          <!-- 风险关键词与违禁品 -->
-          <div v-if="currentComplianceItem.compliance_details" class="space-y-2">
-            <div v-if="currentComplianceItem.compliance_details.risk_keywords && currentComplianceItem.compliance_details.risk_keywords.length > 0">
-              <label class="block font-semibold text-slate-700 mb-1">检测到的敏感品牌/词汇:</label>
-              <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
-                <span v-for="kw in currentComplianceItem.compliance_details.risk_keywords" :key="kw" class="px-2 py-0.5 bg-rose-100 text-rose-800 text-[11px] rounded font-medium">
-                  {{ kw }}
-                </span>
+          <!-- ★★★ 第一轮：标题与品牌独立文本风控 (Round 1: Title & Brand IP Text Audit) ★★★ -->
+          <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+            <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span class="text-sm">📝</span>
+                <span class="font-bold text-xs text-slate-800">第一轮：标题与品牌独立文本风控 (Round 1 多模型会审)</span>
               </div>
+              <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-2xs" :class="{
+                'bg-emerald-100 text-emerald-800 border border-emerald-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'SAFE',
+                'bg-purple-100 text-purple-800 border border-purple-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'DISPUTED',
+                'bg-amber-100 text-amber-800 border border-amber-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'RISK',
+                'bg-rose-100 text-rose-800 border border-rose-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'PROHIBITED'
+              }">
+                {{ currentComplianceItem.compliance_details?.round_1_status?.summary || (currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.risk_level === 'SAFE' && currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '文本审查完成') }}
+              </span>
             </div>
 
-            <div v-if="currentComplianceItem.compliance_details.prohibited_items && currentComplianceItem.compliance_details.prohibited_items.length > 0">
-              <label class="block font-semibold text-slate-700 mb-1">平台违禁风险属性:</label>
-              <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
-                <span v-for="pi in currentComplianceItem.compliance_details.prohibited_items" :key="pi" class="px-2 py-0.5 bg-red-600 text-white text-[11px] rounded font-medium">
-                  {{ pi }}
-                </span>
+            <div class="p-3.5 grid grid-cols-2 gap-3.5">
+              <!-- 左列: 通义千问文本 -->
+              <div class="bg-blue-50/40 p-3.5 rounded-xl border border-blue-200/80 space-y-2">
+                <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                  <span class="font-bold text-blue-900 text-xs flex items-center">
+                    <span class="mr-1">🤖</span>通义千问 (Qwen-Plus)
+                  </span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.risk_level)">
+                    {{ currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.risk_level || '未执行' }}
+                  </span>
+                </div>
+                <div class="text-[11px] space-y-1.5">
+                  <div class="flex items-center space-x-1 flex-wrap">
+                    <span class="text-slate-500 font-medium">品牌检出:</span>
+                    <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-blue-900 bg-blue-100 px-1.5 py-0.5 rounded">
+                      {{ currentComplianceItem.compliance_details.qwen_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                    </span>
+                    <span v-else class="text-emerald-700 font-semibold">✓ 未检出受限品牌</span>
+                  </div>
+                  <div>
+                    <span class="text-slate-500 font-medium">违规类型:</span>
+                    <span class="font-mono text-slate-700 ml-1 font-semibold">{{ currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                  </div>
+                  <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
+                    <div class="text-slate-400 font-semibold text-[10px]">审查理由:</div>
+                    <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.summary || (currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.reasons ? currentComplianceItem.compliance_details.qwen_verdict.title_audit.reasons.join('；') : '无异常') }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右列: DeepSeek 文本 -->
+              <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
+                <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                  <span class="font-bold text-indigo-900 text-xs flex items-center">
+                    <span class="mr-1">🐬</span>DeepSeek (Flash)
+                  </span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.risk_level)">
+                    {{ currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.risk_level || '未执行' }}
+                  </span>
+                </div>
+                <div class="text-[11px] space-y-1.5">
+                  <div class="flex items-center space-x-1 flex-wrap">
+                    <span class="text-slate-500 font-medium">品牌检出:</span>
+                    <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded">
+                      {{ currentComplianceItem.compliance_details.deepseek_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                    </span>
+                    <span v-else class="text-emerald-700 font-semibold">✓ 未检出受限品牌</span>
+                  </div>
+                  <div>
+                    <span class="text-slate-500 font-medium">违规类型:</span>
+                    <span class="font-mono text-slate-700 ml-1 font-semibold">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                  </div>
+                  <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
+                    <div class="text-slate-400 font-semibold text-[10px]">审查理由:</div>
+                    <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.summary || (currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.reasons ? currentComplianceItem.compliance_details.deepseek_verdict.title_audit.reasons.join('；') : '无异常') }}</div>
+                  </div>
+                </div>
               </div>
             </div>
+          </div>
 
-            <div v-if="currentComplianceItem.compliance_details.ai_suggestion">
-              <label class="block font-semibold text-slate-700 mb-1">AI 优化与避坑建议:</label>
-              <p class="p-2.5 bg-slate-100 rounded-lg text-slate-700 text-[11px] leading-relaxed">
-                {{ currentComplianceItem.compliance_details.ai_suggestion }}
-              </p>
+          <!-- ★★★ 第二轮：首图视觉与运输合规 (Round 2: Vision & Multimodal Image Audit) ★★★ -->
+          <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+            <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span class="text-sm">🖼️</span>
+                <span class="font-bold text-xs text-slate-800">第二轮：首图视觉与运输合规 (Round 2 多模态看图)</span>
+              </div>
+              <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-2xs" :class="{
+                'bg-emerald-100 text-emerald-800 border border-emerald-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'SAFE',
+                'bg-purple-100 text-purple-800 border border-purple-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'DISPUTED',
+                'bg-amber-100 text-amber-800 border border-amber-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'RISK',
+                'bg-rose-100 text-rose-800 border border-rose-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'PROHIBITED'
+              }">
+                {{ currentComplianceItem.compliance_details?.round_2_status?.summary || (currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.risk_level === 'SAFE' && currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '视觉审查完成') }}
+              </span>
+            </div>
+
+            <div class="p-3.5 space-y-3.5">
+              <!-- 首图预览 -->
+              <div v-if="currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url" class="flex items-center space-x-3 p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                <img 
+                  :src="cleanImageUrl(currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url)" 
+                  @error="handleImageError($event, currentComplianceItem.image_url)"
+                  @click="openImagePreview(currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url)"
+                  class="w-14 h-14 rounded-lg object-cover border border-slate-200 cursor-pointer hover:opacity-80 transition shadow-2xs shrink-0" 
+                  title="点击放大预览首图"
+                />
+                <div class="text-[11px] text-slate-600 flex-1 min-w-0">
+                  <div class="font-semibold text-slate-800">首图图片审查对象:</div>
+                  <div class="font-mono text-[10px] text-slate-400 truncate max-w-lg mt-0.5">{{ currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url }}</div>
+                  <div class="text-[10px] text-indigo-600 font-medium mt-1">点击缩略图查看大图 · 已通过防盗链 Referer 鉴权下载验证</div>
+                </div>
+              </div>
+
+              <!-- 视觉两列对比 -->
+              <div class="grid grid-cols-2 gap-3.5">
+                <!-- 左列: Qwen-VL -->
+                <div class="bg-blue-50/40 p-3.5 rounded-xl border border-blue-200/80 space-y-2">
+                  <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                    <span class="font-bold text-blue-900 text-xs flex items-center">
+                      <span class="mr-1">🤖</span>通义千问视觉 (Qwen-VL)
+                    </span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.risk_level)">
+                      {{ currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.risk_level || 'SAFE' }}
+                    </span>
+                  </div>
+                  <div class="text-[11px] space-y-1.5">
+                    <div>
+                      <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.logo_names?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.qwen_verdict.image_audit.logo_names.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                    </div>
+                    <div>
+                      <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.qwen_verdict.image_audit.prohibited_types.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                    </div>
+                    <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
+                      <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
+                      <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.summary || '无异常' }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 右列: DeepSeek-Vision -->
+                <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
+                  <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                    <span class="font-bold text-indigo-900 text-xs flex items-center">
+                      <span class="mr-1">🐬</span>DeepSeek 视觉 (Flash-Vision)
+                    </span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level)">
+                      {{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level || 'SAFE' }}
+                    </span>
+                  </div>
+                  <div class="text-[11px] space-y-1.5">
+                    <div>
+                      <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.logo_names?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.deepseek_verdict.image_audit.logo_names.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                    </div>
+                    <div>
+                      <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.deepseek_verdict.image_audit.prohibited_types.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                    </div>
+                    <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
+                      <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
+                      <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.summary || '无异常' }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 违禁品一票拦截警报 -->
+          <div v-if="currentComplianceItem.compliance_details?.prohibited_items?.length" class="p-3.5 bg-rose-50/80 border border-rose-200 rounded-xl text-[11px] text-rose-900 space-y-1">
+            <div class="flex items-center justify-between font-bold">
+              <span>🚫 AI 识别平台受限/违禁特征:</span>
+              <span class="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px]">不可上架</span>
+            </div>
+            <div>检出项: <strong class="underline decoration-rose-400">{{ currentComplianceItem.compliance_details.prohibited_items.join('、') }}</strong></div>
+            <div class="text-slate-500 text-[10px] leading-relaxed">说明：商品包含受限或禁售特征（如蓝牙/WiFi无线通讯、未授权影视IP、航空禁运液体或假冒品牌），系统禁止挂靠跟品。</div>
+          </div>
+
+          <!-- ★★★ 人工终审裁定控制台 (Human Arbitration Console) ★★★ -->
+          <div class="p-4 bg-purple-50/80 rounded-xl border border-purple-200/90 space-y-3 shadow-xs">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-xs text-purple-950 flex items-center">
+                <span class="mr-1.5 text-sm">⚖️</span> 人工终审裁定控制台
+              </span>
+              <span v-if="currentComplianceItem.compliance_details?.human_arbitration" class="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-bold border border-purple-200">
+                ✓ 已终审: {{ currentComplianceItem.compliance_details.human_arbitration.human_verdict }} (操作人: {{ currentComplianceItem.compliance_details.human_arbitration.operator || 'admin' }})
+              </span>
+              <span v-else class="text-[10px] text-purple-700 font-medium">
+                若 AI 发生分歧或误判白牌，人工可一键终审纠正并沉淀日志
+              </span>
+            </div>
+
+            <!-- 备注输入框 -->
+            <input 
+              v-model="piggybackArbitrationNotes" 
+              type="text" 
+              placeholder="填写裁定理由或说明（例如：HYinjin是卖家自造白牌，规则允许跟品；或配件合理使用判为SAFE）..." 
+              class="w-full text-xs px-3.5 py-2.5 bg-white border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:outline-none placeholder:text-slate-400 transition"
+            />
+
+            <!-- 一键裁定按钮组 -->
+            <div class="flex items-center space-x-2 pt-0.5">
+              <button 
+                @click="submitPiggybackArbitration(currentComplianceItem, 'SAFE')" 
+                :disabled="isArbitratingPiggyback"
+                class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <span>🛡️</span>
+                <span>裁定为【SAFE 安全白牌/合规】</span>
+              </button>
+              <button 
+                @click="submitPiggybackArbitration(currentComplianceItem, 'RISK')" 
+                :disabled="isArbitratingPiggyback"
+                class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <span>⚠️</span>
+                <span>裁定为【RISK 风险预警】</span>
+              </button>
+              <button 
+                @click="submitPiggybackArbitration(currentComplianceItem, 'PROHIBITED')" 
+                :disabled="isArbitratingPiggyback"
+                class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <span>🚫</span>
+                <span>裁定为【PROHIBITED 违禁红线】</span>
+              </button>
             </div>
           </div>
         </div>
-        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
-          <button @click="showComplianceDetailModal = false" class="px-4 py-1.5 text-xs bg-slate-900 text-white rounded-lg font-medium cursor-pointer">关闭</button>
+
+        <!-- 弹窗底部操作栏 -->
+        <div class="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 shrink-0">
+          <button @click="showComplianceDetailModal = false" class="px-5 py-2 text-xs bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium cursor-pointer transition">关闭</button>
         </div>
       </div>
     </div>
@@ -8641,6 +8914,8 @@
           editingPiggybackItem: null,
           showComplianceDetailModal: false,
           currentComplianceItem: null,
+          piggybackArbitrationNotes: '',
+          isArbitratingPiggyback: false,
           showRepriceLogsModal: false,
           loadingRepriceLogs: false,
           repriceLogs: {
@@ -9568,14 +9843,19 @@
           this.selectItemStrategy(item, st, val);
         },
         async handleCheckCompliance(item) {
-          this.showToast('正在调用双 AI 执行侵权与合规全项质检...', 'info');
+          this.showToast('正在调用双 AI 执行文本+主图视觉侵权与合规全项质检...', 'info');
           try {
             const res = await fetch(`/api/piggyback/check-compliance/${item.id}`, { method: 'POST' });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || '检测失败');
             item.compliance_status = data.compliance_status;
             item.compliance_details = data.details;
+            if (this.currentComplianceItem && this.currentComplianceItem.id === item.id) {
+              this.currentComplianceItem.compliance_status = data.compliance_status;
+              this.currentComplianceItem.compliance_details = data.details;
+            }
             this.showToast(`合规检测完成: 判定为 ${data.compliance_status}`, 'success');
+            this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
             this.showToast('检测失败: ' + e.message, 'error');
           }
@@ -9757,7 +10037,32 @@
         },
         openComplianceDetails(item) {
           this.currentComplianceItem = item;
+          this.piggybackArbitrationNotes = (item.compliance_details && item.compliance_details.human_arbitration && item.compliance_details.human_arbitration.notes) || '';
           this.showComplianceDetailModal = true;
+        },
+        async submitPiggybackArbitration(item, verdict) {
+          if (!item) return;
+          this.isArbitratingPiggyback = true;
+          try {
+            const res = await fetch(`/api/piggyback/arbitrate/${item.id}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                human_verdict: verdict,
+                human_notes: this.piggybackArbitrationNotes || ''
+              })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || '仲裁提交失败');
+            item.compliance_status = data.compliance_status;
+            item.compliance_details = data.compliance_details;
+            this.showToast(`终审仲裁完成: 已裁定为 [${verdict}]`, 'success');
+            this.loadPiggybackItems(this.piggyback.page);
+          } catch (e) {
+            this.showToast('终审失败: ' + e.message, 'error');
+          } finally {
+            this.isArbitratingPiggyback = false;
+          }
         },
         // ================= 智能自动跟价系统方法组 =================
         async triggerSingleItemReprice(item) {

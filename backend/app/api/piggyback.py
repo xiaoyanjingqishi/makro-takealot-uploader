@@ -22,7 +22,8 @@ from ..schemas.piggyback import (
     BatchDeletePiggybackRequest,
     BatchSetFloorRequest,
     CheckExistenceRequest,
-    PiggybackItemResponse
+    PiggybackItemResponse,
+    ArbitratePiggybackComplianceRequest
 )
 from ..services.makro_scraper_service import MakroScraperService
 from ..services.makro_piggyback_service import MakroPiggybackService
@@ -820,6 +821,84 @@ def batch_check_compliance(
         "success": True,
         "total_checked": len(items),
         "results": results
+    }
+
+@router.post("/arbitrate/{item_id}", summary="人工终审仲裁跟品合规判定")
+def arbitrate_piggyback_compliance(
+    item_id: int,
+    req: ArbitratePiggybackComplianceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    item = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="未找到该跟品商品")
+
+    human = req.human_verdict.upper()
+    if human not in ["SAFE", "RISK", "PROHIBITED"]:
+        raise HTTPException(status_code=400, detail="裁决状态必须为 SAFE, RISK 或 PROHIBITED")
+
+    details = {}
+    if item.compliance_details:
+        try:
+            details = json.loads(item.compliance_details)
+        except Exception:
+            details = {}
+
+    qwen_verdict = details.get("qwen_verdict", {})
+    deepseek_verdict = details.get("deepseek_verdict", {})
+    qwen_status = qwen_verdict.get("overall_risk", "SAFE")
+    deepseek_status = deepseek_verdict.get("overall_risk", "SAFE")
+    has_dual = details.get("dual_ai_mode", False)
+
+    # 智能归因分析
+    if has_dual:
+        if qwen_status == human and deepseek_status == human:
+            attribution = "CONSENSUS_AFFIRMED"
+        elif qwen_status != human and deepseek_status == human:
+            attribution = "QWEN_FALSE_POSITIVE" if (qwen_status in ["RISK", "PROHIBITED"] and human == "SAFE") else "QWEN_FALSE_NEGATIVE"
+        elif deepseek_status != human and qwen_status == human:
+            attribution = "DEEPSEEK_FALSE_POSITIVE" if (deepseek_status in ["RISK", "PROHIBITED"] and human == "SAFE") else "DEEPSEEK_FALSE_NEGATIVE"
+        else:
+            attribution = "BOTH_MISJUDGED"
+    else:
+        attribution = "SINGLE_AI_AFFIRMED" if qwen_status == human else "SINGLE_AI_OVERRULED"
+
+    # 更新商品合规状态与细节快照
+    item.compliance_status = human
+    details["compliance_status"] = human
+    details["is_disputed"] = False
+    details["human_arbitration"] = {
+        "human_verdict": human,
+        "notes": req.human_notes or "",
+        "error_attribution": attribution,
+        "arbitrated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "operator": current_user.nickname or current_user.username if current_user else "admin"
+    }
+    item.compliance_details = json.dumps(details, ensure_ascii=False)
+    db.commit()
+    db.refresh(item)
+
+    record_audit_log(
+        task_type="PIGGYBACK_ARBITRATION",
+        status="SUCCESS",
+        message=f"跟品商品 (ID {item.id}) 人工终审裁定为 [{human}], 归因标注=[{attribution}]",
+        detail_logs={
+            "item_id": item.id,
+            "human_verdict": human,
+            "attribution": attribution,
+            "notes": req.human_notes
+        },
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+
+    return {
+        "success": True,
+        "item_id": item.id,
+        "compliance_status": item.compliance_status,
+        "compliance_details": details
     }
 
 

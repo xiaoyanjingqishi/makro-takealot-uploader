@@ -202,6 +202,9 @@ class ComplianceService:
             except Exception:
                 raw_images = [raw_images] if raw_images.startswith("http") else []
 
+        is_piggyback = bool(product_data.get("is_piggyback", False))
+        original_seller = str(product_data.get("original_seller") or "").strip()
+
         full_text = f"{title} {makro_title} {desc} {specs_str} {category}".lower()
 
         # ----------------------------------------------------
@@ -212,7 +215,9 @@ class ComplianceService:
             makro_title=makro_title,
             full_text=full_text,
             category=category,
-            target_brand_name=target_brand_name
+            target_brand_name=target_brand_name,
+            is_piggyback=is_piggyback,
+            original_seller=original_seller
         )
 
         # ----------------------------------------------------
@@ -228,7 +233,9 @@ class ComplianceService:
                 makro_title=makro_title,
                 brand=target_brand_name,
                 category=category,
-                description=desc
+                description=desc,
+                is_piggyback=is_piggyback,
+                original_seller=original_seller
             )
 
         # ----------------------------------------------------
@@ -250,7 +257,9 @@ class ComplianceService:
             ))
             qwen_image_res, deepseek_image_res = self._run_round2_vision_audit(
                 image_url=first_img_url,
-                known_brands=all_known_brands
+                known_brands=all_known_brands,
+                is_piggyback=is_piggyback,
+                original_seller=original_seller
             )
 
 
@@ -265,7 +274,9 @@ class ComplianceService:
             deepseek_image=deepseek_image_res,
             first_img_url=first_img_url,
             target_brand_name=target_brand_name,
-            jev_title=jev_title_res
+            jev_title=jev_title_res,
+            is_piggyback=is_piggyback,
+            original_seller=original_seller
         )
 
         return final_result
@@ -279,7 +290,9 @@ class ComplianceService:
         makro_title: Optional[str],
         brand: str,
         category: str,
-        description: str
+        description: str,
+        is_piggyback: bool = False,
+        original_seller: str = ""
     ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """并发运行千问、DeepSeek-Flash 与 Jev (TypeSafe AI) 的第一轮文本审查 (3-AI 并行)"""
         qwen_res = {"tested": False, "risk_level": "SAFE", "reasons": [], "summary": "Qwen 客户端未配置"}
@@ -293,7 +306,9 @@ class ComplianceService:
             makro_title=makro_title,
             brand=brand,
             category=category,
-            description=description
+            description=description,
+            is_piggyback=is_piggyback,
+            original_seller=original_seller
         )
 
         def _call_qwen():
@@ -395,7 +410,9 @@ class ComplianceService:
         makro_title: Optional[str],
         brand: str,
         category: str,
-        description: str
+        description: str,
+        is_piggyback: bool = False,
+        original_seller: str = ""
     ) -> str:
         """极简高密度标题与知识产权风控审查 Prompt (压缩~70% Token 消耗，保留 100% 审查精确度)"""
         target_title = (makro_title or raw_title or "").strip()
@@ -411,13 +428,22 @@ class ComplianceService:
         clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()[:80]
         desc_line = f"\n- 描述: {clean_desc}" if clean_desc else ""
 
+        piggyback_block = ""
+        if is_piggyback:
+            piggyback_block = f"""
+【Makro 跟品(Piggybacking/Latching) 特别风控准则】:
+* 平台特性: Makro 平台强制在标题最前端拼接原 Listing 品牌名（例如 "{brand} {target_title}"）。
+* 卖家自造白牌/杂牌豁免: 若品牌为普通卖家自造商号/白牌(如 HYinjin, Generic, OEM 或拼音杂牌，非全球受保护大牌)，根据 Makro 官方跟品规则，100% 允许合规挂靠跟品！此类必须判定为 SAFE (合规)，绝不能误判为商标侵权！
+* 知名大牌一票否决红线: 若标题或品牌指代受保护知名大牌(Apple, Dyson, Sony, Nike, Stanley, Makita 等)或知名影视IP整机，严格判定为 PROHIBITED (禁跟)！
+* 副厂兼容配件(Fair Use): 若商品属于通用耗材/滤网/替换配件/外壳(如 vacuum maintenance kit, filter, replacement parts 等)，含有知名品牌用于指示兼容型号的，属于合理使用，判定为 SAFE。"""
+
         return f"""审查跨境电商商品标题合规与侵权风险，仅返回合法JSON，严禁输出思维过程与闲聊。
 【规则】:
 1. 商标侵权: 严查受保护大牌(如Apple,Stanley,Nike,Dyson等)。区分语境: 颜色/通用词(如apple green)合规，指代受保护品牌违规。
 2. 影视IP: 严禁未经授权蹭用知名动漫潮玩/游戏IP(如Sanrio,Disney,Marvel,Pokemon,One Piece,Frozen,Labubu等)。注意区分语境: 商品件数/规格词(如1 piece, 2 pieces)属合规数量词，严禁误判为海贼王One Piece！冷冻甜品/冰块模具(如frozen mold)属合规用途词，严禁误判为冰雪奇缘Frozen！仅指代动漫角色/衍生周边才判定违规。
 3. 配件规范: 兼容大牌配件必须含'Compatible with'或'For'；严禁大牌开头冒充原厂；严禁连续堆砌>=3个大牌。
 4. 禁运技术与物品: 严禁蓝牙(Bluetooth)、WiFi、红外线(Infrared)等无线发射设备；严禁液体/香水/精油/乳液/膏霜/易燃化学品跨境航空禁运品。注意区分形态: 硅胶模具、空瓶容器、化妆刷/粉扑、刮痧板按摩石、喷头喷枪工具、无源转接线等实体用具均属合规SAFE；仅商品本身实际灌装/包含液体、膏体、化学药剂才判定为PROHIBITED违规禁运。
-5. 评级: SAFE(合规/通用品/规范配件/实体工具), RISK(配件缺少Compatible with声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售无线设备/灌装液体航空违禁品)。{few_shot_block}
+5. 评级: SAFE(合规/通用品/规范配件/实体工具), RISK(配件缺少Compatible with声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售无线设备/灌装液体航空违禁品)。{few_shot_block}{piggyback_block}
 待审数据:
 - 标题: {target_title}
 - 授权自有品牌: {brand or "Beishi"}
@@ -503,17 +529,21 @@ class ComplianceService:
     def _run_round2_vision_audit(
         self,
         image_url: str,
-        known_brands: List[str]
+        known_brands: List[str],
+        is_piggyback: bool = False,
+        original_seller: str = ""
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """并发运行千问 (Qwen-VL) 与 DeepSeek-Flash 视觉多模态审查"""
         qwen_img_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "Qwen 视觉未配置"}
         deepseek_img_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "DeepSeek 视觉未配置"}
 
-        # 1. 统一下载图片并转换为 Base64 Data URI (下载一次，供两个 AI 并行复用)
+        # 1. 统一下载图片并转换为 Base64 Data URI (支持 Makro 与 Takealot 防盗链动态 Referer，下载一次供两个 AI 复用)
         try:
+            is_makro_img = any(k in image_url.lower() for k in ["makro", "fkcloud", "rukmini"])
+            img_referer = "https://www.makro.co.za/" if is_makro_img else "https://www.takealot.com/"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://www.takealot.com/"
+                "Referer": img_referer
             }
             resp = requests.get(image_url, headers=headers, timeout=12)
             if resp.status_code != 200:
@@ -537,7 +567,7 @@ class ComplianceService:
             deepseek_img_res["summary"] = msg
             return qwen_img_res, deepseek_img_res
 
-        vision_prompt = self._build_vision_prompt(known_brands)
+        vision_prompt = self._build_vision_prompt(known_brands, is_piggyback=is_piggyback)
 
         def _call_qwen_vl():
             if not self.qwen_client:
@@ -579,14 +609,18 @@ class ComplianceService:
 
         return qwen_img_res, deepseek_img_res
 
-    def _build_vision_prompt(self, known_brands: List[str]) -> str:
+    def _build_vision_prompt(self, known_brands: List[str], is_piggyback: bool = False) -> str:
         """极简高密度首图合规审查 Prompt (压缩~50% Token 消耗)"""
         brand_hint = f"（重点排查: {', '.join(known_brands[:3])}）" if known_brands else ""
-        return f"""电商首图视觉合规审查{brand_hint}。仅返回JSON，禁止多余输出。
+        piggyback_note = ""
+        if is_piggyback:
+            piggyback_note = "【Makro跟品图审规则】: 仅知名受保护国际大牌(如Apple,Sony,Nike,Dyson等)Logo或危险禁运品判定为PROHIBITED/RISK；卖家自造白牌、微小丝印、副厂通用配件说明字样一律判定为SAFE合规！"
+
+        return f"""电商首图视觉合规审查{brand_hint}。{piggyback_note}仅返回JSON，禁止多余输出。
 【准则】:
-1. 品牌Logo: 严查知名商业大牌商标Logo(如Apple,Nike,Sony,Dyson等)或防盗水印。区分: 机身印刷通用产品型号/技术规格(如HW300PRO,USB-C,100W等)属合规SAFE，严禁误判侵权。
+1. 品牌Logo: 严查知名商业大牌商标Logo(如Apple,Nike,Sony,Dyson等)或防盗水印。区分: 机身印刷通用产品型号/技术规格(如HW300PRO,USB-C,100W等)或卖家白牌字符属合规SAFE，严禁误判侵权。
 2. 运输违禁: 严查液体/精油/香水/喷雾、纯电池/易燃易爆品、管制刀具等航空安检禁运形态。
-3. 评级: SAFE(无大牌Logo/无违禁品), RISK(画面疑似商业Logo/水印), PROHIBITED(明确大牌Logo/大容量液体/危险品)。
+3. 评级: SAFE(无大牌Logo/白牌通用件/无违禁品), RISK(画面疑似国际大牌商业Logo/水印), PROHIBITED(明确知名大牌Logo/大容量液体/危险品)。
 返回JSON:
 {{"has_brand_logo":false,"detected_logos":[],"is_transport_prohibited":false,"prohibited_types":[],"risk_level":"SAFE|RISK|PROHIBITED","summary":"1句中文结论"}}"""
 
@@ -718,7 +752,9 @@ class ComplianceService:
         deepseek_image: Dict[str, Any],
         first_img_url: Optional[str],
         target_brand_name: str,
-        jev_title: Optional[Dict[str, Any]] = None
+        jev_title: Optional[Dict[str, Any]] = None,
+        is_piggyback: bool = False,
+        original_seller: str = ""
     ) -> Dict[str, Any]:
         """
         裁决聚合器 (Reconciliation Engine)：
@@ -1056,8 +1092,24 @@ class ComplianceService:
         else:
             prohibited_items = []
 
+        # Makro 跟品白牌识别与运营建议
+        brand_clean = (target_brand_name or "").strip()
+        brand_lower = brand_clean.lower()
+        is_famous_brand = any(b == brand_lower or b in brand_lower for b in FAMOUS_BRANDS)
+        is_white_label = is_piggyback and (not is_famous_brand) and bool(brand_lower and brand_lower not in ["beishi", "generic", "oem", "none", "n/a"])
+
+        white_label_notice = None
+        if is_piggyback and is_white_label:
+            white_label_notice = f"Listing 前缀品牌「{brand_clean}」属于卖家自造白牌，依据 Makro 平台规则完全支持跟品挂靠。"
+            if final_status in ["SAFE", "RISK"]:
+                advice = f"💡 Makro 跟品运营防守建议: 前缀品牌「{brand_clean}」属于卖家自造白牌，技术与平台规则允许合规跟品。发货时请务必使用纯中性外包装，切勿印制原卖家私有品牌标志。"
+                if advice not in suggestions:
+                    suggestions.append(advice)
+
         brand_info = local_rules.get("brand_info", {})
         brand_info["detected_brands"] = all_detected_brands
+        brand_info["is_white_label"] = is_white_label
+        brand_info["is_famous_brand"] = is_famous_brand
         if recommended_title:
             brand_info["recommended_title"] = recommended_title
 
@@ -1093,7 +1145,11 @@ class ComplianceService:
             "brand_info": brand_info,
             "image_inspection": merged_image_inspection,
             "risk_reasons": list(dict.fromkeys(risk_reasons)),
-            "suggestions": list(dict.fromkeys(suggestions))
+            "suggestions": list(dict.fromkeys(suggestions)),
+            "is_piggyback": is_piggyback,
+            "is_white_label": is_white_label,
+            "white_label_notice": white_label_notice,
+            "original_seller": original_seller
         }
 
     # =========================================================================
@@ -1105,7 +1161,9 @@ class ComplianceService:
         makro_title: Optional[str],
         full_text: str,
         category: str,
-        target_brand_name: str
+        target_brand_name: str,
+        is_piggyback: bool = False,
+        original_seller: str = ""
     ) -> Dict[str, Any]:
         """
         辅助品牌词与配件特征提取器 (已彻底废弃底层死板正则硬拦截，100% 由双 AI 语境化裁定合规与违禁)
@@ -1122,6 +1180,11 @@ class ComplianceService:
 
         is_accessory = any(re.search(rf'\b{acc}\b', full_text, re.IGNORECASE) for acc in ACCESSORY_KEYWORDS)
 
+        brand_clean = (target_brand_name or "").strip()
+        brand_lower = brand_clean.lower()
+        is_famous_brand = any(b == brand_lower or b in brand_lower for b in FAMOUS_BRANDS)
+        is_white_label = is_piggyback and (not is_famous_brand) and bool(brand_lower and brand_lower not in ["beishi", "generic", "oem", "none", "n/a"])
+
         recommended_title = None
         if title_detected_brands:
             from .ai_cleaner_service import reconstruct_accessory_title
@@ -1137,12 +1200,16 @@ class ComplianceService:
             "compliance_status": "SAFE",
             "prohibited_items": [],
             "detected_brands": all_detected_brands,
+            "is_white_label": is_white_label,
+            "is_famous_brand": is_famous_brand,
             "risk_reasons": [],
             "suggestions": [],
             "brand_info": {
                 "detected_brands": all_detected_brands,
                 "title_detected_brands": title_detected_brands,
                 "is_accessory": is_accessory,
-                "recommended_title": recommended_title
+                "recommended_title": recommended_title,
+                "is_white_label": is_white_label,
+                "is_famous_brand": is_famous_brand
             }
         }

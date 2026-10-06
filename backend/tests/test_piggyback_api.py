@@ -198,5 +198,89 @@ class TestPiggybackAPI(unittest.TestCase):
                 self.db.delete(del_item)
                 self.db.commit()
 
+    @patch("app.services.compliance_service.ComplianceService._invoke_text_model")
+    @patch("app.services.compliance_service.ComplianceService._invoke_vision_model")
+    @patch("requests.get")
+    def test_compliance_check_and_arbitration(self, mock_get, mock_vision, mock_text):
+        # 1. 模拟图片下载成功
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRtest"
+        mock_get.return_value = mock_resp
+
+        # 2. 模拟第一轮文本审查 (白牌 HYinjin 判定为 SAFE)
+        mock_text.return_value = {
+            "tested": True,
+            "risk_level": "SAFE",
+            "violation_type": "NONE",
+            "reasons": ["卖家自造白牌，属于通用耗材配件，依据Makro规则允许跟品"],
+            "summary": "SAFE 合规白牌",
+            "detected_brands_or_ips": []
+        }
+
+        # 3. 模拟第二轮视觉图审 (无品牌 Logo，无违禁品)
+        mock_vision.return_value = {
+            "tested": True,
+            "has_brand_logo": False,
+            "logo_names": [],
+            "is_transport_prohibited": False,
+            "prohibited_types": [],
+            "risk_level": "SAFE",
+            "summary": "画面为中性清洁配件，无知名品牌商标 Logo，无禁运品"
+        }
+
+        item = MakroPiggybackItem(
+            store_id=self.store.id,
+            user_id=self.user.id,
+            makro_product_id="VMKHHSSGMQ9VGBKW",
+            title="HYinjin Vacuum Cleaner Accessories Kit",
+            brand="HYinjin",
+            vertical="vacuum_cleaner",
+            image_url="https://1-makro.rukmini.ng.fkcloud.net/image/vacuum.png",
+            seller_sku="GPHYINJIN001",
+            original_price=399.0,
+            target_price=398.0,
+            target_mrp=499.0,
+            status="PENDING",
+            compliance_status="PENDING_CHECK"
+        )
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        item_id = item.id
+
+        try:
+            # 执行 AI 合规检测接口 POST /api/piggyback/check-compliance/{item_id}
+            resp = self.client.post(f"/api/piggyback/check-compliance/{item_id}", headers=self.headers)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data["success"])
+            self.assertEqual(data["compliance_status"], "SAFE")
+            details = data["details"]
+            self.assertTrue(details.get("is_white_label"))
+            self.assertIn("white_label_notice", details)
+            print(f"[OK] White label compliance check passed: status={data['compliance_status']}, white_label={details.get('is_white_label')}")
+
+            # 验证人工终审仲裁接口 POST /api/piggyback/arbitrate/{item_id}
+            arb_resp = self.client.post(
+                f"/api/piggyback/arbitrate/{item_id}",
+                headers=self.headers,
+                json={
+                    "human_verdict": "SAFE",
+                    "human_notes": "人工确认：HYinjin为白牌，配件无商标侵权"
+                }
+            )
+            self.assertEqual(arb_resp.status_code, 200)
+            arb_data = arb_resp.json()
+            self.assertTrue(arb_data["success"])
+            self.assertEqual(arb_data["compliance_status"], "SAFE")
+            self.assertIn("human_arbitration", arb_data["compliance_details"])
+            print("[OK] Piggyback arbitration endpoint passed!")
+        finally:
+            del_item = self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == item_id).first()
+            if del_item:
+                self.db.delete(del_item)
+                self.db.commit()
+
 if __name__ == "__main__":
     unittest.main()

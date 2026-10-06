@@ -139,35 +139,45 @@ class MakroPiggybackService:
         db: Session
     ) -> Dict[str, Any]:
         """
-        对指定跟品商品调用双 AI (通义千问 + DeepSeek) 执行侵权与合规全链路检测
+        对指定跟品商品调用多模型双轮交叉质检 (第1轮文本大牌红线与白牌豁免 + 第2轮主图视觉多模态图审)
         """
-        compliance_service = ComplianceService()
+        compliance_service = ComplianceService.from_db(db)
 
-        # 整理待检数据
+        # 整理待检数据 (全面对齐 ComplianceService 输入要素)
         prod_dict = {
             "id": item.id,
             "title": item.title,
+            "makro_title": item.title,
             "brand": item.brand or "Generic",
+            "makro_brand": item.brand or "Generic",
             "category": item.vertical or "general",
-            "images": [item.image_url] if item.image_url else []
+            "images": [item.image_url] if item.image_url else [],
+            "raw_images": [item.image_url] if item.image_url else [],
+            "is_piggyback": True,
+            "original_seller": item.original_seller or ""
         }
 
         try:
-            res = compliance_service.check_compliance(prod_dict)
-            status = res.get("status", "SAFE")
+            res = compliance_service.check_product(
+                product_data=prod_dict,
+                check_image=bool(item.image_url),
+                check_ai_title=True
+            )
+            status = res.get("compliance_status", "SAFE")
             item.compliance_status = status
             item.compliance_details = json.dumps(res, ensure_ascii=False)
             db.commit()
             db.refresh(item)
             return res
         except Exception as e:
-            logger.error(f"跟品商品 (ID: {item.id}) AI 合规检测异常: {e}")
+            logger.error(f"跟品商品 (ID: {item.id}) AI 合规检测异常: {e}", exc_info=True)
             item.compliance_status = "RISK"
             err_res = {
-                "status": "RISK",
+                "compliance_status": "RISK",
                 "summary": f"合规检测接口异常，建议人工核验: {str(e)}",
                 "risk_keywords": [],
-                "prohibited_items": []
+                "prohibited_items": [],
+                "reconciliation_summary": f"AI 检测调用异常: {str(e)}"
             }
             item.compliance_details = json.dumps(err_res, ensure_ascii=False)
             db.commit()

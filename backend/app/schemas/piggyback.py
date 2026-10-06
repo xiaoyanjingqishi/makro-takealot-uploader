@@ -147,3 +147,8 @@ class RepriceLogResponse(BaseModel):
         "from_attributes": True,
         "protected_namespaces": ()
     }
+
+class ArbitratePiggybackComplianceRequest(BaseModel):
+    human_verdict: str = Field(..., description="人工裁定结论: SAFE, RISK, PROHIBITED")
+    human_notes: Optional[str] = Field(None, description="仲裁备注与合规说明")
+
