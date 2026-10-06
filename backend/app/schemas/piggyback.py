@@ -48,9 +48,10 @@ class PiggybackItemUpdate(BaseModel):
 
 class BatchApplyPricingRequest(BaseModel):
     ids: List[int] = Field(..., description="选中的跟品商品 ID 列表")
-    price_strategy: str = Field(..., description="MINUS_1, PERCENT_2, MANUAL, COST_PLUS")
+    price_strategy: str = Field(..., description="MINUS_1, MINUS_0.5, MINUS_2, PERCENT_2, MANUAL, CUSTOM 等")
     min_price_floor: Optional[float] = None
     custom_delta: Optional[float] = Field(None, description="自定义下浮或上浮金额/百分比")
+    sync_to_makro: Optional[bool] = Field(True, description="是否即时同步推送官方")
 
 class BatchCheckComplianceRequest(BaseModel):
     ids: List[int] = Field(..., description="需要批量执行 AI 侵权检测的商品 ID 列表")

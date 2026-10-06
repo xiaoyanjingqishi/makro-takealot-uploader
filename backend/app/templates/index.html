@@ -2405,6 +2405,17 @@
                 <span>公式算底价 ({{ piggyback.selectedIds.length }})</span>
               </button>
 
+              <!-- 批量跟价公式 -->
+              <button 
+                @click="openBatchPricingModal"
+                :disabled="piggyback.selectedIds.length === 0"
+                class="px-2.5 py-1.5 text-xs bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title="批量为选中的商品配置跟价计算公式 (如 -R0.50, -R1.00, -2%)"
+              >
+                <span>⚡</span>
+                <span>跟价公式 ({{ piggyback.selectedIds.length }})</span>
+              </button>
+
               <!-- 批量自动跟价巡检 -->
               <button 
                 @click="triggerBatchReprice"
@@ -2685,13 +2696,50 @@
                         >
                           {{ item.auto_reprice ? '🤖 跟价: 开' : '⚪ 跟价: 关' }}
                         </span>
-                        <span 
-                          v-if="item.original_price > item.target_price"
-                          class="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold text-[9.5px]"
-                        >
-                          -R{{ (item.original_price - item.target_price).toFixed(2) }}
-                        </span>
-                        <span v-else class="text-slate-400 text-[9.5px]">平价</span>
+                        <!-- 交互式跟价公式快捷切换徽章 (Point 1: 点击即改) -->
+                        <div class="relative inline-block">
+                          <button 
+                            type="button"
+                            @click.stop="toggleStrategyDropdown(item)"
+                            class="px-1.5 py-0.2 rounded font-semibold text-[9.5px] border cursor-pointer transition-all flex items-center space-x-0.5 select-none hover:shadow-2xs"
+                            :class="item._flashSuccess === 'strategy' ? 'bg-emerald-200 text-emerald-900 border-emerald-400 ring-2 ring-emerald-300' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-400 hover:bg-emerald-100/70'"
+                            :title="'当前跟价公式: ' + getStrategyLabel(item.price_strategy) + ' (单击快速切换公式)'"
+                          >
+                            <span>{{ getStrategyShortTag(item) }}</span>
+                            <span class="text-[7.5px] opacity-70">▼</span>
+                          </button>
+
+                          <!-- 快捷切换跟价公式气泡菜单 -->
+                          <div 
+                            v-if="activeStrategyDropdownId === item.id" 
+                            class="absolute right-0 bottom-full mb-1 w-44 bg-white rounded-lg shadow-xl border border-slate-200 z-50 p-1.5 space-y-0.5 text-left animate-in fade-in text-xs font-sans ring-1 ring-slate-900/5"
+                            @click.stop
+                          >
+                            <div class="px-2 py-1 text-[10px] font-bold text-slate-400 border-b border-slate-100 flex items-center justify-between">
+                              <span>跟价计算公式</span>
+                              <span class="text-slate-400 cursor-pointer hover:text-slate-600" @click="activeStrategyDropdownId = null">✕</span>
+                            </div>
+                            <button 
+                              v-for="opt in strategyQuickOptions" 
+                              :key="opt.value"
+                              @click="selectItemStrategy(item, opt.value)"
+                              class="w-full text-left px-2 py-1 rounded text-[10.5px] font-medium flex items-center justify-between hover:bg-slate-50 transition-colors"
+                              :class="item.price_strategy === opt.value ? 'bg-sky-50 text-sky-700 font-bold' : 'text-slate-700'"
+                            >
+                              <span>{{ opt.label }}</span>
+                              <span v-if="item.price_strategy === opt.value" class="text-sky-600 font-bold">✓</span>
+                            </button>
+                            <div class="pt-1 border-t border-slate-100">
+                              <button 
+                                @click="openCustomStrategyPrompt(item)"
+                                class="w-full text-left px-2 py-1 rounded text-[10.5px] text-indigo-600 hover:bg-indigo-50 font-semibold flex items-center space-x-1"
+                              >
+                                <span>✏️</span>
+                                <span>自定义差额...</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                       <div v-if="item.last_reprice_result" class="text-[9.5px] text-slate-400 truncate max-w-[170px]" :title="'上次跟价: ' + item.last_reprice_result + (item.last_reprice_at ? ' (' + item.last_reprice_at + ')' : '')">
                         ⏱️ {{ item.last_reprice_result }}
@@ -7963,16 +8011,19 @@
         </div>
         <div class="space-y-3 text-xs">
           <div>
-            <label class="block font-semibold text-slate-700 mb-1">选择调价策略</label>
+            <label class="block font-semibold text-slate-700 mb-1">选择跟价计算公式</label>
             <select v-model="batchPricingForm.price_strategy" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
-              <option value="MINUS_1">比原价减 1.00 兰特 (-R1 抢占流量)</option>
-              <option value="PERCENT_2">比原价下浮 2% (-2% 比例让利)</option>
-              <option value="CUSTOM">自定义加减金额 (兰特)</option>
-              <option value="MANUAL">恢复原链接在售平价</option>
+              <option value="MINUS_1">🔥 比竞对低 1.00 兰特 (-R1.00 推荐抢流)</option>
+              <option value="MINUS_0.5">⚡ 比竞对低 0.50 兰特 (-R0.50 精细微降保利)</option>
+              <option value="MINUS_2">🚀 比竞对低 2.00 兰特 (-R2.00 强力夺车)</option>
+              <option value="PERCENT_2">📊 比竞对下浮 2% (-2% 比例让利)</option>
+              <option value="PERCENT_5">📊 比竞对下浮 5% (-5% 比例让利)</option>
+              <option value="MANUAL">🤝 保持平价跟卖 (与竞对价格一致)</option>
+              <option value="CUSTOM">✏️ 自定义加减金额 (兰特)</option>
             </select>
           </div>
           <div v-if="batchPricingForm.price_strategy === 'CUSTOM'">
-            <label class="block font-semibold text-slate-700 mb-1">自定义差价 (如 -2.5 代表降2.5兰特，+5 代表涨5兰特)</label>
+            <label class="block font-semibold text-slate-700 mb-1">自定义差价 (如 -1.5 代表降1.5兰特，+2 代表涨2兰特)</label>
             <input 
               type="number" 
               step="0.1" 
@@ -7981,13 +8032,17 @@
             />
           </div>
           <div>
-            <label class="block font-semibold text-slate-700 mb-1">设置保本底线 (低于此金额不再下调)</label>
+            <label class="block font-semibold text-slate-700 mb-1">保本底线保护 (低于此金额不再下调，留空保持原底价)</label>
             <input 
               type="number" 
               v-model.number="batchPricingForm.min_price_floor" 
-              placeholder="0 (不限)"
+              placeholder="0 (留空不修改)"
               class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
             />
+          </div>
+          <div class="flex items-center space-x-2 pt-1 border-t border-slate-100">
+            <input type="checkbox" id="sync_to_makro_chk" v-model="batchPricingForm.sync_to_makro" class="rounded text-sky-600 focus:ring-sky-500 cursor-pointer" />
+            <label for="sync_to_makro_chk" class="text-xs font-medium text-slate-700 cursor-pointer">立即按新公式重算并在在售商品上同步更新至 Makro 官方</label>
           </div>
         </div>
         <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
@@ -8056,16 +8111,27 @@
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block font-semibold text-slate-700 mb-1">变体规格说明 (如 Pack of 10)</label>
-              <input type="text" v-model="editingPiggybackItem.variant_name" placeholder="无变体可留空" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs" />
-            </div>
-            <div>
-              <label class="block font-semibold text-slate-700 mb-1">自动跟价设置</label>
+              <label class="block font-semibold text-slate-700 mb-1">自动跟价开关</label>
               <select v-model="editingPiggybackItem.auto_reprice" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs bg-white">
                 <option :value="true">🤖 开启自动跟价</option>
                 <option :value="false">⚪ 关闭自动跟价</option>
               </select>
             </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">跟价计算公式</label>
+              <select v-model="editingPiggybackItem.price_strategy" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs bg-white">
+                <option value="MINUS_1">🔥 比竞对低 R1.00 (推荐抢流)</option>
+                <option value="MINUS_0.5">⚡ 比竞对低 R0.50 (微降保利)</option>
+                <option value="MINUS_2">🚀 比竞对低 R2.00 (强力夺车)</option>
+                <option value="PERCENT_2">📊 比竞对低 2% (按比例)</option>
+                <option value="PERCENT_5">📊 比竞对低 5% (按比例)</option>
+                <option value="MANUAL">🤝 平价跟卖 (与竞对一致)</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">变体规格说明 (如 Pack of 10)</label>
+            <input type="text" v-model="editingPiggybackItem.variant_name" placeholder="无变体可留空" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs" />
           </div>
           <div>
             <label class="block font-semibold text-slate-700 mb-1">最高保护售价 (R，无竞对时保护)</label>
@@ -8557,9 +8623,19 @@
           showBatchPricingPiggybackModal: false,
           batchPricingForm: {
             price_strategy: 'MINUS_1',
-            min_price_floor: 0.0,
-            custom_delta: 0.0
+            min_price_floor: null,
+            custom_delta: 0.0,
+            sync_to_makro: true
           },
+          activeStrategyDropdownId: null,
+          strategyQuickOptions: [
+            { value: 'MINUS_1', label: '🔥 比竞对低 R1.00 (推荐抢流)', short: '-R1.00' },
+            { value: 'MINUS_0.5', label: '⚡ 比竞对低 R0.50 (微降保利)', short: '-R0.50' },
+            { value: 'MINUS_2', label: '🚀 比竞对低 R2.00 (强力夺车)', short: '-R2.00' },
+            { value: 'PERCENT_2', label: '📊 比竞对低 2% (按比例让利)', short: '-2%' },
+            { value: 'PERCENT_5', label: '📊 比竞对低 5% (按比例让利)', short: '-5%' },
+            { value: 'MANUAL', label: '🤝 平价跟卖 (与竞对持平)', short: '平价' },
+          ],
           applyingBatchPricing: false,
           showEditPiggybackModal: false,
           editingPiggybackItem: null,
@@ -9383,23 +9459,37 @@
             this.batchCollectingPiggyback = false;
           }
         },
+        openBatchPricingModal() {
+          if (this.piggyback.selectedIds.length === 0) {
+            this.showToast('请先勾选需要批量配置跟价公式的商品', 'warning');
+            return;
+          }
+          this.showBatchPricingPiggybackModal = true;
+        },
         async handleBatchApplyPricing() {
           if (this.piggyback.selectedIds.length === 0) return;
           this.applyingBatchPricing = true;
           try {
+            let finalStrategy = this.batchPricingForm.price_strategy;
+            let customDelta = null;
+            if (finalStrategy === 'CUSTOM') {
+              customDelta = this.batchPricingForm.custom_delta || 0.0;
+              finalStrategy = `CUSTOM:${customDelta >= 0 ? '+' : ''}${customDelta}`;
+            }
             const res = await fetch('/api/piggyback/batch-apply-pricing', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 ids: this.piggyback.selectedIds,
-                price_strategy: this.batchPricingForm.price_strategy,
+                price_strategy: finalStrategy,
                 min_price_floor: this.batchPricingForm.min_price_floor || null,
-                custom_delta: this.batchPricingForm.custom_delta || null
+                custom_delta: customDelta,
+                sync_to_makro: this.batchPricingForm.sync_to_makro
               })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || '调价失败');
-            this.showToast(`成功应用比价策略至 ${data.updated_count} 件商品`, 'success');
+            this.showToast(`成功应用跟价公式至 ${data.updated_count} 件商品 (实时同步官方: ${data.synced_count || 0} 件)`, 'success');
             this.showBatchPricingPiggybackModal = false;
             this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
@@ -9407,6 +9497,75 @@
           } finally {
             this.applyingBatchPricing = false;
           }
+        },
+        getStrategyLabel(st) {
+          if (!st) return '比竞对低 R1.00';
+          const found = this.strategyQuickOptions.find(o => o.value === st);
+          if (found) return found.label;
+          if (st.startsWith('MINUS_')) return `比竞对低 R${parseFloat(st.replace('MINUS_', '').replace('_', '.')).toFixed(2)}`;
+          if (st.startsWith('PERCENT_')) return `比竞对低 ${st.replace('PERCENT_', '')}%`;
+          if (st.startsWith('CUSTOM:')) return `自定义差额 R${st.split(':')[1]}`;
+          if (st === 'MANUAL') return '平价跟卖';
+          return st;
+        },
+        getStrategyShortTag(item) {
+          const st = item.price_strategy || 'MINUS_1';
+          const found = this.strategyQuickOptions.find(o => o.value === st);
+          if (found) return found.short;
+          if (st.startsWith('MINUS_')) return `-R${parseFloat(st.replace('MINUS_', '').replace('_', '.')).toFixed(2)}`;
+          if (st.startsWith('PERCENT_')) return `-${st.replace('PERCENT_', '')}%`;
+          if (st.startsWith('CUSTOM:')) return `R${parseFloat(st.split(':')[1]) >= 0 ? '+' : ''}${st.split(':')[1]}`;
+          if (st === 'MANUAL') return '平价';
+          if (item.original_price > item.target_price) return `-R${(item.original_price - item.target_price).toFixed(2)}`;
+          return '平价';
+        },
+        toggleStrategyDropdown(item) {
+          if (this.activeStrategyDropdownId === item.id) {
+            this.activeStrategyDropdownId = null;
+          } else {
+            this.activeStrategyDropdownId = item.id;
+          }
+        },
+        closeStrategyDropdown() {
+          this.activeStrategyDropdownId = null;
+        },
+        async selectItemStrategy(item, strategy, customDelta = null) {
+          this.activeStrategyDropdownId = null;
+          const oldStrategy = item.price_strategy;
+          item.price_strategy = strategy;
+          try {
+            const payload = { price_strategy: strategy };
+            const res = await fetch(`/api/piggyback/items/${item.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || '保存失败');
+            if (data.item) {
+              item.target_price = data.item.target_price;
+              item.target_mrp = data.item.target_mrp;
+              item.price_strategy = data.item.price_strategy;
+            }
+            item._flashSuccess = 'strategy';
+            setTimeout(() => { item._flashSuccess = null; }, 1500);
+            this.showToast(`已更新跟价公式: ${this.getStrategyLabel(strategy)} (最新售价: R${item.target_price.toFixed(2)})`, 'success');
+          } catch (e) {
+            item.price_strategy = oldStrategy;
+            this.showToast('修改跟价公式失败: ' + e.message, 'error');
+          }
+        },
+        openCustomStrategyPrompt(item) {
+          this.activeStrategyDropdownId = null;
+          const raw = prompt('请输入自定义减额或加额兰特数值 (例如输入 -1.5 代表降R1.50，+2 代表涨R2.00):', '-1.5');
+          if (raw === null || raw.trim() === '') return;
+          const val = parseFloat(raw.trim());
+          if (isNaN(val)) {
+            this.showToast('请输入有效的数值', 'warning');
+            return;
+          }
+          const st = `CUSTOM:${val >= 0 ? '+' : ''}${val}`;
+          this.selectItemStrategy(item, st, val);
         },
         async handleCheckCompliance(item) {
           this.showToast('正在调用双 AI 执行侵权与合规全项质检...', 'info');

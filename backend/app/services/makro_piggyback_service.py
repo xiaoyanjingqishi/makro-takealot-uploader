@@ -22,8 +22,64 @@ class MakroPiggybackService:
     完全基于真实抓包协议 (makro跟品协议.har) 落地全流程挂靠发布与库存即时激活
     """
 
-    @staticmethod
+    @classmethod
+    def eval_price_by_strategy(
+        cls,
+        base_price: float,
+        strategy: str = "MINUS_1",
+        custom_delta: Optional[float] = None,
+        min_floor: float = 0.0
+    ) -> float:
+        """
+        统一跟价公式计算引擎：
+        支持:
+          - MINUS_X (如 MINUS_1 -> -1.0, MINUS_0.5 / MINUS_0_5 -> -0.5, MINUS_2 -> -2.0)
+          - PERCENT_X (如 PERCENT_2 -> -2%, PERCENT_5 -> -5%, PERCENT_1 -> -1%)
+          - CUSTOM (配合 custom_delta 浮点，或 strategy="CUSTOM:-1.5")
+          - MANUAL / MATCH_PRICE (平价零差额跟卖)
+        """
+        price = float(base_price or 0.0)
+        floor = float(min_floor or 0.0)
+        if price <= 0:
+            return floor if floor > 0 else 1.0
+
+        st = (strategy or "MINUS_1").strip().upper()
+
+        if st.startswith("MINUS_"):
+            try:
+                num_str = st[6:].replace("_", ".")
+                val = float(num_str)
+                calc_p = max(price - val, 1.0)
+            except Exception:
+                calc_p = max(price - 1.0, 1.0)
+        elif st.startswith("PERCENT_"):
+            try:
+                num_str = st[8:].replace("_", ".")
+                pct = float(num_str)
+                calc_p = max(round(price * (1.0 - pct / 100.0), 2), 1.0)
+            except Exception:
+                calc_p = max(round(price * 0.98, 2), 1.0)
+        elif st.startswith("CUSTOM:") or st.startswith("OFFSET:"):
+            try:
+                val = float(st.split(":")[1])
+                calc_p = max(round(price + val, 2), 1.0)
+            except Exception:
+                calc_p = price
+        elif st == "CUSTOM" and custom_delta is not None:
+            calc_p = max(round(price + custom_delta, 2), 1.0)
+        elif st in ["MANUAL", "MATCH_PRICE", "SAME", "0"]:
+            calc_p = price
+        else:
+            calc_p = max(price - 1.0, 1.0)
+
+        if floor > 0:
+            calc_p = max(calc_p, floor)
+
+        return round(calc_p, 2)
+
+    @classmethod
     def calculate_price(
+        cls,
         original_price: float,
         strategy: str = "MINUS_1",
         min_floor: float = 0.0,
@@ -39,17 +95,12 @@ class MakroPiggybackService:
         if price <= 0:
             target_p = floor if floor > 0 else 199.0
         else:
-            if strategy == "MINUS_1":
-                target_p = max(price - 1.0, 1.0)
-            elif strategy == "PERCENT_2":
-                target_p = max(round(price * 0.98, 2), 1.0)
-            elif strategy == "CUSTOM" and custom_delta is not None:
-                target_p = max(round(price + custom_delta, 2), 1.0)
-            else:
-                target_p = price
-
-            if floor > 0:
-                target_p = max(target_p, floor)
+            target_p = cls.eval_price_by_strategy(
+                base_price=price,
+                strategy=strategy,
+                custom_delta=custom_delta,
+                min_floor=floor
+            )
 
         # MRP 设定: 保持原 MRP 或略高 30%~50%
         if original_mrp and original_mrp > target_p:

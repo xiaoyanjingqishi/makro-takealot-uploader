@@ -709,6 +709,19 @@ def update_piggyback_item(
         item.variant_name = req.variant_name.strip()
     if req.price_strategy is not None:
         item.price_strategy = req.price_strategy
+        # 若未指定 target_price，根据新公式自动重新计算售价
+        if req.target_price is None and (item.original_price or item.target_price or 0.0) > 0:
+            base_p = item.original_price or item.target_price or 0.0
+            new_tp, new_tm = MakroPiggybackService.calculate_price(
+                original_price=base_p,
+                strategy=req.price_strategy,
+                min_floor=item.min_price_floor or 0.0,
+                original_mrp=item.original_mrp or 0.0
+            )
+            if abs(new_tp - (item.target_price or 0.0)) >= 0.01:
+                item.target_price = new_tp
+                item.target_mrp = new_tm
+                price_changed = True
     if req.inventory is not None:
         item.inventory = int(req.inventory)
     if req.lead_time_days is not None:
@@ -818,11 +831,16 @@ def batch_apply_pricing(
 ):
     items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
     updated_count = 0
+    synced_count = 0
+
+    from ..services.auto_reprice_service import AutoRepriceService
 
     for it in items:
         floor = req.min_price_floor if req.min_price_floor is not None else it.min_price_floor
+        old_tp = it.target_price or 0.0
+        base_p = it.original_price or it.target_price or 0.0
         tp, tm = MakroPiggybackService.calculate_price(
-            original_price=it.original_price,
+            original_price=base_p,
             strategy=req.price_strategy,
             min_floor=floor,
             original_mrp=it.original_mrp,
@@ -835,8 +853,28 @@ def batch_apply_pricing(
             it.min_price_floor = req.min_price_floor
         updated_count += 1
 
+        # 若勾选了即时同步且已在售，向官方推送新价格
+        if req.sync_to_makro and it.status in ["ACTIVE", "PUBLISHED"] and abs(tp - old_tp) >= 0.01:
+            try:
+                store = it.store or _get_target_store(db, it.store_id)
+                AutoRepriceService._push_price_to_makro(it, store, tp)
+                it.last_reprice_at = datetime.now()
+                it.last_reprice_result = f"STRATEGY_SYNC: 批量公式切换为 {req.price_strategy}，同步售价 R{tp}"
+                synced_count += 1
+            except Exception as push_err:
+                logger.warning(f"批量调价同步官方失败 [{it.seller_sku}]: {push_err}")
+
     db.commit()
-    return {"success": True, "updated_count": updated_count}
+    record_audit_log(
+        task_type="BATCH_PRICING",
+        status="SUCCESS",
+        message=f"批量更新跟价公式: {updated_count} 件商品策略改为 [{req.price_strategy}], 实时同步官方 {synced_count} 件",
+        detail_logs={"total": len(req.ids), "strategy": req.price_strategy, "updated": updated_count, "synced": synced_count},
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+    return {"success": True, "updated_count": updated_count, "synced_count": synced_count}
 
 @router.post("/publish/{item_id}", summary="单品执行 Makro 官方挂靠跟品")
 def publish_single_piggyback(

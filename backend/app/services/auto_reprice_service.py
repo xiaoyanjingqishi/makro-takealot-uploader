@@ -133,29 +133,26 @@ class AutoRepriceService:
             reason = f"矩阵友军店铺 [{winning_store_name or comp_seller}] 已占位黄金购物车，为避免内部互相压价削减利润，本店铺维持现价 R{old_selling_price}，不内卷跟价"
             new_price = old_selling_price
         else:
-            # 外部竞对占位，计算抢流出价
-            if strategy == "MINUS_1":
-                calc_p = max(comp_price - 1.0, 1.0)
-            elif strategy == "PERCENT_2":
-                calc_p = max(round(comp_price * 0.98, 2), 1.0)
-            elif strategy == "PERCENT_5":
-                calc_p = max(round(comp_price * 0.95, 2), 1.0)
-            else:
-                calc_p = max(comp_price - 1.0, 1.0)
+            # 外部竞对占位，根据该商品的跟价公式策略计算抢流出价
+            calc_p = MakroPiggybackService.eval_price_by_strategy(
+                base_price=comp_price,
+                strategy=strategy,
+                min_floor=0.0  # 先算裸价，以精确识别是否击穿保本线
+            )
 
             # 保本底线防穿保护
             if min_floor > 0 and calc_p < min_floor:
                 new_price = min_floor
                 action = "REACHED_FLOOR"
-                reason = f"竞对 ({comp_seller}) 报价 R{comp_price} 过低，已触发保本底线 R{min_floor} 锁定防护"
+                reason = f"竞对 ({comp_seller}) 报价 R{comp_price} 过低，按公式算价 R{calc_p} 已击穿保本底线 R{min_floor}，触发锁定防护"
             elif abs(calc_p - old_selling_price) < 0.01:
                 new_price = old_selling_price
                 action = "NO_CHANGE"
-                reason = f"计算跟价 R{calc_p} 与当前本店售价一致，无需重复调价"
+                reason = f"计算跟价 R{calc_p} (策略: {strategy}) 与当前本店售价一致，无需重复调价"
             else:
                 new_price = calc_p
                 action = "UNDER_CUT"
-                reason = f"竞对 ({comp_seller}) 报价 R{comp_price}，下调至 R{new_price} 抢占购物车"
+                reason = f"竞对 ({comp_seller}) 报价 R{comp_price}，按公式 [{strategy}] 下调至 R{new_price} 抢占购物车"
 
         # 5. 若价格发生实质变动，向 Makro 官方 API 提交更新
         if action in ["UNDER_CUT", "REACHED_FLOOR"] and abs(new_price - old_selling_price) >= 0.01:

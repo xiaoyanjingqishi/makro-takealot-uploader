@@ -267,5 +267,55 @@ class TestMatrixRepriceAndFilters(unittest.TestCase):
         self.assertEqual(res_none_pub["total"], 1)
         self.assertEqual(res_none_pub["items"][0]["takealot_title"], "保暖手套")
 
+    def test_flexible_reprice_strategies(self):
+        """
+        测试多种灵活跟价公式计算：MINUS_0.5, MINUS_2, PERCENT_5, CUSTOM:-2.5, MANUAL
+        """
+        from app.services.makro_piggyback_service import MakroPiggybackService
+        # 1. MINUS_0.5: 100 - 0.5 = 99.5
+        self.assertEqual(MakroPiggybackService.eval_price_by_strategy(100.0, "MINUS_0.5"), 99.5)
+        # 2. MINUS_2: 100 - 2 = 98.0
+        self.assertEqual(MakroPiggybackService.eval_price_by_strategy(100.0, "MINUS_2"), 98.0)
+        # 3. PERCENT_5: 100 * 0.95 = 95.0
+        self.assertEqual(MakroPiggybackService.eval_price_by_strategy(100.0, "PERCENT_5"), 95.0)
+        # 4. MANUAL: 100.0
+        self.assertEqual(MakroPiggybackService.eval_price_by_strategy(100.0, "MANUAL"), 100.0)
+        # 5. CUSTOM:-2.5 -> 97.5
+        self.assertEqual(MakroPiggybackService.eval_price_by_strategy(100.0, "CUSTOM:-2.5"), 97.5)
+        # 6. 保本底线测试: 底价 98.0，MINUS_5 算得 95.0，应被限制在 98.0
+        self.assertEqual(MakroPiggybackService.eval_price_by_strategy(100.0, "MINUS_5", min_floor=98.0), 98.0)
+
+    def test_batch_apply_pricing_formula(self):
+        """
+        测试批量应用跟价公式接口 (batch-apply-pricing) 与单品更新自动重算售价
+        """
+        from app.api.piggyback import batch_apply_pricing, update_piggyback_item
+        from app.schemas.piggyback import BatchApplyPricingRequest, PiggybackItemUpdate
+
+        item = MakroPiggybackItem(
+            store_id=self.store1.id, user_id=self.op1.id,
+            makro_product_id="FSNFORMULA01", title="公式测试品", seller_sku="FORMULA-SKU-01",
+            original_price=200.0, target_price=199.0, min_price_floor=150.0,
+            price_strategy="MINUS_1", status="PENDING"
+        )
+        self.db.add(item)
+        self.db.commit()
+
+        # 1. 批量改为 MINUS_0.5: 200.0 - 0.5 = 199.50
+        req = BatchApplyPricingRequest(ids=[item.id], price_strategy="MINUS_0.5", sync_to_makro=False)
+        res = batch_apply_pricing(req, current_user=self.admin, db=self.db)
+        self.assertTrue(res["success"])
+        self.db.refresh(item)
+        self.assertEqual(item.price_strategy, "MINUS_0.5")
+        self.assertEqual(item.target_price, 199.50)
+
+        # 2. 单品更新为 PERCENT_5: 200.0 * 0.95 = 190.00
+        up_req = PiggybackItemUpdate(price_strategy="PERCENT_5")
+        res_single = update_piggyback_item(item.id, up_req, current_user=self.admin, db=self.db)
+        self.assertTrue(res_single["success"])
+        self.db.refresh(item)
+        self.assertEqual(item.price_strategy, "PERCENT_5")
+        self.assertEqual(item.target_price, 190.00)
+
 if __name__ == "__main__":
     unittest.main()
