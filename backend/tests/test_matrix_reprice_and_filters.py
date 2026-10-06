@@ -5,26 +5,23 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from unittest.mock import patch
 
-try:
-    from backend.app.database import Base
-    from backend.app.models.user import User
-    from backend.app.models.store import Store, ProductStoreListing
-    from backend.app.models.product import Product
-    from backend.app.models.makro_piggyback import MakroPiggybackItem
-    from backend.app.models.makro_reprice_log import MakroRepriceLog
-    from backend.app.services.auto_reprice_service import AutoRepriceService
-    from backend.app.api.piggyback import list_piggyback_items
-    from backend.app.api.products import list_products
-except ImportError:
-    from app.database import Base
-    from app.models.user import User
-    from app.models.store import Store, ProductStoreListing
-    from app.models.product import Product
-    from app.models.makro_piggyback import MakroPiggybackItem
-    from app.models.makro_reprice_log import MakroRepriceLog
-    from app.services.auto_reprice_service import AutoRepriceService
-    from app.api.piggyback import list_piggyback_items
-    from app.api.products import list_products
+import os
+import sys
+
+# 保证 app 模块路径可直接导入
+_backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
+from app.database import Base
+from app.models.user import User
+from app.models.store import Store, ProductStoreListing
+from app.models.product import Product
+from app.models.makro_piggyback import MakroPiggybackItem
+from app.models.makro_reprice_log import MakroRepriceLog
+from app.services.auto_reprice_service import AutoRepriceService
+from app.api.piggyback import list_piggyback_items
+from app.api.products import list_products
 
 class TestMatrixRepriceAndFilters(unittest.TestCase):
     @classmethod
@@ -135,6 +132,71 @@ class TestMatrixRepriceAndFilters(unittest.TestCase):
         # 180.0 - 1.0 = 179.0
         self.assertEqual(res["new_price"], 179.0)
         self.assertIn("RandomOutdoorCompetitor", res["reason"])
+        # 核心：外部竞对占位时，必须判定为 LOSING (丢车需调价)，绝不能误判为 WINNING
+        self.assertEqual(item.buybox_status, "LOSING")
+
+    def test_outside_competitor_same_price_is_losing(self):
+        """
+        核心修复验证：当外部竞对(如 pumu222)占位，即使本店售价等于竞对价(R498)，
+        也坚决判定为 LOSING (丢车需调价)，彻底根除虚假 WINNING 判定！
+        """
+        fsn = "GSPHPUMU222TEST01"
+        item = MakroPiggybackItem(
+            store_id=self.store1.id, user_id=self.op1.id,
+            makro_product_id=fsn, title="儿童拼装玩具", seller_sku="TOY-PUMU-01",
+            target_price=498.0, min_price_floor=300.0, price_strategy="MINUS_1",
+            auto_reprice=True, status="ACTIVE"
+        )
+        self.db.add(item)
+        self.db.commit()
+
+        # 模拟买家端前台：由外部竞对 pumu222 占位，价格 R498
+        mock_scraped = {
+            "price": 498.0,
+            "mrp": 600.0,
+            "seller_name": "pumu222", # 外部真实竞对
+            "seller_count": 2
+        }
+
+        with patch("app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend", return_value=mock_scraped):
+            with patch("app.services.auto_reprice_service.AutoRepriceService._push_price_to_makro", return_value=True):
+                res = AutoRepriceService.reprice_single_item(item, self.db, force=True)
+
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(res["action"], "UNDER_CUT")
+        self.assertEqual(res["new_price"], 497.0)
+        # 必须真实判定为 LOSING，绝不可因 498 <= 498 或刚计算降价而误设为 WINNING
+        self.assertEqual(item.buybox_status, "LOSING")
+
+    def test_outside_competitor_hit_floor_is_floor_hit(self):
+        """
+        测试外部竞对低价逼近或击穿保本底线时，状态判定为 FLOOR_HIT (保本底价拦截)
+        """
+        fsn = "GSPHFLOOR00000001"
+        item = MakroPiggybackItem(
+            store_id=self.store1.id, user_id=self.op1.id,
+            makro_product_id=fsn, title="车载香薰机", seller_sku="AROMA-01",
+            target_price=100.0, min_price_floor=100.0, price_strategy="MINUS_1",
+            auto_reprice=True, status="ACTIVE"
+        )
+        self.db.add(item)
+        self.db.commit()
+
+        mock_scraped = {
+            "price": 95.0,
+            "mrp": 150.0,
+            "seller_name": "LowPriceCompetitor",
+            "seller_count": 2
+        }
+
+        with patch("app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend", return_value=mock_scraped):
+            with patch("app.services.auto_reprice_service.AutoRepriceService._push_price_to_makro", return_value=True):
+                res = AutoRepriceService.reprice_single_item(item, self.db, force=True)
+
+        self.assertEqual(res["status"], "SUCCESS")
+        self.assertEqual(res["action"], "REACHED_FLOOR")
+        self.assertEqual(res["new_price"], 100.0)
+        self.assertEqual(item.buybox_status, "FLOOR_HIT")
 
     def test_piggyback_operator_attribution_and_filter(self):
         """

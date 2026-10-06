@@ -101,9 +101,10 @@ class AutoRepriceService:
                     break
 
         # 辅助多店铺同品跨店关联校验：
-        # 若 comp_seller 未能直接文本匹配（例如 Makro 前台只显示了局部缩写），
-        # 但我们本地同矩阵其他启用的店铺也挂靠了同一 FSN，且其在售价正好等于 comp_price
-        if not is_own_current_store and not is_matrix_sister_store and comp_price > 0:
+        # 仅当前台未能解析出 seller_name (comp_seller 为空) 时，
+        # 才尝试本地同矩阵其他启用的店铺挂靠同款 FSN 的价格特征进行兜底推导。
+        # 若 comp_seller 已明确识别且不属于本店或任何友军，坚决确认为外部竞争对手！
+        if not comp_seller and not is_own_current_store and not is_matrix_sister_store and comp_price > 0:
             sister_items = db.query(MakroPiggybackItem).filter(
                 MakroPiggybackItem.makro_product_id == item.makro_product_id,
                 MakroPiggybackItem.id != item.id,
@@ -168,21 +169,28 @@ class AutoRepriceService:
                 action = "FAILED"
                 reason = f"调价计算成功但推送官方失败: {str(api_err)}"
 
-        # 6. 计算最终 Buybox 归属状态
+        # 6. 计算最终 Buybox 归属状态 (实事求是反映买家前台真实权属)
         if comp_price <= 0:
+            # 抓取未果，保留原有状态
             buybox_status = item.buybox_status or "UNKNOWN"
-        elif is_own_any_store:
+        elif is_own_current_store:
+            # 本店明确占有黄金购物车
+            buybox_status = "WINNING" if seller_count > 1 else "NO_COMPETITOR"
+        elif is_matrix_sister_store:
+            # 矩阵友军兄弟店铺占有黄金购物车
             buybox_status = "WINNING"
+        elif comp_seller and not is_own_any_store:
+            # 外部真实竞对占位 (例如 pumu222 占车)
+            if action == "REACHED_FLOOR" or (min_floor > 0 and (item.target_price or 0.0) <= min_floor):
+                buybox_status = "FLOOR_HIT"
+            else:
+                buybox_status = "LOSING"
+        elif seller_count <= 1 and (is_own_any_store or not comp_seller):
+            buybox_status = "NO_COMPETITOR"
         elif action == "REACHED_FLOOR":
             buybox_status = "FLOOR_HIT"
-        elif action == "UNDER_CUT" and (item.target_price or 0.0) < comp_price:
-            buybox_status = "WINNING"
         elif comp_price < (item.target_price or 0.0):
             buybox_status = "LOSING"
-        elif (item.target_price or 0.0) <= comp_price and (item.target_price or 0.0) > 0:
-            buybox_status = "WINNING"
-        elif seller_count <= 1:
-            buybox_status = "NO_COMPETITOR"
         else:
             buybox_status = "UNKNOWN"
 

@@ -244,6 +244,39 @@ try:
 except Exception as _ve:
     print(f"[INIT] 商品类目巡检跳过: {_ve}")
 
+# 自动纠偏跟品池历史虚假占位赢车状态 (将原卖家为外部竞对但被误标为 WINNING 的历史数据纠偏为 LOSING 或 FLOOR_HIT)
+try:
+    with SessionLocal() as _db:
+        from app.models.makro_piggyback import MakroPiggybackItem
+        from app.models.store import Store
+        active_stores = _db.query(Store).filter(Store.is_active == True).all()
+        all_store_idents = set()
+        for s in active_stores:
+            if s.name:
+                all_store_idents.add(s.name.strip().lower())
+            if s.default_brand:
+                all_store_idents.add(s.default_brand.strip().lower())
+            if s.seller_id:
+                all_store_idents.add(s.seller_id.strip().lower())
+
+        false_winners = _db.query(MakroPiggybackItem).filter(MakroPiggybackItem.buybox_status == "WINNING").all()
+        corrected_count = 0
+        for it in false_winners:
+            seller = (it.original_seller or "").strip().lower()
+            if seller and not any(ident in seller or seller in ident for ident in all_store_idents if ident):
+                min_floor = float(it.min_price_floor or 0.0)
+                target_p = float(it.target_price or 0.0)
+                if min_floor > 0 and target_p <= min_floor:
+                    it.buybox_status = "FLOOR_HIT"
+                else:
+                    it.buybox_status = "LOSING"
+                corrected_count += 1
+        if corrected_count > 0:
+            _db.commit()
+            print(f"[INIT] 自动纠偏 {corrected_count} 件虚假占位赢车的历史跟品商品状态为真实丢车/底价状态")
+except Exception as _bb_err:
+    print(f"[INIT] 历史 Buybox 状态纠偏跳过: {_bb_err}")
+
 # 初始化多用户 RBAC 权限与店铺在线表
 try:
     from app.init_db import init_and_migrate_db

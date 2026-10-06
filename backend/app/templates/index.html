@@ -2564,14 +2564,14 @@
                           <span 
                             v-if="item.buybox_status === 'WINNING'" 
                             class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300"
-                            title="本店当前持有黄金购物车 (最低在售价)"
+                            title="本店或矩阵友军当前持有黄金购物车"
                           >
                             🥇 占位赢车
                           </span>
                           <span 
                             v-else-if="item.buybox_status === 'LOSING'" 
                             class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300 animate-pulse"
-                            :title="'竞对价格更低，已失守购物车！当前竞对价: R' + (item.last_competitor_price || item.original_price)"
+                            :title="'外部竞对占领黄金购物车！当前竞对价: R' + (item.last_competitor_price || item.original_price)"
                           >
                             🚨 丢车需调价
                           </span>
@@ -2588,9 +2588,15 @@
                           >
                             ⚪ 独家在售
                           </span>
+                          <span 
+                            v-else 
+                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500 border border-slate-200"
+                          >
+                            ❓ 待巡检
+                          </span>
 
                           <span class="text-[10.5px] text-slate-500">
-                            🏆 当前Buybox: <strong class="text-slate-700 font-semibold">{{ item.original_seller || '自营/当前' }}</strong>
+                            🏆 当前Buybox: <strong :class="item.buybox_status === 'WINNING' ? 'text-emerald-700 font-bold' : (item.buybox_status === 'LOSING' ? 'text-rose-600 font-bold' : (item.buybox_status === 'FLOOR_HIT' ? 'text-amber-700 font-bold' : 'text-slate-700 font-semibold'))">{{ item.original_seller || '自营/当前' }}</strong>
                           </span>
                           <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-mono">共 {{ item.seller_count || 1 }} 家在售</span>
                         </div>
