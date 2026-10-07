@@ -610,17 +610,15 @@ class ComplianceService:
         return qwen_img_res, deepseek_img_res
 
     def _build_vision_prompt(self, known_brands: List[str], is_piggyback: bool = False) -> str:
-        """极简高密度首图合规审查 Prompt (压缩~50% Token 消耗)"""
+        """首图合规视觉审查 Prompt (严格识别一切品牌 Logo 与防盗水印)"""
         brand_hint = f"（重点排查: {', '.join(known_brands[:3])}）" if known_brands else ""
-        piggyback_note = ""
-        if is_piggyback:
-            piggyback_note = "【Makro跟品图审规则】: 仅知名受保护国际大牌(如Apple,Sony,Nike,Dyson等)Logo或危险禁运品判定为PROHIBITED/RISK；卖家自造白牌、微小丝印、副厂通用配件说明字样一律判定为SAFE合规！"
+        piggyback_note = "【全品牌Logo零容忍图审准则】: 画面或产品机身/外包装上只要带任何品牌商标Logo、徽标、专有标识（不论是国际名牌还是卖家自造白牌），一律判定为侵权违规 PROHIBITED！仅完全无任何Logo的纯中性白底产品图判定为 SAFE！"
 
         return f"""电商首图视觉合规审查{brand_hint}。{piggyback_note}仅返回JSON，禁止多余输出。
 【准则】:
-1. 品牌Logo: 严查知名商业大牌商标Logo(如Apple,Nike,Sony,Dyson等)或防盗水印。区分: 机身印刷通用产品型号/技术规格(如HW300PRO,USB-C,100W等)或卖家白牌字符属合规SAFE，严禁误判侵权。
-2. 运输违禁: 严查液体/精油/香水/喷雾、纯电池/易燃易爆品、管制刀具等航空安检禁运形态。
-3. 评级: SAFE(无大牌Logo/白牌通用件/无违禁品), RISK(画面疑似国际大牌商业Logo/水印), PROHIBITED(明确知名大牌Logo/大容量液体/危险品)。
+1. 品牌Logo零容忍: 严查任何品牌Logo、商标图样、徽标、文字图形标、防盗水印。只要画面或产品本体/包装带有任何品牌Logo（包含知名大牌或卖家白牌Logo），一律判定为 PROHIBITED，严禁放行！仅无任何Logo的纯中性/白牌通用产品图判定为 SAFE。
+2. 运输违禁: 严查液体/精油/香水/喷雾、纯电池/易燃易爆品、管制刀具等航空安检禁运形态，检出判定为 PROHIBITED。
+3. 评级定义: SAFE(纯中性中立白底产品图，完全无任何品牌Logo且无违禁品), RISK(画面疑似隐蔽Logo/水印模糊), PROHIBITED(明确检出任何品牌Logo/商标文字/危险禁运品)。
 返回JSON:
 {{"has_brand_logo":false,"detected_logos":[],"is_transport_prohibited":false,"prohibited_types":[],"risk_level":"SAFE|RISK|PROHIBITED","summary":"1句中文结论"}}"""
 
@@ -1069,6 +1067,25 @@ class ComplianceService:
         else:
             final_status = "SAFE"
             reconciliation_summary = "未启用/未配置大模型客户端"
+
+        # ★★★ 核心风控升级：图审带 Logo 品牌的一律判定为侵权违规 (PROHIBITED) 不论白牌还是名牌 ★★★
+        has_any_image_logo = bool(
+            image_logos or
+            qwen_image.get("has_brand_logo") or
+            deepseek_image.get("has_brand_logo") or
+            (qwen_image.get("logo_names") and len(qwen_image.get("logo_names")) > 0) or
+            (deepseek_image.get("logo_names") and len(deepseek_image.get("logo_names")) > 0)
+        )
+        if has_any_image_logo:
+            final_status = "PROHIBITED"
+            is_disputed = False
+            detected_logo_names = ", ".join(image_logos) if image_logos else "产品图附带品牌Logo/独占标识"
+            logo_reason = f"【图审红线违规一票拦截】首图检出品牌Logo/专有标志 [{detected_logo_names}]（依据严格风控准则：首图含任何Logo不论白牌或名牌均判定为侵权，禁止跟品挂靠）"
+            if logo_reason not in risk_reasons:
+                risk_reasons.insert(0, logo_reason)
+            if f"首图附带品牌Logo/独占标识 ({detected_logo_names})" not in prohibited_items:
+                prohibited_items.append(f"首图附带品牌Logo/独占标识 ({detected_logo_names})")
+            reconciliation_summary = f"首图检出品牌Logo [{detected_logo_names}]，触发全品牌零容忍一票拦截"
 
         # AI 违禁品特征归集 (仅当 AI 判定为 PROHIBITED 时提取 AI 识别出的具体违禁特征，彻底消除死板正则误杀)
         if final_status == "PROHIBITED":

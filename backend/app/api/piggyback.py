@@ -23,7 +23,10 @@ from ..schemas.piggyback import (
     BatchSetFloorRequest,
     CheckExistenceRequest,
     PiggybackItemResponse,
-    ArbitratePiggybackComplianceRequest
+    ArbitratePiggybackComplianceRequest,
+    AbandonPiggybackRequest,
+    BatchAbandonPiggybackRequest,
+    BatchRestorePiggybackRequest
 )
 from ..services.makro_scraper_service import MakroScraperService
 from ..services.makro_piggyback_service import MakroPiggybackService
@@ -99,8 +102,8 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         "last_reprice_result": item.last_reprice_result or "",
         "buybox_status": item.buybox_status or "UNKNOWN",
         "last_competitor_price": item.last_competitor_price,
-        "price_strategy": item.price_strategy or "MINUS_1",
-        "inventory": item.inventory or 99,
+        "price_strategy": item.price_strategy or "MINUS_15",
+        "inventory": item.inventory or 500,
         "lead_time_days": item.lead_time_days or 14,
         "variant_attributes": item.variant_attributes,
         "variant_name": item.variant_name or "",
@@ -113,6 +116,9 @@ def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
         "status": item.status or "PENDING",
         "makro_listing_id": item.makro_listing_id,
         "error_message": item.error_message,
+        "is_abandoned": bool(item.is_abandoned),
+        "abandoned_reason": item.abandoned_reason or "",
+        "abandoned_at": item.abandoned_at.strftime("%Y-%m-%d %H:%M:%S") if item.abandoned_at else None,
         "created_at": item.created_at.strftime("%Y-%m-%d %H:%M:%S") if item.created_at else None,
         "updated_at": item.updated_at.strftime("%Y-%m-%d %H:%M:%S") if item.updated_at else None
     }
@@ -142,18 +148,35 @@ def collect_single_piggyback(
     fsn = data["makro_product_id"]
     item_id = data.get("item_id")
 
+    # 1. 弃用黑名单排重拦截 (防止侵权商品或废弃品被重复采集)
+    abandoned_item = db.query(MakroPiggybackItem).filter(
+        MakroPiggybackItem.makro_product_id == fsn,
+        MakroPiggybackItem.is_abandoned == True
+    ).first()
+    if abandoned_item:
+        reason_desc = abandoned_item.abandoned_reason or "侵权风险/手工弃用"
+        raise HTTPException(
+            status_code=400,
+            detail=f"【弃用黑名单拦截】该商品 (FSN: {fsn}) 已被弃用（原因: {reason_desc}），禁止重复采集！如需重新启用，请前往「已弃用」标签页点击恢复。"
+        )
+
+    # 2. 检查保本底价 (未指定时按系统默认规则自动赋予，杜绝裸奔)
+    floor_val = float(req.min_price_floor or 0.0)
+    if floor_val <= 0:
+        floor_val = MakroPiggybackService.calculate_default_floor(data.get("original_price", 0.0), db)
+
+    target_p, target_m = MakroPiggybackService.calculate_price(
+        original_price=data.get("original_price", 0.0),
+        strategy=req.price_strategy or "MINUS_15",
+        min_floor=floor_val,
+        original_mrp=data.get("original_mrp", 0.0)
+    )
+
     # 检查是否已在当前店铺的跟品池中
     existing = db.query(MakroPiggybackItem).filter(
         MakroPiggybackItem.store_id == store.id,
         MakroPiggybackItem.makro_product_id == fsn
     ).first()
-
-    target_p, target_m = MakroPiggybackService.calculate_price(
-        original_price=data.get("original_price", 0.0),
-        strategy=req.price_strategy or "MINUS_1",
-        min_floor=req.min_price_floor or 0.0,
-        original_mrp=data.get("original_mrp", 0.0)
-    )
 
     if existing:
         # 更新参数
@@ -170,6 +193,8 @@ def collect_single_piggyback(
         existing.seller_count = data.get("seller_count", existing.seller_count or 1)
         existing.target_price = target_p
         existing.target_mrp = target_m
+        if not existing.min_price_floor or existing.min_price_floor <= 0:
+            existing.min_price_floor = floor_val
         existing.variant_attributes = req.variant_attributes or existing.variant_attributes
         existing.variant_name = req.variant_name or existing.variant_name
         if req.auto_reprice is not None:
@@ -204,14 +229,15 @@ def collect_single_piggyback(
             seller_sku=sku,
             target_price=target_p,
             target_mrp=target_m,
-            min_price_floor=req.min_price_floor or 0.0,
+            min_price_floor=floor_val,
             max_price_ceiling=req.max_price_ceiling or 0.0,
             auto_reprice=req.auto_reprice if req.auto_reprice is not None else True,
             variant_attributes=req.variant_attributes,
             variant_name=req.variant_name,
-            price_strategy=req.price_strategy or "MINUS_1",
-            inventory=99,
+            price_strategy=req.price_strategy or "MINUS_15",
+            inventory=500,
             lead_time_days=14,
+            is_abandoned=False,
             compliance_status="PENDING_CHECK",
             status="PENDING"
         )
@@ -277,6 +303,16 @@ def batch_collect_piggyback(
 
                 target_fsn = data["makro_product_id"]
                 target_item_id = item_id or data.get("item_id")
+
+                # 弃用黑名单拦截 (防止侵权商品或废弃品被批量重复采集)
+                abandoned = db.query(MakroPiggybackItem).filter(
+                    MakroPiggybackItem.makro_product_id == target_fsn,
+                    MakroPiggybackItem.is_abandoned == True
+                ).first()
+                if abandoned:
+                    failed_items.append({"item": target_fsn, "error": f"已在弃用黑名单中 ({abandoned.abandoned_reason or '侵权违规拦截'})，禁止重复采集"})
+                    continue
+
                 raw_url = data.get("makro_url") or MakroScraperService.format_canonical_makro_url(target_fsn, target_item_id)
                 title = data.get("title") or fsn
                 title_zh = data.get("title_zh") or title
@@ -291,10 +327,14 @@ def batch_collect_piggyback(
                 if isinstance(variant_attributes, (dict, list)):
                     variant_attributes = json.dumps(variant_attributes, ensure_ascii=False)
 
+                floor_val = float(req.min_price_floor or 0.0)
+                if floor_val <= 0:
+                    floor_val = MakroPiggybackService.calculate_default_floor(real_price, db)
+
                 target_p, target_m = MakroPiggybackService.calculate_price(
                     original_price=real_price,
-                    strategy=req.price_strategy or "MINUS_1",
-                    min_floor=req.min_price_floor or 0.0,
+                    strategy=req.price_strategy or "MINUS_15",
+                    min_floor=floor_val,
                     original_mrp=real_mrp
                 )
 
@@ -315,6 +355,8 @@ def batch_collect_piggyback(
                     existing.seller_count = seller_count or existing.seller_count
                     existing.target_price = target_p
                     existing.target_mrp = target_m
+                    if not existing.min_price_floor or existing.min_price_floor <= 0:
+                        existing.min_price_floor = floor_val
                     if variant_name:
                         existing.variant_name = variant_name
                     if variant_attributes:
@@ -342,13 +384,14 @@ def batch_collect_piggyback(
                         seller_sku=sku,
                         target_price=target_p,
                         target_mrp=target_m,
-                        min_price_floor=req.min_price_floor or 0.0,
-                        price_strategy=req.price_strategy or "MINUS_1",
+                        min_price_floor=floor_val,
+                        price_strategy=req.price_strategy or "MINUS_15",
                         auto_reprice=True,
                         variant_name=variant_name,
                         variant_attributes=variant_attributes,
-                        inventory=99,
+                        inventory=500,
                         lead_time_days=14,
+                        is_abandoned=False,
                         compliance_status="PENDING_CHECK",
                         status="PENDING"
                     )
@@ -368,10 +411,23 @@ def batch_collect_piggyback(
                 fsn = data["makro_product_id"]
                 item_id = data.get("item_id")
 
+                # 弃用黑名单拦截
+                abandoned = db.query(MakroPiggybackItem).filter(
+                    MakroPiggybackItem.makro_product_id == fsn,
+                    MakroPiggybackItem.is_abandoned == True
+                ).first()
+                if abandoned:
+                    failed_items.append({"item": fsn, "error": f"已在弃用黑名单中 ({abandoned.abandoned_reason or '侵权违规拦截'})，禁止重复采集"})
+                    continue
+
+                floor_val = float(req.min_price_floor or 0.0)
+                if floor_val <= 0:
+                    floor_val = MakroPiggybackService.calculate_default_floor(data.get("original_price", 0.0), db)
+
                 target_p, target_m = MakroPiggybackService.calculate_price(
                     original_price=data.get("original_price", 0.0),
-                    strategy=req.price_strategy or "MINUS_1",
-                    min_floor=req.min_price_floor or 0.0,
+                    strategy=req.price_strategy or "MINUS_15",
+                    min_floor=floor_val,
                     original_mrp=data.get("original_mrp", 0.0)
                 )
 
@@ -390,6 +446,8 @@ def batch_collect_piggyback(
                     existing.seller_count = data.get("seller_count") or existing.seller_count or 1
                     existing.target_price = target_p
                     existing.target_mrp = target_m
+                    if not existing.min_price_floor or existing.min_price_floor <= 0:
+                        existing.min_price_floor = floor_val
                 else:
                     sku = _generate_piggyback_sku()
                     new_item = MakroPiggybackItem(
@@ -412,11 +470,12 @@ def batch_collect_piggyback(
                         seller_sku=sku,
                         target_price=target_p,
                         target_mrp=target_m,
-                        min_price_floor=req.min_price_floor or 0.0,
-                        price_strategy=req.price_strategy or "MINUS_1",
+                        min_price_floor=floor_val,
+                        price_strategy=req.price_strategy or "MINUS_15",
                         auto_reprice=True,
-                        inventory=99,
+                        inventory=500,
                         lead_time_days=14,
+                        is_abandoned=False,
                         compliance_status="PENDING_CHECK",
                         status="PENDING"
                     )
@@ -457,8 +516,11 @@ def get_piggyback_kpi_stats(
     if isinstance(store_id, int):
         query = query.filter(MakroPiggybackItem.store_id == store_id)
 
-    total_count = query.count()
-    active_query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+    abandoned_count = query.filter(MakroPiggybackItem.is_abandoned == True).count()
+    unabandoned = query.filter((MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None))
+
+    total_count = unabandoned.count()
+    active_query = unabandoned.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
     active_count = active_query.count()
 
     winning_count = active_query.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
@@ -468,8 +530,8 @@ def get_piggyback_kpi_stats(
         (MakroPiggybackItem.min_price_floor == None) | (MakroPiggybackItem.min_price_floor <= 0)
     ).count()
 
-    staging_count = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
-    blocked_count = query.filter(
+    staging_count = unabandoned.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
+    blocked_count = unabandoned.filter(
         (MakroPiggybackItem.status == "FAILED") |
         (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
     ).count()
@@ -482,7 +544,8 @@ def get_piggyback_kpi_stats(
         "floor_hit_count": floor_hit_count,
         "missing_floor_count": missing_floor_count,
         "staging_count": staging_count,
-        "blocked_count": blocked_count
+        "blocked_count": blocked_count,
+        "abandoned_count": abandoned_count
     }
 
 @router.post("/batch-set-floor", summary="批量公式设置保本底价并智能联动跟价")
@@ -561,7 +624,9 @@ def check_piggyback_existence(
             "target_price": it.target_price,
             "buybox_status": it.buybox_status or "UNKNOWN",
             "auto_reprice": it.auto_reprice,
-            "min_price_floor": it.min_price_floor or 0.0
+            "min_price_floor": it.min_price_floor or 0.0,
+            "is_abandoned": bool(it.is_abandoned),
+            "abandoned_reason": it.abandoned_reason or ""
         }
 
     return {"exists": res}
@@ -600,27 +665,39 @@ def list_piggyback_items(
     if isinstance(store_id, int):
         stat_query = stat_query.filter(MakroPiggybackItem.store_id == store_id)
 
-    total_all = stat_query.count()
-    pending_count = stat_query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
-    active_count = stat_query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"])).count()
-    failed_count = stat_query.filter(MakroPiggybackItem.status == "FAILED").count()
-    pending_check_count = stat_query.filter(MakroPiggybackItem.compliance_status == "PENDING_CHECK").count()
-    safe_count = stat_query.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
-    risk_count = stat_query.filter(MakroPiggybackItem.compliance_status == "RISK").count()
-    prohibited_count = stat_query.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
+    abandoned_count = stat_query.filter(MakroPiggybackItem.is_abandoned == True).count()
+    unabandoned_stat = stat_query.filter(
+        (MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None)
+    )
 
-    # 应用阶段漏斗筛选 (STAGING, ACTIVE_MONITOR, BLOCKED_FAILED)
-    if stage == "STAGING":
-        query = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
-    elif stage == "ACTIVE_MONITOR":
-        query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
-    elif stage == "BLOCKED_FAILED":
+    total_all = unabandoned_stat.count()
+    pending_count = unabandoned_stat.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
+    active_count = unabandoned_stat.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"])).count()
+    failed_count = unabandoned_stat.filter(MakroPiggybackItem.status == "FAILED").count()
+    pending_check_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "PENDING_CHECK").count()
+    safe_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
+    risk_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "RISK").count()
+    prohibited_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
+
+    # 应用阶段漏斗筛选 (STAGING, ACTIVE_MONITOR, BLOCKED_FAILED, ABANDONED)
+    if stage == "ABANDONED":
+        query = query.filter(MakroPiggybackItem.is_abandoned == True)
+    else:
+        # 常规阶段默认排除已弃用商品
         query = query.filter(
-            (MakroPiggybackItem.status == "FAILED") |
-            (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
+            (MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None)
         )
-    elif status and status != "ALL":
-        query = query.filter(MakroPiggybackItem.status == status)
+        if stage == "STAGING":
+            query = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
+        elif stage == "ACTIVE_MONITOR":
+            query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+        elif stage == "BLOCKED_FAILED":
+            query = query.filter(
+                (MakroPiggybackItem.status == "FAILED") |
+                (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
+            )
+        elif status and status != "ALL":
+            query = query.filter(MakroPiggybackItem.status == status)
 
     # 应用 Buybox 战况与缺底价筛选
     if buybox_status and buybox_status != "ALL":
@@ -668,7 +745,8 @@ def list_piggyback_items(
             "pending_check_count": pending_check_count,
             "safe_count": safe_count,
             "risk_count": risk_count,
-            "prohibited_count": prohibited_count
+            "prohibited_count": prohibited_count,
+            "abandoned_count": abandoned_count
         },
         "items": [_format_piggyback_item(it) for it in items]
     }
@@ -1154,3 +1232,119 @@ def batch_delete_piggyback(
     db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).delete(synchronize_session=False)
     db.commit()
     return {"success": True, "deleted_count": len(req.ids)}
+
+@router.post("/items/{item_id}/abandon", summary="弃用单件跟品商品 (移入弃用黑名单，防重复采集)")
+def abandon_piggyback_item(
+    item_id: int,
+    req: AbandonPiggybackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    item = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="未找到该跟品商品")
+
+    item.is_abandoned = True
+    item.abandoned_reason = req.reason or "侵权违规拦截/手工弃用"
+    item.abandoned_at = datetime.now()
+    item.auto_reprice = False  # 弃用商品自动关闭自动巡检跟价
+    db.commit()
+
+    record_audit_log(
+        task_type="PIGGYBACK_ABANDON",
+        status="SUCCESS",
+        message=f"跟品商品已弃用: {item.title[:35]} (FSN: {item.makro_product_id})，原因: {item.abandoned_reason}",
+        detail_logs={"item_id": item.id, "fsn": item.makro_product_id, "reason": item.abandoned_reason},
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+    return {"success": True, "message": "商品已移入弃用黑名单", "item": _format_piggyback_item(item)}
+
+@router.post("/batch-abandon", summary="批量弃用跟品商品 (防重复采集)")
+def batch_abandon_piggyback(
+    req: BatchAbandonPiggybackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="请至少选择一件商品")
+
+    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    count = 0
+    now = datetime.now()
+    reason_txt = req.reason or "批量弃用/侵权拦截"
+    for it in items:
+        it.is_abandoned = True
+        it.abandoned_reason = reason_txt
+        it.abandoned_at = now
+        it.auto_reprice = False
+        count += 1
+    db.commit()
+
+    record_audit_log(
+        task_type="PIGGYBACK_ABANDON",
+        status="SUCCESS",
+        message=f"批量弃用跟品: 成功将 {count} 件商品移入弃用黑名单 (原因: {reason_txt})",
+        detail_logs={"ids": req.ids, "count": count, "reason": reason_txt},
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+    return {"success": True, "abandoned_count": count}
+
+@router.post("/items/{item_id}/restore", summary="恢复已弃用商品 (移回待处理池)")
+def restore_piggyback_item(
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    item = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="未找到该跟品商品")
+
+    item.is_abandoned = False
+    item.abandoned_reason = None
+    item.abandoned_at = None
+    db.commit()
+
+    record_audit_log(
+        task_type="PIGGYBACK_RESTORE",
+        status="SUCCESS",
+        message=f"恢复已弃用跟品: {item.title[:35]} (FSN: {item.makro_product_id})",
+        detail_logs={"item_id": item.id, "fsn": item.makro_product_id},
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+    return {"success": True, "message": "商品已成功恢复", "item": _format_piggyback_item(item)}
+
+@router.post("/batch-restore", summary="批量恢复已弃用商品")
+def batch_restore_piggyback(
+    req: BatchRestorePiggybackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="请至少选择一件商品")
+
+    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    count = 0
+    for it in items:
+        it.is_abandoned = False
+        it.abandoned_reason = None
+        it.abandoned_at = None
+        count += 1
+    db.commit()
+
+    record_audit_log(
+        task_type="PIGGYBACK_RESTORE",
+        status="SUCCESS",
+        message=f"批量恢复跟品: 成功恢复 {count} 件商品至活跃池",
+        detail_logs={"ids": req.ids, "count": count},
+        user_id=current_user.id if current_user else None,
+        operator_name=(current_user.nickname or current_user.username) if current_user else None,
+        db=db
+    )
+    return {"success": True, "restored_count": count}
+

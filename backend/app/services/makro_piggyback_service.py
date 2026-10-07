@@ -26,14 +26,14 @@ class MakroPiggybackService:
     def eval_price_by_strategy(
         cls,
         base_price: float,
-        strategy: str = "MINUS_1",
+        strategy: str = "MINUS_15",
         custom_delta: Optional[float] = None,
         min_floor: float = 0.0
     ) -> float:
         """
         统一跟价公式计算引擎：
         支持:
-          - MINUS_X (如 MINUS_1 -> -1.0, MINUS_0.5 / MINUS_0_5 -> -0.5, MINUS_2 -> -2.0)
+          - MINUS_X (如 MINUS_15 -> -15.0, MINUS_1 -> -1.0, MINUS_0.5 -> -0.5, MINUS_2 -> -2.0)
           - PERCENT_X (如 PERCENT_2 -> -2%, PERCENT_5 -> -5%, PERCENT_1 -> -1%)
           - CUSTOM (配合 custom_delta 浮点，或 strategy="CUSTOM:-1.5")
           - MANUAL / MATCH_PRICE (平价零差额跟卖)
@@ -43,7 +43,7 @@ class MakroPiggybackService:
         if price <= 0:
             return floor if floor > 0 else 1.0
 
-        st = (strategy or "MINUS_1").strip().upper()
+        st = (strategy or "MINUS_15").strip().upper()
 
         if st.startswith("MINUS_"):
             try:
@@ -51,7 +51,7 @@ class MakroPiggybackService:
                 val = float(num_str)
                 calc_p = max(price - val, 1.0)
             except Exception:
-                calc_p = max(price - 1.0, 1.0)
+                calc_p = max(price - 15.0, 1.0)
         elif st.startswith("PERCENT_"):
             try:
                 num_str = st[8:].replace("_", ".")
@@ -70,7 +70,7 @@ class MakroPiggybackService:
         elif st in ["MANUAL", "MATCH_PRICE", "SAME", "0"]:
             calc_p = price
         else:
-            calc_p = max(price - 1.0, 1.0)
+            calc_p = max(price - 15.0, 1.0)
 
         if floor > 0:
             calc_p = max(calc_p, floor)
@@ -78,10 +78,49 @@ class MakroPiggybackService:
         return round(calc_p, 2)
 
     @classmethod
+    def calculate_default_floor(
+        cls,
+        original_price: float,
+        db: Optional[Session] = None
+    ) -> float:
+        """
+        根据系统设置计算默认保本底价 (杜绝底价为0的裸奔风险)
+        默认: 原价的 70% (四舍五入保留2位小数)
+        """
+        price = float(original_price or 0.0)
+        if price <= 0:
+            return 0.0
+
+        floor_mode = "PERCENT"
+        floor_val = 70.0
+        if db:
+            from ..models.setting import SystemSetting
+            s_mode = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_default_floor_mode").first()
+            s_val = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_default_floor_value").first()
+            if s_mode and s_mode.value:
+                floor_mode = s_mode.value.strip().upper()
+            if s_val and s_val.value:
+                try:
+                    floor_val = float(s_val.value)
+                except ValueError:
+                    pass
+
+        if floor_mode == "PERCENT":
+            calc_floor = round(price * (floor_val / 100.0), 2)
+        elif floor_mode == "FIXED_MINUS":
+            calc_floor = max(round(price - floor_val, 2), 1.0)
+        elif floor_mode == "FIXED":
+            calc_floor = max(round(floor_val, 2), 1.0)
+        else:
+            calc_floor = round(price * 0.7, 2)
+
+        return max(calc_floor, 1.0)
+
+    @classmethod
     def calculate_price(
         cls,
         original_price: float,
-        strategy: str = "MINUS_1",
+        strategy: str = "MINUS_15",
         min_floor: float = 0.0,
         original_mrp: float = 0.0,
         custom_delta: Optional[float] = None

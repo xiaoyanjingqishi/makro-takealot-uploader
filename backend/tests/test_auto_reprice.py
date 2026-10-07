@@ -189,7 +189,7 @@ class TestAutoReprice(unittest.TestCase):
         self.assertIsNotNone(item)
         self.assertEqual(item.variant_name, "Black / 10-Pack")
         self.assertIn("color", item.variant_attributes)
-        self.assertEqual(item.target_price, 298.0) # 默认压价 1 兰特
+        self.assertEqual(item.target_price, 284.0) # 全链路默认策略升级为 MINUS_15 (299 - 15 = 284.0)
 
     def test_reprice_logs_api(self):
         """测试调价日志列表接口"""

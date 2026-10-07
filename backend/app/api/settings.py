@@ -94,6 +94,10 @@ def get_settings(
         jev_model=_get_str("jev_model", getattr(settings, "JEV_MODEL", "jev-latest")),
         jev_enabled=_get_bool("jev_enabled", getattr(settings, "JEV_ENABLED", True)),
         piggyback_auto_compliance=_get_bool("piggyback_auto_compliance", False),
+        piggyback_default_strategy=_get_str("piggyback_default_strategy", "MINUS_15"),
+        piggyback_default_floor_mode=_get_str("piggyback_default_floor_mode", "PERCENT"),
+        piggyback_default_floor_value=_get_float("piggyback_default_floor_value", 70.0),
+        piggyback_default_inventory=_get_int("piggyback_default_inventory", 500),
     )
 
 @router.post("", summary="保存或更新系统配置 (仅限系统管理员)")

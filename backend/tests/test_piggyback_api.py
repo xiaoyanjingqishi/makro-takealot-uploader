@@ -282,5 +282,153 @@ class TestPiggybackAPI(unittest.TestCase):
                 self.db.delete(del_item)
                 self.db.commit()
 
+    @patch("app.services.makro_scraper_service.MakroScraperService.resolve_piggyback_product")
+    def test_minus_15_strategy_and_defaults(self, mock_resolve):
+        """测试 1: -15 兰特默认公式、500 默认库存与自动计算 70% 保本底价"""
+        mock_resolve.return_value = {
+            "makro_product_id": "TEST_FSN_DEFAULTS_100",
+            "makro_url": "https://www.makro.co.za/p/TEST_FSN_DEFAULTS_100",
+            "title": "Default Pricing and Inventory Test Item",
+            "title_zh": "默认跟价与库存测试品",
+            "brand": "Generic",
+            "vertical": "general",
+            "image_url": "https://www.makro.co.za/img/test.jpg",
+            "original_price": 500.0,
+            "original_mrp": 800.0
+        }
+
+        # 采集不传 price_strategy 与 min_price_floor，检验默认行为
+        resp = self.client.post(
+            "/api/piggyback/collect",
+            headers=self.headers,
+            json={
+                "url_or_fsn": "TEST_FSN_DEFAULTS_100",
+                "store_id": self.store.id
+            }
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()["item"]
+        try:
+            # 1. 验证跟价公式默认为 MINUS_15，目标价为 500.0 - 15.0 = 485.0
+            self.assertEqual(data["price_strategy"], "MINUS_15")
+            self.assertEqual(data["target_price"], 485.0)
+
+            # 2. 验证默认库存为 500
+            self.assertEqual(data["inventory"], 500)
+
+            # 3. 验证自动赋予保本底价 (默认 70% -> 500 * 0.7 = 350.0)
+            self.assertEqual(data["min_price_floor"], 350.0)
+            print("[OK] Test 1: MINUS_15, 500 inventory, 70% default floor passed!")
+        finally:
+            self.client.delete(f"/api/piggyback/items/{data['id']}", headers=self.headers)
+
+    @patch("app.services.makro_scraper_service.MakroScraperService.resolve_piggyback_product")
+    def test_abandon_and_duplicate_prevention(self, mock_resolve):
+        """测试 2: 弃用商品池防重采机制、列表筛选与恢复操作"""
+        mock_resolve.return_value = {
+            "makro_product_id": "TEST_FSN_ABANDON_200",
+            "makro_url": "https://www.makro.co.za/p/TEST_FSN_ABANDON_200",
+            "title": "Infringement Suspect Brand Bag",
+            "title_zh": "疑似侵权品牌包",
+            "brand": "FakeBrand",
+            "vertical": "bags",
+            "image_url": "https://www.makro.co.za/img/bag.jpg",
+            "original_price": 600.0,
+            "original_mrp": 900.0
+        }
+
+        # 1. 采集入库
+        resp = self.client.post(
+            "/api/piggyback/collect",
+            headers=self.headers,
+            json={"url_or_fsn": "TEST_FSN_ABANDON_200", "store_id": self.store.id}
+        )
+        self.assertEqual(resp.status_code, 200)
+        item_id = resp.json()["item"]["id"]
+
+        try:
+            # 2. 调用弃用接口
+            ab_resp = self.client.post(
+                f"/api/piggyback/items/{item_id}/abandon",
+                headers=self.headers,
+                json={"reason": "首图侵权带有Logo"}
+            )
+            self.assertEqual(ab_resp.status_code, 200)
+            self.assertTrue(ab_resp.json()["item"]["is_abandoned"])
+            self.assertEqual(ab_resp.json()["item"]["abandoned_reason"], "首图侵权带有Logo")
+
+            # 3. 再次尝试采集此商品 -> 必须被拦截并报 400，提示已被弃用
+            dup_resp = self.client.post(
+                "/api/piggyback/collect",
+                headers=self.headers,
+                json={"url_or_fsn": "TEST_FSN_ABANDON_200", "store_id": self.store.id}
+            )
+            self.assertEqual(dup_resp.status_code, 400)
+            self.assertIn("弃用黑名单拦截", dup_resp.json()["detail"])
+            print("[OK] Test 2.1: Duplicate collection blocked successfully!")
+
+            # 4. 检查常规列表过滤与已弃用列表筛选
+            normal_list = self.client.get("/api/piggyback/items?stage=ALL", headers=self.headers).json()
+            normal_ids = [it["id"] for it in normal_list["items"]]
+            self.assertNotIn(item_id, normal_ids)
+
+            abandon_list = self.client.get("/api/piggyback/items?stage=ABANDONED", headers=self.headers).json()
+            abandon_ids = [it["id"] for it in abandon_list["items"]]
+            self.assertIn(item_id, abandon_ids)
+            print("[OK] Test 2.2: Stage ABANDONED list filtering passed!")
+
+            # 5. 调用恢复接口
+            res_resp = self.client.post(f"/api/piggyback/items/{item_id}/restore", headers=self.headers)
+            self.assertEqual(res_resp.status_code, 200)
+            self.assertFalse(res_resp.json()["item"]["is_abandoned"])
+            print("[OK] Test 2.3: Restore item passed!")
+        finally:
+            self.client.delete(f"/api/piggyback/items/{item_id}", headers=self.headers)
+
+    def test_vision_zero_tolerance_on_logo(self):
+        """测试 3: 图审带 Logo 一票否决为 PROHIBITED (零容忍不论白牌还是大牌)"""
+        from app.services.compliance_service import ComplianceService
+        service = ComplianceService()
+
+        # 模拟图审结果包含卖家自造白牌 Logo (如 HYinjin / AnyWhiteLabel)
+        qwen_image = {
+            "tested": True,
+            "has_brand_logo": True,
+            "logo_names": ["HYinjin_Logo"],
+            "is_transport_prohibited": False,
+            "prohibited_types": [],
+            "risk_level": "RISK",
+            "summary": "画面检出机身丝印 Logo"
+        }
+        deepseek_image = {
+            "tested": True,
+            "has_brand_logo": True,
+            "logo_names": ["HYinjin_Logo"],
+            "is_transport_prohibited": False,
+            "prohibited_types": [],
+            "risk_level": "SAFE",
+            "summary": "画面无异常"
+        }
+        qwen_title = {"tested": True, "risk_level": "SAFE", "reasons": []}
+        deepseek_title = {"tested": True, "risk_level": "SAFE", "reasons": []}
+
+        verdict = service._reconcile_dual_verdicts(
+            local_rules={},
+            qwen_title=qwen_title,
+            deepseek_title=deepseek_title,
+            qwen_image=qwen_image,
+            deepseek_image=deepseek_image,
+            first_img_url="https://test.com/logo.jpg",
+            target_brand_name="HYinjin",
+            is_piggyback=True
+        )
+
+        # 验证零容忍一票否决
+        self.assertEqual(verdict["compliance_status"], "PROHIBITED")
+        self.assertFalse(verdict["is_disputed"])
+        self.assertTrue(any("Logo" in r for r in verdict["risk_reasons"]))
+        print("[OK] Test 3: Vision zero-tolerance on Logo passed: status=PROHIBITED")
+
 if __name__ == "__main__":
     unittest.main()
+

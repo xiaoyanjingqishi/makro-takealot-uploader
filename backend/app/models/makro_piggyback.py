@@ -33,9 +33,14 @@ class MakroPiggybackItem(Base):
     target_price = Column(Float, default=0.0)       # 本店跟品售价
     target_mrp = Column(Float, default=0.0)         # 本店跟品划线价
     min_price_floor = Column(Float, default=0.0)    # 保本底价
-    price_strategy = Column(String(50), default="MINUS_1") # MINUS_1, PERCENT_2, MANUAL
-    inventory = Column(Integer, default=99)         # 默认上架库存
+    price_strategy = Column(String(50), default="MINUS_15") # MINUS_15, MINUS_1, PERCENT_2, MANUAL
+    inventory = Column(Integer, default=500)        # 默认上架库存 (默认500)
     lead_time_days = Column(Integer, default=14)    # 发货时效 (SLA，官方默认 14 天)
+
+    # 弃用商品状态 (防止侵权商品或废弃品被重复采集)
+    is_abandoned = Column(Boolean, default=False, index=True) # 是否已弃用
+    abandoned_reason = Column(String(200), nullable=True)     # 弃用原因 (如侵权拦截、手工弃用)
+    abandoned_at = Column(DateTime, nullable=True)            # 弃用时间
     # 变体规格与多属性管理
     variant_attributes = Column(Text, nullable=True)   # JSON: {"Packaging Type": "Pack of 10"}
     variant_name = Column(String(200), nullable=True)  # 变体展示名 (如 "Pack of 10")

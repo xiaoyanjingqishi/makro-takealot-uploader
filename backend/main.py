@@ -169,7 +169,14 @@ try:
                 _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN buybox_status VARCHAR(50) DEFAULT 'UNKNOWN'"))
             if "last_competitor_price" not in pb_cols:
                 _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN last_competitor_price FLOAT"))
+            if "is_abandoned" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN is_abandoned BOOLEAN DEFAULT 0"))
+            if "abandoned_reason" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN abandoned_reason VARCHAR(200)"))
+            if "abandoned_at" not in pb_cols:
+                _conn.execute(text("ALTER TABLE makro_piggyback_items ADD COLUMN abandoned_at DATETIME"))
             _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_makro_piggyback_buybox_status ON makro_piggyback_items (buybox_status)"))
+            _conn.execute(text("CREATE INDEX IF NOT EXISTS ix_makro_piggyback_is_abandoned ON makro_piggyback_items (is_abandoned)"))
             _conn.commit()
 
         # 检查并创建 makro_reprice_logs 表
