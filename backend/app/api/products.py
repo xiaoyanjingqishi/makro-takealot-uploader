@@ -841,10 +841,15 @@ def proxy_image(url: str = Query(..., description="远程图片完整URL")):
             pass
             
     # 2. 请求远程图片 (使用全局 Session 连接池复用 HTTPS 连接)
+    referer = "https://www.takealot.com/"
+    url_lower = url.lower()
+    if "makro.co.za" in url_lower or "flixcart.com" in url_lower or "fkcloud" in url_lower:
+        referer = "https://www.makro.co.za/"
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        "Referer": "https://www.takealot.com/"
+        "Referer": referer
     }
     try:
         resp = _image_session.get(url, headers=headers, timeout=12)

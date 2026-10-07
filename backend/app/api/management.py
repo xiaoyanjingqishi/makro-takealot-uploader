@@ -98,11 +98,11 @@ def get_management_overview(
     pub_failed = pub_listing_q.filter(ProductStoreListing.status == "FAILED").count()
     pub_success_rate = round((pub_success / total_publishing * 100), 1) if total_publishing > 0 else 100.0
 
-    # 如果没有 listing 提交记录，回退从 TaskLog 查询 SUBMIT_LISTING / BATCH_PUBLISH 统计
+    # 如果没有 listing 提交记录，回退从 TaskLog 查询 SUBMIT_LISTING / BATCH_PUBLISH / PIGGYBACK_PUBLISH 统计
     if total_publishing == 0:
         pub_task_q = db.query(TaskLog).filter(
             TaskLog.created_at.between(start_dt, end_dt),
-            TaskLog.task_type.in_(["SUBMIT_LISTING", "BATCH_PUBLISH"])
+            TaskLog.task_type.in_(["SUBMIT_LISTING", "BATCH_PUBLISH", "PIGGYBACK_PUBLISH", "MAKRO_PIGGYBACK"])
         )
         if user_id:
             pub_task_q = pub_task_q.filter(TaskLog.user_id == user_id)
@@ -118,7 +118,19 @@ def get_management_overview(
     if store_id:
         piggy_q = piggy_q.filter(MakroPiggybackItem.store_id == store_id)
     piggy_collected = piggy_q.count()
-    piggy_published = piggy_q.filter(MakroPiggybackItem.status == "ACTIVE").count()
+
+    # 跟品发布量：优先统计时间段内真实执行的上架流水，兜底结合 ACTIVE 状态
+    piggy_pub_logs = db.query(TaskLog).filter(
+        TaskLog.created_at.between(start_dt, end_dt),
+        TaskLog.task_type.in_(["PIGGYBACK_PUBLISH", "MAKRO_PIGGYBACK"]),
+        TaskLog.status == "SUCCESS"
+    )
+    if user_id:
+        piggy_pub_logs = piggy_pub_logs.filter(TaskLog.user_id == user_id)
+    piggy_published = piggy_pub_logs.count()
+    if piggy_published == 0:
+        piggy_published = piggy_q.filter(MakroPiggybackItem.status == "ACTIVE").count()
+
     piggy_winning = piggy_q.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
 
     # 6. 全系统总操作流水与人效
@@ -252,7 +264,7 @@ def get_management_leaderboard(
         if pub_total == 0:
             pub_log_q = db.query(TaskLog).filter(
                 TaskLog.user_id == u_id,
-                TaskLog.task_type.in_(["SUBMIT_LISTING", "BATCH_PUBLISH"]),
+                TaskLog.task_type.in_(["SUBMIT_LISTING", "BATCH_PUBLISH", "PIGGYBACK_PUBLISH", "MAKRO_PIGGYBACK"]),
                 TaskLog.created_at.between(start_dt, end_dt)
             )
             pub_total = pub_log_q.count()
@@ -269,12 +281,20 @@ def get_management_leaderboard(
         if store_id:
             piggy_q = piggy_q.filter(MakroPiggybackItem.store_id == store_id)
         piggy_cnt = piggy_q.count()
-        piggy_pub = piggy_q.filter(MakroPiggybackItem.status == "ACTIVE").count()
+
+        # 跟品上架数：优先统计时间段内真实成功执行的上架流水，兜底结合 ACTIVE 状态
+        piggy_pub_logs = db.query(TaskLog).filter(
+            TaskLog.user_id == u_id,
+            TaskLog.created_at.between(start_dt, end_dt),
+            TaskLog.task_type.in_(["PIGGYBACK_PUBLISH", "MAKRO_PIGGYBACK"]),
+            TaskLog.status == "SUCCESS"
+        ).count()
+        piggy_pub = piggy_pub_logs if piggy_pub_logs > 0 else piggy_q.filter(MakroPiggybackItem.status == "ACTIVE").count()
 
         # 6. 改价与底价调整次数
         reprice_cnt = db.query(TaskLog).filter(
             TaskLog.user_id == u_id,
-            TaskLog.task_type.in_(["REPRICE_UPDATE", "BATCH_PRICE", "PIGGYBACK_BATCH_FLOOR"]),
+            TaskLog.task_type.in_(["REPRICE_UPDATE", "BATCH_PRICE", "BATCH_PRICING", "PIGGYBACK_BATCH_FLOOR"]),
             TaskLog.created_at.between(start_dt, end_dt)
         ).count()
 

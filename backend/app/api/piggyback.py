@@ -870,26 +870,59 @@ def check_single_compliance(
         "details": res
     }
 
-@router.post("/batch-check-compliance", summary="批量执行 AI 侵权与合规检测")
+@router.post("/batch-check-compliance", summary="批量执行 AI 侵权与合规检测 (多线程并发加速)")
 def batch_check_compliance(
     req: BatchCheckComplianceRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    if not items:
+        return {"success": True, "total_checked": 0, "results": {}}
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+    from ..database import SessionLocal
+    from ..models.setting import SystemSetting
+
+    setting_concurrency = db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
+    try:
+        cfg_workers = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else 3
+    except Exception:
+        cfg_workers = 3
+    concurrency = max(1, min(5, cfg_workers, len(items)))
+
     results = {}
-    for it in items:
+    results_lock = threading.Lock()
+
+    def _check_one(it_id: int):
+        thread_db = SessionLocal()
         try:
-            r = MakroPiggybackService.check_compliance_for_item(it, db)
-            results[it.id] = {"status": it.compliance_status, "summary": r.get("summary")}
+            it = thread_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == it_id).first()
+            if not it:
+                return
+            r = MakroPiggybackService.check_compliance_for_item(it, thread_db)
+            with results_lock:
+                results[it.id] = {"status": it.compliance_status, "summary": r.get("summary")}
         except Exception as e:
-            results[it.id] = {"status": "ERROR", "error": str(e)}
+            with results_lock:
+                results[it_id] = {"status": "ERROR", "error": str(e)}
+        finally:
+            thread_db.close()
+
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [executor.submit(_check_one, it.id) for it in items]
+        for f in as_completed(futures):
+            try:
+                f.result()
+            except Exception as e:
+                logger.error(f"批量合规检测子任务异常: {e}")
 
     record_audit_log(
         task_type="PIGGYBACK_COMPLIANCE",
         status="SUCCESS",
-        message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查",
-        detail_logs={"total": len(items), "results": results},
+        message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查 ({concurrency} 线程并发)",
+        detail_logs={"total": len(items), "concurrency": concurrency, "results": results},
         user_id=current_user.id,
         operator_name=current_user.nickname or current_user.username,
         db=db
@@ -898,6 +931,7 @@ def batch_check_compliance(
     return {
         "success": True,
         "total_checked": len(items),
+        "concurrency": concurrency,
         "results": results
     }
 
@@ -1106,65 +1140,99 @@ def batch_publish_piggyback(
     target_store_id = target_store.id if target_store else None
 
     def _worker(tm: TaskManager, tid: str):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
         from ..database import SessionLocal
-        local_db = SessionLocal()
+        from ..models.setting import SystemSetting
+
+        init_db = SessionLocal()
         try:
-            done = 0
-            errs = 0
-            for idx, pid in enumerate(req.ids):
-                if tm.is_cancelled(tid):
-                    break
-                p_item = local_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == pid).first()
+            setting_concurrency = init_db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
+            try:
+                cfg_workers = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else 2
+            except Exception:
+                cfg_workers = 2
+        finally:
+            init_db.close()
+
+        concurrency = max(1, min(5, cfg_workers, len(req.ids)))
+        done = 0
+        errs = 0
+        progress_lock = threading.Lock()
+
+        def _publish_one(pid: int):
+            nonlocal done, errs
+            if tm.is_cancelled(tid):
+                return
+            thread_db = SessionLocal()
+            try:
+                p_item = thread_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == pid).first()
                 if not p_item:
-                    continue
+                    return
 
                 if target_store_id:
-                    p_store = local_db.query(Store).filter(Store.id == target_store_id).first()
+                    p_store = thread_db.query(Store).filter(Store.id == target_store_id).first()
                     p_item.store_id = target_store_id
                     try:
-                        local_db.commit()
+                        thread_db.commit()
                     except Exception as ce:
-                        local_db.rollback()
+                        thread_db.rollback()
                         logger.warning(f"批量跟品变更店铺失败 [{pid}]: {ce}")
                 else:
-                    p_store = p_item.store or local_db.query(Store).filter(Store.id == p_item.store_id).first()
+                    p_store = p_item.store or thread_db.query(Store).filter(Store.id == p_item.store_id).first()
                 if not p_store:
-                    p_store = _get_target_store(local_db)
+                    p_store = _get_target_store(thread_db)
 
                 try:
-                    MakroPiggybackService.publish_piggyback_listing(p_item, p_store, local_db)
-                    done += 1
-                    tm.update_progress(
-                        tid,
-                        current=done + errs,
-                        current_title=f"已成功挂靠: {p_item.title[:35]}",
-                        success_inc=1
-                    )
+                    MakroPiggybackService.publish_piggyback_listing(p_item, p_store, thread_db)
+                    with progress_lock:
+                        done += 1
+                        tm.update_progress(
+                            tid,
+                            current=done + errs,
+                            current_title=f"已成功挂靠: {p_item.title[:35]}",
+                            success_inc=1
+                        )
                 except Exception as ex:
-                    errs += 1
-                    logger.error(f"批量跟品 ID {pid} 挂靠异常: {ex}")
-                    tm.update_progress(
-                        tid,
-                        current=done + errs,
-                        current_title=f"挂靠失败: {p_item.title[:35]}",
-                        fail_inc=1,
-                        error=str(ex)
-                    )
+                    with progress_lock:
+                        errs += 1
+                        logger.error(f"批量跟品 ID {pid} 挂靠异常: {ex}")
+                        tm.update_progress(
+                            tid,
+                            current=done + errs,
+                            current_title=f"挂靠失败: {p_item.title[:35]}",
+                            fail_inc=1,
+                            error=str(ex)
+                        )
+            finally:
+                thread_db.close()
 
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [executor.submit(_publish_one, pid) for pid in req.ids]
+            for f in as_completed(futures):
+                if tm.is_cancelled(tid):
+                    break
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.error(f"批量跟品挂靠子任务异常: {e}")
+
+        audit_db = SessionLocal()
+        try:
             status = "CANCELLED" if tm.is_cancelled(tid) else ("SUCCESS" if done > 0 else "FAILED")
-            msg = f"批量挂靠完成: 成功 {done} 件, 失败 {errs} 件"
+            msg = f"批量挂靠完成: 成功 {done} 件, 失败 {errs} 件 ({concurrency} 线程并发)"
             tm.finish_task(tid, status=status, message=msg)
             record_audit_log(
                 task_type="PIGGYBACK_PUBLISH",
                 status=status,
                 message=msg,
-                detail_logs={"total": len(req.ids), "success": done, "failed": errs, "target_store_id": target_store_id, "item_ids": req.ids[:50]},
+                detail_logs={"total": len(req.ids), "concurrency": concurrency, "success": done, "failed": errs, "target_store_id": target_store_id, "item_ids": req.ids[:50]},
                 user_id=u_id,
                 operator_name=op_name,
-                db=local_db
+                db=audit_db
             )
         finally:
-            local_db.close()
+            audit_db.close()
 
     task_manager.start_task(task_id, _worker)
 
