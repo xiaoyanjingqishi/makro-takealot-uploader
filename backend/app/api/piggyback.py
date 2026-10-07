@@ -9,6 +9,7 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models.makro_piggyback import MakroPiggybackItem
+from ..models.makro_listing import MakroListing
 from ..models.store import Store
 from ..models.user import User
 from ..schemas.piggyback import (
@@ -30,6 +31,7 @@ from ..schemas.piggyback import (
 )
 from ..services.makro_scraper_service import MakroScraperService
 from ..services.makro_piggyback_service import MakroPiggybackService
+from ..services.makro_portal_service import MakroPortalService
 from ..services.task_manager import task_manager, TaskManager
 from ..services.audit_logger import record_audit_log
 from ..utils.auth import get_current_user
@@ -631,6 +633,74 @@ def check_piggyback_existence(
 
     return {"exists": res}
 
+@router.get("/ids", summary="获取当前过滤条件下的全部跟品商品 ID (支持跨页一键全选)")
+def list_piggyback_ids(
+    status: Optional[str] = None,
+    stage: Optional[str] = None,
+    buybox_status: Optional[str] = None,
+    compliance_status: Optional[str] = None,
+    store_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = db.query(MakroPiggybackItem)
+
+    if current_user and current_user.role != "ADMIN":
+        query = query.filter(MakroPiggybackItem.user_id == current_user.id)
+    elif user_id is not None:
+        query = query.filter(MakroPiggybackItem.user_id == user_id)
+
+    if isinstance(store_id, int):
+        query = query.filter(MakroPiggybackItem.store_id == store_id)
+
+    if stage == "ABANDONED":
+        query = query.filter(MakroPiggybackItem.is_abandoned == True)
+    else:
+        query = query.filter(
+            (MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None)
+        )
+        if stage == "STAGING":
+            query = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
+        elif stage == "ACTIVE_MONITOR":
+            query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+        elif stage == "BLOCKED_FAILED":
+            query = query.filter(
+                (MakroPiggybackItem.status == "FAILED") |
+                (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
+            )
+        elif status and status != "ALL":
+            query = query.filter(MakroPiggybackItem.status == status)
+
+    if buybox_status and buybox_status != "ALL":
+        if buybox_status == "MISSING_FLOOR":
+            query = query.filter(
+                (MakroPiggybackItem.min_price_floor == None) | (MakroPiggybackItem.min_price_floor <= 0)
+            )
+        else:
+            query = query.filter(MakroPiggybackItem.buybox_status == buybox_status)
+
+    if compliance_status and compliance_status != "ALL":
+        query = query.filter(MakroPiggybackItem.compliance_status == compliance_status)
+
+    if search:
+        s = f"%{search.strip()}%"
+        query = query.filter(
+            (MakroPiggybackItem.title.ilike(s)) |
+            (MakroPiggybackItem.title_zh.ilike(s)) |
+            (MakroPiggybackItem.makro_product_id.ilike(s)) |
+            (MakroPiggybackItem.seller_sku.ilike(s)) |
+            (MakroPiggybackItem.brand.ilike(s))
+        )
+
+    ids = [item[0] for item in query.with_entities(MakroPiggybackItem.id).order_by(MakroPiggybackItem.id.desc()).all()]
+    return {
+        "success": True,
+        "ids": ids,
+        "total": len(ids)
+    }
+
 @router.get("/items", summary="获取跟品池商品列表与多维统计")
 def list_piggyback_items(
     page: int = 1,
@@ -656,7 +726,7 @@ def list_piggyback_items(
     if isinstance(store_id, int):
         query = query.filter(MakroPiggybackItem.store_id == store_id)
 
-    # 全局总数统计 (用于顶部统计卡片)
+    # 全局与当前阶段总数统计 (用于顶部统计卡片与风控按钮动态徽章)
     stat_query = db.query(MakroPiggybackItem)
     if current_user and current_user.role != "ADMIN":
         stat_query = stat_query.filter(MakroPiggybackItem.user_id == current_user.id)
@@ -674,10 +744,29 @@ def list_piggyback_items(
     pending_count = unabandoned_stat.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
     active_count = unabandoned_stat.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"])).count()
     failed_count = unabandoned_stat.filter(MakroPiggybackItem.status == "FAILED").count()
-    pending_check_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "PENDING_CHECK").count()
-    safe_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
-    risk_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "RISK").count()
-    prohibited_count = unabandoned_stat.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
+
+    # 计算与当前阶段漏斗匹配的合规风控分布 (让待处理池、在售监控各阶段的风控数字与当前池子总数精准契合)
+    stage_stat_query = stat_query
+    if stage == "ABANDONED":
+        stage_stat_query = stage_stat_query.filter(MakroPiggybackItem.is_abandoned == True)
+    else:
+        stage_stat_query = stage_stat_query.filter(
+            (MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None)
+        )
+        if stage == "STAGING":
+            stage_stat_query = stage_stat_query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
+        elif stage == "ACTIVE_MONITOR":
+            stage_stat_query = stage_stat_query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+        elif stage == "BLOCKED_FAILED":
+            stage_stat_query = stage_stat_query.filter(
+                (MakroPiggybackItem.status == "FAILED") |
+                (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
+            )
+
+    pending_check_count = stage_stat_query.filter(MakroPiggybackItem.compliance_status == "PENDING_CHECK").count()
+    safe_count = stage_stat_query.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
+    risk_count = stage_stat_query.filter(MakroPiggybackItem.compliance_status == "RISK").count()
+    prohibited_count = stage_stat_query.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
 
     # 应用阶段漏斗筛选 (STAGING, ACTIVE_MONITOR, BLOCKED_FAILED, ABANDONED)
     if stage == "ABANDONED":
@@ -870,7 +959,7 @@ def check_single_compliance(
         "details": res
     }
 
-@router.post("/batch-check-compliance", summary="批量执行 AI 侵权与合规检测 (多线程并发加速)")
+@router.post("/batch-check-compliance", summary="批量执行 AI 侵权与合规检测 (多线程并发加速与实时进度)")
 def batch_check_compliance(
     req: BatchCheckComplianceRequest,
     current_user: User = Depends(get_current_user),
@@ -878,61 +967,118 @@ def batch_check_compliance(
 ):
     items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
     if not items:
-        return {"success": True, "total_checked": 0, "results": {}}
+        return {"success": True, "total_checked": 0, "message": "未找到需要检测的商品"}
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import threading
-    from ..database import SessionLocal
-    from ..models.setting import SystemSetting
+    u_id = current_user.id if current_user else None
+    op_name = (current_user.nickname or current_user.username) if current_user else "系统"
 
-    setting_concurrency = db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
-    try:
-        cfg_workers = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else 3
-    except Exception:
-        cfg_workers = 3
-    concurrency = max(1, min(5, cfg_workers, len(items)))
-
-    results = {}
-    results_lock = threading.Lock()
-
-    def _check_one(it_id: int):
-        thread_db = SessionLocal()
-        try:
-            it = thread_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == it_id).first()
-            if not it:
-                return
-            r = MakroPiggybackService.check_compliance_for_item(it, thread_db)
-            with results_lock:
-                results[it.id] = {"status": it.compliance_status, "summary": r.get("summary")}
-        except Exception as e:
-            with results_lock:
-                results[it_id] = {"status": "ERROR", "error": str(e)}
-        finally:
-            thread_db.close()
-
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [executor.submit(_check_one, it.id) for it in items]
-        for f in as_completed(futures):
-            try:
-                f.result()
-            except Exception as e:
-                logger.error(f"批量合规检测子任务异常: {e}")
-
-    record_audit_log(
+    task = task_manager.create_task(
         task_type="PIGGYBACK_COMPLIANCE",
-        status="SUCCESS",
-        message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查 ({concurrency} 线程并发)",
-        detail_logs={"total": len(items), "concurrency": concurrency, "results": results},
-        user_id=current_user.id,
-        operator_name=current_user.nickname or current_user.username,
-        db=db
+        name=f"批量跟品AI合规质检 ({len(items)} 件)",
+        total=len(items),
+        product_ids=req.ids
     )
+    task_id = task["id"]
+
+    def _worker(tm: TaskManager, tid: str):
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        from ..database import SessionLocal
+        from ..models.setting import SystemSetting
+
+        init_db = SessionLocal()
+        try:
+            setting_concurrency = init_db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
+            try:
+                cfg_workers = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else 3
+            except Exception:
+                cfg_workers = 3
+        finally:
+            init_db.close()
+
+        concurrency = max(1, min(5, cfg_workers, len(items)))
+        done = 0
+        success_cnt = 0
+        risk_or_fail = 0
+        progress_lock = threading.Lock()
+        results = {}
+
+        def _check_one(it_id: int):
+            nonlocal done, success_cnt, risk_or_fail
+            if tm.is_cancelled(tid):
+                return
+            thread_db = SessionLocal()
+            try:
+                it = thread_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == it_id).first()
+                if not it:
+                    return
+                r = MakroPiggybackService.check_compliance_for_item(it, thread_db)
+                with progress_lock:
+                    done += 1
+                    status = it.compliance_status
+                    results[it.id] = {"status": status, "summary": r.get("summary")}
+                    if status == "SAFE":
+                        success_cnt += 1
+                    else:
+                        risk_or_fail += 1
+                    tm.update_progress(
+                        tid,
+                        current=done,
+                        current_title=f"[{status}] {it.title[:30]}",
+                        success_inc=1 if status == "SAFE" else 0,
+                        fail_inc=1 if status != "SAFE" else 0
+                    )
+            except Exception as e:
+                with progress_lock:
+                    done += 1
+                    risk_or_fail += 1
+                    results[it_id] = {"status": "ERROR", "error": str(e)}
+                    tm.update_progress(
+                        tid,
+                        current=done,
+                        current_title=f"检测异常: {str(e)[:30]}",
+                        fail_inc=1,
+                        error=str(e)
+                    )
+            finally:
+                thread_db.close()
+
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [executor.submit(_check_one, it.id) for it in items]
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.error(f"批量合规检测子任务异常: {e}")
+
+        audit_db = SessionLocal()
+        try:
+            tm.finish_task(
+                tid,
+                status="SUCCESS",
+                message=f"跟品合规检测完成: 共 {len(items)} 件 (安全 {success_cnt} 件, 风险/拦截 {risk_or_fail} 件)",
+                success_count=success_cnt,
+                fail_count=risk_or_fail
+            )
+            record_audit_log(
+                task_type="PIGGYBACK_COMPLIANCE",
+                status="SUCCESS",
+                message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查 (安全 {success_cnt}, 风险 {risk_or_fail})",
+                detail_logs={"total": len(items), "concurrency": concurrency, "results": results},
+                user_id=u_id,
+                operator_name=op_name,
+                db=audit_db
+            )
+        finally:
+            audit_db.close()
+
+    task_manager.start_task(task_id, _worker)
 
     return {
         "success": True,
-        "total_checked": len(items),
-        "concurrency": concurrency,
-        "results": results
+        "task_id": task_id,
+        "total_requested": len(items),
+        "message": f"已成功启动 {len(items)} 件商品的异步合规检测任务"
     }
 
 @router.post("/arbitrate/{item_id}", summary="人工终审仲裁跟品合规判定")
@@ -1115,10 +1261,14 @@ def batch_publish_piggyback(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    items = db.query(MakroPiggybackItem).filter(
+        MakroPiggybackItem.id.in_(req.ids),
+        MakroPiggybackItem.compliance_status != "PROHIBITED"
+    ).all()
     if not items:
-        raise HTTPException(status_code=400, detail="未指定合法的跟品商品")
+        raise HTTPException(status_code=400, detail="选中的商品均为侵权禁售品或不存在，已被系统安全拦截")
 
+    valid_ids = [it.id for it in items]
     target_store = None
     if req.store_id:
         target_store = db.query(Store).filter(Store.id == req.store_id).first()
@@ -1134,7 +1284,7 @@ def batch_publish_piggyback(
         task_type="MAKRO_PIGGYBACK",
         name=f"批量跟品挂靠 {store_desc} ({len(items)} 件)",
         total=len(items),
-        product_ids=req.ids
+        product_ids=valid_ids
     )
     task_id = task["id"]
     target_store_id = target_store.id if target_store else None
@@ -1208,7 +1358,7 @@ def batch_publish_piggyback(
                 thread_db.close()
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = [executor.submit(_publish_one, pid) for pid in req.ids]
+            futures = [executor.submit(_publish_one, pid) for pid in valid_ids]
             for f in as_completed(futures):
                 if tm.is_cancelled(tid):
                     break
@@ -1226,7 +1376,7 @@ def batch_publish_piggyback(
                 task_type="PIGGYBACK_PUBLISH",
                 status=status,
                 message=msg,
-                detail_logs={"total": len(req.ids), "concurrency": concurrency, "success": done, "failed": errs, "target_store_id": target_store_id, "item_ids": req.ids[:50]},
+                detail_logs={"total": len(valid_ids), "concurrency": concurrency, "success": done, "failed": errs, "target_store_id": target_store_id, "item_ids": valid_ids[:50]},
                 user_id=u_id,
                 operator_name=op_name,
                 db=audit_db
@@ -1301,7 +1451,7 @@ def batch_delete_piggyback(
     db.commit()
     return {"success": True, "deleted_count": len(req.ids)}
 
-@router.post("/items/{item_id}/abandon", summary="弃用单件跟品商品 (移入弃用黑名单，防重复采集)")
+@router.post("/items/{item_id}/abandon", summary="弃用单件跟品商品 (移入弃用黑名单，防重复采集，联动下架)")
 def abandon_piggyback_item(
     item_id: int,
     req: AbandonPiggybackRequest,
@@ -1312,24 +1462,50 @@ def abandon_piggyback_item(
     if not item:
         raise HTTPException(status_code=404, detail="未找到该跟品商品")
 
+    delist_msg = ""
+    # 若商品已在线上架在售，联动调用 Makro 网关清空库存并下架
+    if item.status in ["ACTIVE", "PUBLISHED"]:
+        try:
+            store = item.store or _get_target_store(db, item.store_id)
+            if store and store.seller_id and store.cookie:
+                MakroPortalService.update_inventory(
+                    store=store,
+                    sku_id=item.seller_sku,
+                    product_id=item.makro_product_id,
+                    new_inventory=0
+                )
+                delist_msg = "，且已在 Makro 店铺后台将库存清零下架"
+                m_listing = db.query(MakroListing).filter(
+                    MakroListing.store_id == store.id,
+                    MakroListing.sku_id == item.seller_sku
+                ).first()
+                if m_listing:
+                    m_listing.internal_state = "INACTIVE"
+                    m_listing.inventory = 0
+        except Exception as delist_err:
+            logger.warning(f"跟品商品 [{item.seller_sku}] 弃用下架官方接口调用异常: {delist_err}")
+            delist_msg = f" (注意: 店铺后台自动下架提示: {str(delist_err)[:60]})"
+
     item.is_abandoned = True
     item.abandoned_reason = req.reason or "侵权违规拦截/手工弃用"
     item.abandoned_at = datetime.now()
     item.auto_reprice = False  # 弃用商品自动关闭自动巡检跟价
+    if item.status in ["ACTIVE", "PUBLISHED"]:
+        item.status = "INACTIVE"
     db.commit()
 
     record_audit_log(
         task_type="PIGGYBACK_ABANDON",
         status="SUCCESS",
-        message=f"跟品商品已弃用: {item.title[:35]} (FSN: {item.makro_product_id})，原因: {item.abandoned_reason}",
+        message=f"跟品商品已弃用{delist_msg}: {item.title[:35]} (FSN: {item.makro_product_id})，原因: {item.abandoned_reason}",
         detail_logs={"item_id": item.id, "fsn": item.makro_product_id, "reason": item.abandoned_reason},
         user_id=current_user.id if current_user else None,
         operator_name=(current_user.nickname or current_user.username) if current_user else None,
         db=db
     )
-    return {"success": True, "message": "商品已移入弃用黑名单", "item": _format_piggyback_item(item)}
+    return {"success": True, "message": f"商品已移入弃用黑名单{delist_msg}", "item": _format_piggyback_item(item)}
 
-@router.post("/batch-abandon", summary="批量弃用跟品商品 (防重复采集)")
+@router.post("/batch-abandon", summary="批量弃用跟品商品 (防重复采集，联动下架)")
 def batch_abandon_piggyback(
     req: BatchAbandonPiggybackRequest,
     current_user: User = Depends(get_current_user),
@@ -1340,26 +1516,53 @@ def batch_abandon_piggyback(
 
     items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
     count = 0
+    delisted_count = 0
     now = datetime.now()
     reason_txt = req.reason or "批量弃用/侵权拦截"
+
     for it in items:
+        if it.status in ["ACTIVE", "PUBLISHED"]:
+            try:
+                store = it.store or _get_target_store(db, it.store_id)
+                if store and store.seller_id and store.cookie:
+                    MakroPortalService.update_inventory(
+                        store=store,
+                        sku_id=it.seller_sku,
+                        product_id=it.makro_product_id,
+                        new_inventory=0
+                    )
+                    delisted_count += 1
+                    m_listing = db.query(MakroListing).filter(
+                        MakroListing.store_id == store.id,
+                        MakroListing.sku_id == it.seller_sku
+                    ).first()
+                    if m_listing:
+                        m_listing.internal_state = "INACTIVE"
+                        m_listing.inventory = 0
+            except Exception as e:
+                logger.warning(f"批量弃用下架失败 [{it.seller_sku}]: {e}")
+
         it.is_abandoned = True
         it.abandoned_reason = reason_txt
         it.abandoned_at = now
         it.auto_reprice = False
+        if it.status in ["ACTIVE", "PUBLISHED"]:
+            it.status = "INACTIVE"
         count += 1
+
     db.commit()
 
+    delist_note = f"，其中 {delisted_count} 件在线商品已同步在 Makro 店铺后台下架清零库存" if delisted_count > 0 else ""
     record_audit_log(
         task_type="PIGGYBACK_ABANDON",
         status="SUCCESS",
-        message=f"批量弃用跟品: 成功将 {count} 件商品移入弃用黑名单 (原因: {reason_txt})",
-        detail_logs={"ids": req.ids, "count": count, "reason": reason_txt},
+        message=f"批量弃用跟品: 成功将 {count} 件商品移入弃用黑名单{delist_note} (原因: {reason_txt})",
+        detail_logs={"ids": req.ids, "count": count, "delisted_count": delisted_count, "reason": reason_txt},
         user_id=current_user.id if current_user else None,
         operator_name=(current_user.nickname or current_user.username) if current_user else None,
         db=db
     )
-    return {"success": True, "abandoned_count": count}
+    return {"success": True, "abandoned_count": count, "delisted_count": delisted_count, "message": f"成功弃用 {count} 件商品{delist_note}"}
 
 @router.post("/items/{item_id}/restore", summary="恢复已弃用商品 (移回待处理池)")
 def restore_piggyback_item(
@@ -1374,6 +1577,8 @@ def restore_piggyback_item(
     item.is_abandoned = False
     item.abandoned_reason = None
     item.abandoned_at = None
+    if item.status == "INACTIVE":
+        item.status = "PENDING"
     db.commit()
 
     record_audit_log(

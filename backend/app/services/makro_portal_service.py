@@ -8,6 +8,7 @@ from ..models.store import Store, ProductStoreListing
 from ..models.makro_listing import MakroListing
 from ..models.makro_order import MakroOrder
 from ..models.product import Product
+from ..models.makro_piggyback import MakroPiggybackItem
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,52 @@ class MakroPortalService:
         if resp.status_code != 200:
             raise Exception(f"Makro 审核接口响应异常 (HTTP {resp.status_code}): {resp.text[:200]}")
         return resp.json()
+
+    @classmethod
+    def fetch_inventory_by_location(
+        cls,
+        store: Store,
+        items: List[Dict[str, str]],
+        location_id: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        调用 Makro 官方 POST /napi/listing/getInventoryByLocation 获取商品的仓库真实库存与占用库存
+        items 格式: [{"listing_id": "LST...", "service_profile": "NON_FBF"}, ...]
+        返回格式: {"LST...": {"quantity": 500, "reserved": 0, "loc_id": "..."}, ...}
+        """
+        if not items:
+            return {}
+
+        loc_id = location_id or store.default_location_id
+        url = f"{MAKRO_HOST}/napi/listing/getInventoryByLocation"
+        extra_headers = {"x-location-id": loc_id} if loc_id else {}
+        headers = cls._build_headers(store, extra_headers)
+
+        result_map = {}
+        chunk_size = 40
+        for i in range(0, len(items), chunk_size):
+            chunk = items[i:i + chunk_size]
+            payload = {"fetch_inventory_requests": chunk}
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=25)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    resp_dict = data.get("response", {})
+                    for lst_id, details in resp_dict.items():
+                        if isinstance(details, dict):
+                            stocks = details.get("stock_count", [])
+                            if stocks and isinstance(stocks, list) and isinstance(stocks[0], dict):
+                                result_map[lst_id] = {
+                                    "quantity": int(stocks[0].get("quantity", 0)),
+                                    "reserved": int(stocks[0].get("reserved", 0)),
+                                    "loc_id": stocks[0].get("loc_id") or loc_id
+                                }
+                            else:
+                                result_map[lst_id] = {"quantity": 0, "reserved": 0, "loc_id": loc_id}
+            except Exception as e:
+                logger.warning(f"获取官方分仓库存异常: {e}")
+
+        return result_map
 
     @classmethod
     def parse_in_progress_item(cls, raw_item: Dict[str, Any]) -> Dict[str, Any]:
@@ -434,6 +481,13 @@ class MakroPortalService:
                 if not listings_raw:
                     break
 
+                # 批量预加载官方真实仓库库存 (精准对接 POST /napi/listing/getInventoryByLocation)
+                inv_requests = [
+                    {"listing_id": r["listing_id"], "service_profile": r.get("service_profile") or "NON_FBF"}
+                    for r in listings_raw if r.get("listing_id")
+                ]
+                inv_map = cls.fetch_inventory_by_location(store=store, items=inv_requests)
+
                 for raw in listings_raw:
                     sku_id = raw.get("sku_id")
                     if not sku_id:
@@ -468,7 +522,27 @@ class MakroPortalService:
                     existing.internal_state = raw.get("internal_state") or st
                     existing.ssp = float(raw.get("ssp") or 0.0)
                     existing.mrp = float(raw.get("mrp") or 0.0)
-                    existing.inventory = int(raw.get("inventory") or 0)
+
+                    # 官方真实库存绑定与安全继承保护
+                    lst_id = raw.get("listing_id")
+                    inv_info = inv_map.get(lst_id) if lst_id else None
+                    if inv_info and "quantity" in inv_info:
+                        existing.inventory = int(inv_info["quantity"])
+                    elif raw.get("inventory") is not None:
+                        existing.inventory = int(raw.get("inventory"))
+                    else:
+                        pb_item = db.query(MakroPiggybackItem).filter(
+                            MakroPiggybackItem.store_id == store.id,
+                            MakroPiggybackItem.seller_sku == sku_id
+                        ).first()
+                        if pb_item and pb_item.inventory:
+                            existing.inventory = pb_item.inventory
+                        elif existing.inventory and existing.inventory > 0:
+                            pass
+                        elif (raw.get("internal_state") or st) == "ACTIVE":
+                            existing.inventory = 500
+                        else:
+                            existing.inventory = existing.inventory or 0
 
                     # 尺寸重量
                     if raw.get("packages"):

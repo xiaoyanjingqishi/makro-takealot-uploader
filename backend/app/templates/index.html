@@ -479,9 +479,9 @@
           class="p-3.5 rounded-xl border shadow-sm transition-all bg-white"
           :class="[
             task.status === 'RUNNING' 
-              ? (task.task_type === 'BATCH_PUBLISH' 
+              ? ((task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') 
                   ? 'border-purple-200/90 bg-gradient-to-r from-purple-50/60 via-white to-purple-50/40 ring-1 ring-purple-500/10' 
-                  : (task.task_type === 'BATCH_COMPLIANCE' 
+                  : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') 
                       ? 'border-emerald-200/90 bg-gradient-to-r from-emerald-50/60 via-white to-emerald-50/40 ring-1 ring-emerald-500/10' 
                       : 'border-indigo-200/90 bg-gradient-to-r from-indigo-50/60 via-white to-indigo-50/40 ring-1 ring-indigo-500/10'))
               : (task.status === 'SUCCESS' 
@@ -496,11 +496,11 @@
               <span v-if="task.status === 'RUNNING'" class="flex h-2.5 w-2.5 relative">
                 <span 
                   class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                  :class="task.task_type === 'BATCH_PUBLISH' ? 'bg-purple-400' : (task.task_type === 'BATCH_COMPLIANCE' ? 'bg-emerald-400' : 'bg-indigo-400')"
+                  :class="(task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') ? 'bg-purple-400' : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') ? 'bg-emerald-400' : 'bg-indigo-400')"
                 ></span>
                 <span 
                   class="relative inline-flex rounded-full h-2.5 w-2.5"
-                  :class="task.task_type === 'BATCH_PUBLISH' ? 'bg-purple-600' : (task.task_type === 'BATCH_COMPLIANCE' ? 'bg-emerald-600' : 'bg-indigo-600')"
+                  :class="(task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') ? 'bg-purple-600' : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') ? 'bg-emerald-600' : 'bg-indigo-600')"
                 ></span>
               </span>
               <span v-else-if="task.status === 'SUCCESS'" class="text-emerald-600 text-xs font-bold bg-emerald-100 rounded-full w-4 h-4 flex items-center justify-center">✓</span>
@@ -514,7 +514,7 @@
                 class="text-[10px] px-2 py-0.5 rounded-full font-semibold border"
                 :class="[
                   task.status === 'RUNNING' 
-                    ? (task.task_type === 'BATCH_PUBLISH' ? 'bg-purple-50 text-purple-700 border-purple-200/80' : (task.task_type === 'BATCH_COMPLIANCE' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' : 'bg-indigo-50 text-indigo-700 border-indigo-200/80')) :
+                    ? ((task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') ? 'bg-purple-50 text-purple-700 border-purple-200/80' : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' : 'bg-indigo-50 text-indigo-700 border-indigo-200/80')) :
                   task.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' :
                   task.status === 'CANCELLED' ? 'bg-amber-50 text-amber-700 border-amber-200/80' : 'bg-rose-50 text-rose-700 border-rose-200/80'
                 ]"
@@ -557,9 +557,9 @@
               class="h-full rounded-full transition-all duration-300 ease-out"
               :class="[
                 task.status === 'RUNNING' 
-                  ? (task.task_type === 'BATCH_PUBLISH' 
+                  ? ((task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') 
                       ? 'bg-gradient-to-r from-purple-500 to-indigo-600' 
-                      : (task.task_type === 'BATCH_COMPLIANCE' 
+                      : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') 
                           ? 'bg-gradient-to-r from-emerald-500 to-teal-600' 
                           : 'bg-gradient-to-r from-indigo-500 to-blue-600'))
                   : (task.status === 'SUCCESS' 
@@ -2296,15 +2296,15 @@
                 </button>
               </div>
 
-              <!-- 合规状态筛选 (支持独立的待检测商品筛选) -->
+              <!-- 合规状态筛选 (支持独立的待检测商品筛选与实时数量徽章) -->
               <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
                 <button 
                   v-for="cst in [
                     { key: 'ALL', label: '全部风控' },
                     { key: 'PENDING_CHECK', label: '⏳ 待检测', count: piggyback.stats.pending_check_count },
-                    { key: 'SAFE', label: '🟢 合规' },
-                    { key: 'RISK', label: '🟡 风险' },
-                    { key: 'PROHIBITED', label: '🔴 禁售' }
+                    { key: 'SAFE', label: '🟢 合规', count: piggyback.stats.safe_count },
+                    { key: 'RISK', label: '🟡 风险', count: piggyback.stats.risk_count },
+                    { key: 'PROHIBITED', label: '🔴 禁售', count: piggyback.stats.prohibited_count }
                   ]"
                   :key="cst.key"
                   @click="changePiggybackCompliance(cst.key)"
@@ -2312,7 +2312,7 @@
                   class="px-2 py-1 text-xs rounded-md transition-all cursor-pointer select-none flex items-center space-x-1"
                 >
                   <span>{{ cst.label }}</span>
-                  <span v-if="cst.count !== undefined" class="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[9.5px] rounded-full font-mono">{{ cst.count }}</span>
+                  <span v-if="cst.count !== undefined" class="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[9.5px] rounded-full font-mono font-bold">{{ cst.count }}</span>
                 </button>
               </div>
 
@@ -2499,6 +2499,41 @@
 
         <!-- 跟品商品主体数据表格区 -->
         <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs flex flex-col overflow-hidden">
+          
+          <!-- 跨页全选提示栏 (跨页批量操作交互条) -->
+          <div 
+            v-if="piggyback.selectAll && piggyback.total > piggyback.items.length && !piggyback.isAllFilteredSelected"
+            class="bg-sky-50 text-sky-800 px-4 py-2 text-xs border-b border-sky-100 flex items-center justify-between shrink-0 animate-in fade-in duration-150"
+          >
+            <div class="flex items-center space-x-2">
+              <span class="inline-block w-2 h-2 rounded-full bg-sky-500"></span>
+              <span>已勾选当前页 <strong class="font-semibold text-sky-900">{{ piggyback.items.length }}</strong> 件商品。是否勾选符合当前筛选条件的全部 <strong class="font-semibold text-sky-900">{{ piggyback.total }}</strong> 件商品？</span>
+            </div>
+            <button 
+              @click="selectAllFilteredPiggyback"
+              :disabled="loadingPiggyback"
+              class="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded-md font-medium text-[11px] shadow-2xs transition-all cursor-pointer flex items-center space-x-1"
+            >
+              <span>✓ 勾选全部 {{ piggyback.total }} 件商品</span>
+            </button>
+          </div>
+
+          <div 
+            v-if="piggyback.isAllFilteredSelected"
+            class="bg-indigo-50 text-indigo-800 px-4 py-2 text-xs border-b border-indigo-100 flex items-center justify-between shrink-0 animate-in fade-in duration-150"
+          >
+            <div class="flex items-center space-x-2">
+              <span class="inline-block w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+              <span>已跨页勾选符合当前筛选条件的全部 <strong class="font-semibold text-indigo-900">{{ piggyback.total }}</strong> 件商品（已获取全部 {{ piggyback.selectedIds.length }} 个商品ID）。</span>
+            </div>
+            <button 
+              @click="clearPiggybackSelection"
+              class="text-indigo-600 hover:text-indigo-800 font-semibold underline text-xs cursor-pointer"
+            >
+              取消跨页勾选
+            </button>
+          </div>
+
           <div class="flex-1 min-h-0 overflow-auto custom-scrollbar">
             <table class="w-full text-left border-collapse text-xs">
               <thead class="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200/80 backdrop-blur-xs">
@@ -2545,6 +2580,7 @@
                       type="checkbox" 
                       :value="item.id" 
                       v-model="piggyback.selectedIds"
+                      @change="handlePiggybackItemCheckboxChange"
                       class="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer mt-1"
                     />
                   </td>
@@ -2968,6 +3004,7 @@
             <div class="flex items-center space-x-1.5 text-xs font-medium pr-3 border-r border-slate-700/80">
               <span class="text-sky-400 font-bold font-mono text-sm">{{ piggyback.selectedIds.length }}</span>
               <span class="text-slate-300">已选</span>
+              <span v-if="piggyback.isAllFilteredSelected" class="ml-1 text-[10px] bg-indigo-500/40 text-indigo-200 border border-indigo-400/40 px-1.5 py-0.5 rounded-full font-sans">跨页全选</span>
             </div>
 
             <!-- 批量一键挂靠 (支持选定目标店铺) -->
@@ -3036,7 +3073,7 @@
 
             <!-- 取消选择 -->
             <button 
-              @click="piggyback.selectedIds = []; piggyback.selectAll = false;"
+              @click="clearPiggybackSelection"
               class="p-1 text-slate-400 hover:text-white rounded transition cursor-pointer ml-1 text-xs"
               title="取消选择"
             >
@@ -8934,6 +8971,7 @@
             items: [],
             selectedIds: [],
             selectAll: false,
+            isAllFilteredSelected: false,
             autoCompliance: localStorage.getItem('makro_piggyback_auto_compliance') === 'true'
           },
           // 管理驾驶舱状态 (团队人效与员工工作量看板)
@@ -9767,8 +9805,14 @@
             if (data.stats) {
               this.piggyback.stats = data.stats;
             }
-            this.piggyback.selectedIds = [];
-            this.piggyback.selectAll = false;
+            if (this.piggyback.isAllFilteredSelected) {
+              this.piggyback.selectAll = this.piggyback.items.length > 0 && 
+                this.piggyback.items.every(it => this.piggyback.selectedIds.includes(it.id));
+            } else {
+              this.piggyback.selectedIds = [];
+              this.piggyback.selectAll = false;
+              this.piggyback.isAllFilteredSelected = false;
+            }
             // 同步刷新顶部 KPI 指标
             this.loadPiggybackKpi();
           } catch (e) {
@@ -9792,18 +9836,60 @@
         },
         changePiggybackState(st) {
           this.piggyback.status = st;
+          this.piggyback.isAllFilteredSelected = false;
           this.loadPiggybackItems(1);
         },
         changePiggybackCompliance(cst) {
           this.piggyback.compliance_status = cst;
+          this.piggyback.isAllFilteredSelected = false;
           this.loadPiggybackItems(1);
         },
         toggleSelectAllPiggyback() {
           this.piggyback.selectAll = !this.piggyback.selectAll;
           if (this.piggyback.selectAll) {
-            this.piggyback.selectedIds = this.piggyback.items.map(it => it.id);
+            const curIds = this.piggyback.items.map(it => it.id);
+            const idSet = new Set(this.piggyback.selectedIds);
+            curIds.forEach(id => idSet.add(id));
+            this.piggyback.selectedIds = Array.from(idSet);
           } else {
-            this.piggyback.selectedIds = [];
+            const curIds = new Set(this.piggyback.items.map(it => it.id));
+            this.piggyback.selectedIds = this.piggyback.selectedIds.filter(id => !curIds.has(id));
+            this.piggyback.isAllFilteredSelected = false;
+          }
+        },
+        handlePiggybackItemCheckboxChange() {
+          this.piggyback.isAllFilteredSelected = false;
+          this.piggyback.selectAll = this.piggyback.items.length > 0 && 
+            this.piggyback.items.every(it => this.piggyback.selectedIds.includes(it.id));
+        },
+        clearPiggybackSelection() {
+          this.piggyback.selectedIds = [];
+          this.piggyback.selectAll = false;
+          this.piggyback.isAllFilteredSelected = false;
+        },
+        async selectAllFilteredPiggyback() {
+          this.loadingPiggyback = true;
+          try {
+            const params = new URLSearchParams();
+            if (this.piggyback.status && this.piggyback.status !== 'ALL') params.append('status', this.piggyback.status);
+            if (this.piggyback.stage && this.piggyback.stage !== 'ALL') params.append('stage', this.piggyback.stage);
+            if (this.piggyback.buybox_status && this.piggyback.buybox_status !== 'ALL') params.append('buybox_status', this.piggyback.buybox_status);
+            if (this.piggyback.compliance_status && this.piggyback.compliance_status !== 'ALL') params.append('compliance_status', this.piggyback.compliance_status);
+            if (this.piggyback.store_id) params.append('store_id', this.piggyback.store_id);
+            if (this.piggyback.user_id) params.append('user_id', this.piggyback.user_id);
+            if (this.piggyback.search) params.append('search', this.piggyback.search.trim());
+
+            const res = await fetch(`/api/piggyback/ids?${params.toString()}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            this.piggyback.selectedIds = data.ids || [];
+            this.piggyback.selectAll = true;
+            this.piggyback.isAllFilteredSelected = true;
+            this.showToast(`✅ 已跨页成功勾选符合当前条件的全部 ${this.piggyback.selectedIds.length} 件商品`, 'success');
+          } catch (e) {
+            this.showToast('跨页全选获取商品失败: ' + e.message, 'error');
+          } finally {
+            this.loadingPiggyback = false;
           }
         },
         async handleCollectPiggyback() {
@@ -9986,7 +10072,8 @@
         },
         async handleBatchCheckCompliance() {
           if (this.piggyback.selectedIds.length === 0) return;
-          this.showToast(`正在批量检测 ${this.piggyback.selectedIds.length} 件商品的合规安全性...`, 'info');
+          const count = this.piggyback.selectedIds.length;
+          this.showToast(`正在分发 ${count} 件商品的批量AI质检任务...`, 'info');
           try {
             const res = await fetch('/api/piggyback/batch-check-compliance', {
               method: 'POST',
@@ -9994,9 +10081,25 @@
               body: JSON.stringify({ ids: this.piggyback.selectedIds })
             });
             const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || '批量检测失败');
-            this.showToast(`批量质检完成，共完成 ${data.total_checked} 件`, 'success');
-            this.loadPiggybackItems(this.piggyback.page);
+            if (!res.ok) throw new Error(data.detail || '批量检测启动失败');
+            if (data.task_id) {
+              this.addOrUpdateBgTask({
+                id: data.task_id,
+                name: `批量跟品AI合规质检 (${count} 件)`,
+                task_type: 'PIGGYBACK_COMPLIANCE',
+                status: 'RUNNING',
+                progress: 0,
+                current: 0,
+                total: count,
+                current_title: '正在初始化AI合规质检多线程引擎...'
+              });
+              this.showFullTasksBanner = true;
+              this.ensureBgTasksPolling();
+              this.showToast(`🛡️ ${data.message || '已启动批量AI合规质检任务，顶部进度条正在实时推进'}`, 'success');
+            } else {
+              this.showToast(data.message || '质检完成', 'success');
+              this.loadPiggybackItems(this.piggyback.page);
+            }
           } catch (e) {
             this.showToast('批量质检异常: ' + e.message, 'error');
           }
@@ -10040,9 +10143,9 @@
         },
         async executeBatchPublishPiggyback() {
           if (this.piggyback.selectedIds.length === 0 || this.isBatchPublishingPiggyback) return;
-          const validIds = this.piggyback.items
-            .filter(it => this.piggyback.selectedIds.includes(it.id) && it.compliance_status !== 'PROHIBITED')
-            .map(it => it.id);
+          let validIds = [...this.piggyback.selectedIds];
+          const prohibitedOnPage = new Set(this.piggyback.items.filter(it => it.compliance_status === 'PROHIBITED').map(it => it.id));
+          validIds = validIds.filter(id => !prohibitedOnPage.has(id));
           if (validIds.length === 0) {
             this.showToast('⛔ 选中的商品均为【红线侵权禁售】商品，已被系统拦截，无法挂靠！', 'error');
             return;
@@ -10065,6 +10168,20 @@
             }
             if (!res.ok) throw new Error(data.detail || '启动批量跟品失败');
             this.showBatchPublishPiggybackModal = false;
+            if (data.task_id) {
+              this.addOrUpdateBgTask({
+                id: data.task_id,
+                name: `批量跟品挂靠 (${validIds.length} 件)`,
+                task_type: 'MAKRO_PIGGYBACK',
+                status: 'RUNNING',
+                progress: 0,
+                current: 0,
+                total: validIds.length,
+                current_title: '正在调度跟卖网关与库存同步...'
+              });
+              this.showFullTasksBanner = true;
+              this.ensureBgTasksPolling();
+            }
             this.showToast(data.message || '已成功启动异步批量挂靠任务', 'success');
             this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
@@ -10112,7 +10229,11 @@
           this.openBatchPublishPiggybackModal();
         },
         async handleAbandonPiggyback(item) {
-          const reason = prompt(`确认弃用商品「${item.title.substring(0, 25)}...」并加入防重采黑名单吗？\n请输入弃用原因 (如: 侵权风险/款式过季/无货):`, '侵权风险拦截/手工弃用');
+          const isPublished = item.status === 'ACTIVE' || item.status === 'PUBLISHED';
+          const alertNotice = isPublished 
+            ? '⚠️ 提示：该商品当前在线在售，弃用后系统将自动在 Makro 店铺后台清零库存并下架！\n\n' 
+            : '';
+          const reason = prompt(`${alertNotice}确认弃用商品「${item.title.substring(0, 25)}...」并加入防重采黑名单吗？\n请输入弃用原因 (如: 侵权风险/款式过季/无货):`, '侵权风险拦截/手工弃用');
           if (reason === null) return;
           try {
             const res = await fetch(`/api/piggyback/items/${item.id}/abandon`, {
@@ -10122,7 +10243,7 @@
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || '弃用失败');
-            this.showToast('🚫 商品已移入弃用黑名单，后续采集将自动阻断防重', 'success');
+            this.showToast(isPublished ? '🚫 商品已移入弃用黑名单，且已同步在 Makro 店铺下架清零库存' : '🚫 商品已移入弃用黑名单，后续采集将自动阻断防重', 'success');
             this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
             this.showToast('弃用失败: ' + e.message, 'error');
@@ -10131,7 +10252,7 @@
         async handleBatchAbandonPiggyback() {
           if (this.piggyback.selectedIds.length === 0) return;
           const count = this.piggyback.selectedIds.length;
-          const reason = prompt(`确认将选中的 ${count} 件商品批量弃用并加入黑名单吗？\n请输入弃用原因:`, '批量弃用/侵权风险拦截');
+          const reason = prompt(`⚠️ 提示：选中的商品若有在线在售商品，弃用时系统将自动在 Makro 店铺后台清零库存下架！\n\n确认将选中的 ${count} 件商品批量弃用并加入黑名单吗？\n请输入弃用原因:`, '批量弃用/侵权风险拦截');
           if (reason === null) return;
           try {
             const res = await fetch('/api/piggyback/batch-abandon', {
@@ -10141,9 +10262,9 @@
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || '批量弃用失败');
-            this.showToast(`🚫 成功将 ${data.abandoned_count} 件商品移入弃用黑名单`, 'success');
-            this.piggyback.selectedIds = [];
-            this.piggyback.selectAll = false;
+            const delistNote = data.delisted_count > 0 ? `（其中 ${data.delisted_count} 件在线在售商品已自动同步下架清零库存）` : '';
+            this.showToast(`🚫 成功将 ${data.abandoned_count} 件商品移入弃用黑名单${delistNote}`, 'success');
+            this.clearPiggybackSelection();
             this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
             this.showToast('批量弃用失败: ' + e.message, 'error');
@@ -11748,6 +11869,9 @@
                 if (prev.status === 'RUNNING' && st.status !== 'RUNNING') {
                   this.loadProducts();
                   this.loadTasks();
+                  if (this.currentTab === 'piggyback') {
+                    this.loadPiggybackItems(this.piggyback.page);
+                  }
                   setTimeout(() => {
                     this.dismissBgTask(st.id);
                   }, 12000);
