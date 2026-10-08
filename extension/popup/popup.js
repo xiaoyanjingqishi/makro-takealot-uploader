@@ -114,6 +114,89 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  // 加载系统店铺列表并同步选中状态
+  function loadStoresAndSync(targetUrl) {
+    const storeSelect = document.getElementById("store-select");
+    const storeIndicator = document.getElementById("store-indicator");
+    if (!storeSelect) return;
+    targetUrl = (targetUrl || currentBackendUrl).replace(/\/+$/, "");
+
+    fetch(`${targetUrl}/api/stores`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!Array.isArray(data)) return;
+        chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+          const savedStoreId = sRes?.makro_target_store_id || null;
+          storeSelect.innerHTML = '<option value="">-- 系统默认主店 --</option>';
+
+          let matched = false;
+          let matchedName = "默认主店";
+          data.forEach(s => {
+            if (!s.is_active) return;
+            const opt = document.createElement("option");
+            opt.value = s.id;
+            opt.setAttribute("data-name", s.name);
+            opt.innerText = `${s.name} (ID: ${s.id})${s.is_default ? ' [默认]' : ''}`;
+            if (savedStoreId && String(savedStoreId) === String(s.id)) {
+              opt.selected = true;
+              matched = true;
+              matchedName = s.name;
+            }
+            storeSelect.appendChild(opt);
+          });
+
+          if (matched && storeIndicator) {
+            storeIndicator.innerText = `已选: ${matchedName}`;
+            storeIndicator.style.color = "#10b981";
+          } else if (storeIndicator) {
+            storeIndicator.innerText = "默认主店";
+            storeIndicator.style.color = "#38bdf8";
+          }
+        });
+      })
+      .catch(err => {
+        console.warn("加载店铺列表失败:", err);
+        if (storeSelect) {
+          storeSelect.innerHTML = '<option value="">❌ 无法连接服务器获取店铺</option>';
+        }
+      });
+  }
+
+  const storeSelect = document.getElementById("store-select");
+  if (storeSelect) {
+    storeSelect.onchange = () => {
+      const val = storeSelect.value;
+      const storeIndicator = document.getElementById("store-indicator");
+      const storeFeedback = document.getElementById("store-feedback");
+      if (!val) {
+        chrome.storage.local.remove(["makro_target_store_id"]);
+        if (storeIndicator) {
+          storeIndicator.innerText = "默认主店";
+          storeIndicator.style.color = "#38bdf8";
+        }
+        if (storeFeedback) {
+          storeFeedback.innerText = "💡 已恢复为系统默认主店";
+          storeFeedback.style.color = "#64748b";
+        }
+        return;
+      }
+      const sId = parseInt(val, 10);
+      const selectedOption = storeSelect.options[storeSelect.selectedIndex];
+      const storeName = selectedOption.getAttribute("data-name") || `店铺#${sId}`;
+
+      chrome.storage.local.set({ makro_target_store_id: sId }, () => {
+        if (storeIndicator) {
+          storeIndicator.innerText = `已选: ${storeName}`;
+          storeIndicator.style.color = "#10b981";
+        }
+        if (storeFeedback) {
+          storeFeedback.innerText = `✅ 已绑定跟品店铺：${storeName}，采集将直接录入此店并精准排重`;
+          storeFeedback.style.color = "#10b981";
+        }
+      });
+    };
+  }
+
   // 1. 检查指定地址连通性并拉取核心指标
   function checkConnectionAndRefresh(targetUrl) {
     if (!targetUrl) targetUrl = currentBackendUrl;
@@ -121,8 +204,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (pingIndicator) pingIndicator.innerText = "正在探测...";
 
-    // 同步拉取员工列表
+    // 同步拉取员工列表与店铺列表
     loadOperatorsAndSync(targetUrl);
+    loadStoresAndSync(targetUrl);
 
     fetch(`${targetUrl}/api/settings`)
       .then(res => {

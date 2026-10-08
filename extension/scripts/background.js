@@ -207,6 +207,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         body: JSON.stringify({
           url_or_fsn: urlOrFsn,
           item_id: request.item_id || null,
+          store_id: request.store_id || null,
           variant_name: request.variant_name || null,
           variant_attributes: request.variant_attributes || null
         })
@@ -218,7 +219,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
           return res.json();
         })
-        .then(data => sendResponse({ success: true, data }))
+        .then(data => sendResponse({ success: true, data, already_exists: data?.already_exists || false }))
         .catch(err => {
           console.error("跟品采集推送到后端失败:", err);
           sendResponse({ success: false, error: err.message });
@@ -263,7 +264,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fsns: request.fsns || []
+          fsns: request.fsns || [],
+          store_id: request.store_id || null
         })
       })
         .then(async (res) => {

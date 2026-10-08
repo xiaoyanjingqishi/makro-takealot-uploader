@@ -323,35 +323,55 @@
     document.getElementById("makro-piggyback-btn").addEventListener("click", () => {
       const btn = document.getElementById("makro-piggyback-btn");
       const msg = document.getElementById("makro-piggyback-msg");
+
+      if (btn.dataset.alreadyExists === "1") {
+        msg.style.display = "block";
+        msg.style.background = "rgba(16, 185, 129, 0.2)";
+        msg.style.color = "#34d399";
+        msg.style.border = "1px solid #059669";
+        msg.innerHTML = "💡 该商品已在跟品库中，无需重复入库";
+        setTimeout(() => { msg.style.display = "none"; }, 3500);
+        return;
+      }
+
       btn.innerText = "⏳ 正在由后端解析入库...";
       btn.disabled = true;
       msg.style.display = "none";
 
       const latestData = extractProductPageData();
 
-      chrome.runtime.sendMessage({
-        action: "COLLECT_MAKRO_PIGGYBACK",
-        url: latestData.url,
-        fsn: latestData.fsn || latestData.url,
-        item_id: latestData.itemId
-      }, (response) => {
-        btn.disabled = false;
-        btn.innerHTML = hasVariants ? "<span>🚀</span> 仅采集当前单品" : "<span>🚀</span> 采集跟品到本地系统";
+      chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+        const storeId = sRes?.makro_target_store_id || null;
+        chrome.runtime.sendMessage({
+          action: "COLLECT_MAKRO_PIGGYBACK",
+          url: latestData.url,
+          fsn: latestData.fsn || latestData.url,
+          item_id: latestData.itemId,
+          store_id: storeId
+        }, (response) => {
+          btn.disabled = false;
+          btn.innerHTML = hasVariants ? "<span>🚀</span> 仅采集当前单品" : "<span>🚀</span> 采集跟品到本地系统";
 
-        if (response && response.success) {
-          msg.style.display = "block";
-          msg.style.background = "rgba(16, 185, 129, 0.2)";
-          msg.style.color = "#34d399";
-          msg.style.border = "1px solid #059669";
-          msg.innerHTML = `✅ 采集成功！后端已获取权威数据并入库`;
-          setTimeout(() => { msg.style.display = "none"; }, 4000);
-        } else {
-          msg.style.display = "block";
-          msg.style.background = "rgba(239, 68, 68, 0.2)";
-          msg.style.color = "#f87171";
-          msg.style.border = "1px solid #dc2626";
-          msg.innerHTML = "❌ 采集失败: " + ((response && response.error) || "无法连接中台服务");
-        }
+          if (response && response.success) {
+            btn.dataset.alreadyExists = "1";
+            btn.style.background = "#059669";
+            btn.innerHTML = "<span>✅</span> 该商品已在跟品库";
+            msg.style.display = "block";
+            msg.style.background = "rgba(16, 185, 129, 0.2)";
+            msg.style.color = "#34d399";
+            msg.style.border = "1px solid #059669";
+            msg.innerHTML = response.already_exists 
+              ? `💡 该商品已在跟品库中，已同步前台最新情报`
+              : `✅ 采集成功！后端已获取权威数据并入库`;
+            setTimeout(() => { msg.style.display = "none"; }, 4000);
+          } else {
+            msg.style.display = "block";
+            msg.style.background = "rgba(239, 68, 68, 0.2)";
+            msg.style.color = "#f87171";
+            msg.style.border = "1px solid #dc2626";
+            msg.innerHTML = "❌ 采集失败: " + ((response && response.error) || "无法连接中台服务");
+          }
+        });
       });
     });
 
@@ -361,22 +381,26 @@
       if (variants && variants.length > 0) {
         variants.forEach(v => { if (v.fsn) pdpFsns.push(v.fsn); });
       }
-      chrome.runtime.sendMessage({
-        action: "CHECK_PIGGYBACK_EXISTENCE",
-        fsns: pdpFsns
-      }, (res) => {
-        if (res && res.success && res.exists) {
-          const existsMap = res.exists;
-          const mainInfo = existsMap[data.fsn];
-          if (mainInfo) {
-            const btn = document.getElementById("makro-piggyback-btn");
-            if (btn) {
-              btn.style.background = "#059669";
-              btn.innerHTML = mainInfo.status === "ACTIVE" 
-                ? `<span>🟢</span> 该商品已在售中 (R${mainInfo.target_price})`
-                : `<span>✅</span> 该商品已在跟品库`;
+      chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+        const storeId = sRes?.makro_target_store_id || null;
+        chrome.runtime.sendMessage({
+          action: "CHECK_PIGGYBACK_EXISTENCE",
+          fsns: pdpFsns,
+          store_id: storeId
+        }, (res) => {
+          if (res && res.success && res.exists) {
+            const existsMap = res.exists;
+            const mainInfo = existsMap[data.fsn];
+            if (mainInfo) {
+              const btn = document.getElementById("makro-piggyback-btn");
+              if (btn) {
+                btn.dataset.alreadyExists = "1";
+                btn.style.background = "#059669";
+                btn.innerHTML = mainInfo.status === "ACTIVE" 
+                  ? `<span>🟢</span> 该商品已在售中 (R${mainInfo.target_price})`
+                  : `<span>✅</span> 该商品已在跟品库`;
+              }
             }
-          }
           if (variants && variants.length > 0) {
             variants.forEach((v, idx) => {
               if (existsMap[v.fsn]) {
@@ -477,26 +501,46 @@
         e.preventDefault();
         e.stopPropagation();
 
+        // 防重检查：如果卡片已在库中，拦截并提示用户，绝不重复发起入库请求
+        if (card.dataset.checkedExistence === "exists") {
+          const origText = qBtn.innerText;
+          qBtn.innerText = "⚠️ 已在库中";
+          setTimeout(() => { qBtn.innerText = origText; }, 2000);
+          return;
+        }
+
         const cardData = extractCardData(card);
         if (!cardData) return;
 
         qBtn.innerText = "⏳ 提交中...";
         qBtn.disabled = true;
 
-        chrome.runtime.sendMessage({
-          action: "COLLECT_MAKRO_PIGGYBACK",
-          url: cardData.url,
-          fsn: cardData.fsn,
-          item_id: cardData.item_id
-        }, (res) => {
-          if (res && res.success) {
-            qBtn.style.background = "#059669";
-            qBtn.innerText = "✅ 已入库";
-          } else {
-            qBtn.disabled = false;
-            qBtn.style.background = "#dc2626";
-            qBtn.innerText = "❌ 重试";
-          }
+        chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+          const storeId = sRes?.makro_target_store_id || null;
+          chrome.runtime.sendMessage({
+            action: "COLLECT_MAKRO_PIGGYBACK",
+            url: cardData.url,
+            fsn: cardData.fsn,
+            item_id: cardData.item_id,
+            store_id: storeId
+          }, (res) => {
+            if (res && res.success) {
+              card.dataset.checkedExistence = "exists";
+              qBtn.style.background = "#059669";
+              qBtn.innerText = res.already_exists ? "🟢 已在库" : "✅ 已入库";
+              const cb = card.querySelector(".makro-search-cb");
+              if (cb) {
+                cb.checked = false;
+                cb.title = "已在库商品 (无需重复采集)";
+                cb.style.opacity = "0.5";
+              }
+              updateToolbarCount();
+            } else {
+              qBtn.disabled = false;
+              qBtn.style.background = "#dc2626";
+              qBtn.innerText = "❌ 重试";
+            }
+          });
         });
       });
 
@@ -516,31 +560,38 @@
       });
 
       if (fsnsToCheck.length > 0) {
-        chrome.runtime.sendMessage({
-          action: "CHECK_PIGGYBACK_EXISTENCE",
-          fsns: fsnsToCheck
-        }, (res) => {
-          if (res && res.success && res.exists) {
-            const existsMap = res.exists;
-            cards.forEach((card) => {
-              const fsn = (card.getAttribute("data-id") || "").trim().toUpperCase();
-              if (existsMap[fsn]) {
-                card.dataset.checkedExistence = "exists";
-                const qBtn = card.querySelector(".makro-search-quick-btn");
-                const cb = card.querySelector(".makro-search-cb");
-                const info = existsMap[fsn];
-                if (qBtn) {
-                  qBtn.style.background = "#059669";
-                  qBtn.style.opacity = "0.9";
-                  qBtn.innerText = info.status === "ACTIVE" ? "🟢 在售中" : "✅ 已在库";
-                  qBtn.title = `已存在于跟品库 (SKU: ${info.seller_sku}，当前售价: R${info.target_price || 0})`;
+        chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+          const storeId = sRes?.makro_target_store_id || null;
+          chrome.runtime.sendMessage({
+            action: "CHECK_PIGGYBACK_EXISTENCE",
+            fsns: fsnsToCheck,
+            store_id: storeId
+          }, (res) => {
+            if (res && res.success && res.exists) {
+              const existsMap = res.exists;
+              cards.forEach((card) => {
+                const fsn = (card.getAttribute("data-id") || "").trim().toUpperCase();
+                if (existsMap[fsn]) {
+                  card.dataset.checkedExistence = "exists";
+                  const qBtn = card.querySelector(".makro-search-quick-btn");
+                  const cb = card.querySelector(".makro-search-cb");
+                  const info = existsMap[fsn];
+                  if (qBtn) {
+                    qBtn.style.background = "#059669";
+                    qBtn.style.opacity = "0.9";
+                    qBtn.innerText = info.status === "ACTIVE" ? "🟢 在售中" : "✅ 已在库";
+                    qBtn.title = `已存在于跟品库 (SKU: ${info.seller_sku}，当前售价: R${info.target_price || 0}，店铺: ${info.store_name || ''})`;
+                  }
+                  if (cb) {
+                    cb.checked = false; // 已在库商品默认不勾选！
+                    cb.title = "已在库商品 (无需重复采集)";
+                    cb.style.opacity = "0.5";
+                  }
                 }
-                if (cb) {
-                  cb.title = "已在库商品";
-                }
-              }
-            });
-          }
+              });
+              updateToolbarCount();
+            }
+          });
         });
       }
     } catch (e) {
@@ -553,11 +604,12 @@
   // 更新搜索页底部工具栏勾选计数
   function updateToolbarCount() {
     const totalCards = document.querySelectorAll("div[data-id]").length;
+    const existsCards = document.querySelectorAll('div[data-id][data-checked-existence="exists"]').length;
     const selectedCbs = document.querySelectorAll(".makro-search-cb:checked");
     const countEl = document.getElementById("makro-bar-selected-count");
     const totalEl = document.getElementById("makro-bar-total-count");
     if (countEl) countEl.innerText = selectedCbs.length;
-    if (totalEl) totalEl.innerText = totalCards;
+    if (totalEl) totalEl.innerText = existsCards > 0 ? `${totalCards} (已在库 ${existsCards})` : totalCards;
   }
 
   // 注入搜索页底部吸附批量工具栏
@@ -598,7 +650,7 @@
           background: rgba(255,255,255,0.1); color: #e2e8f0; border: 1px solid rgba(255,255,255,0.2);
           padding: 6px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; font-weight: 500;
         ">
-          ☑️ 全选/反选
+          ☑️ 全选未在库
         </button>
         <button id="makro-collect-selected-btn" style="
           background: linear-gradient(135deg, #0284c7 0%, #2563eb 100%); color: white; border: none;
@@ -612,7 +664,7 @@
           padding: 6px 16px; border-radius: 20px; font-size: 12px; cursor: pointer; font-weight: 600;
           box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3); display: flex; align-items: center; gap: 4px;
         ">
-          <span>⚡</span> 采集整页
+          <span>⚡</span> 采集整页 (跳过在库)
         </button>
       </div>
       <div id="makro-bar-msg" style="display:none; font-size:12px; font-weight:600;"></div>
@@ -620,45 +672,92 @@
 
     document.body.appendChild(bar);
 
-    // 全选/反选
+    // 全选/反选 (仅对未在库的新品生效)
     document.getElementById("makro-select-all-btn").addEventListener("click", () => {
       const cbs = document.querySelectorAll(".makro-search-cb");
-      const allChecked = Array.from(cbs).every(cb => cb.checked);
-      cbs.forEach(cb => cb.checked = !allChecked);
+      const availableCbs = Array.from(cbs).filter(cb => {
+        const card = cb.closest("div[data-id]");
+        return card && card.dataset.checkedExistence !== "exists";
+      });
+      if (availableCbs.length === 0) {
+        alert("本页商品均已在跟品库中，无待采集新品！");
+        return;
+      }
+      const allChecked = availableCbs.every(cb => cb.checked);
+      availableCbs.forEach(cb => cb.checked = !allChecked);
       updateToolbarCount();
     });
 
-    // 采集勾选
+    // 采集勾选 (自动跳过已在库商品)
     document.getElementById("makro-collect-selected-btn").addEventListener("click", () => {
       const selectedCards = [];
+      let skippedCount = 0;
       document.querySelectorAll(".makro-search-cb:checked").forEach(cb => {
         const card = cb.closest("div[data-id]");
         if (card) {
+          if (card.dataset.checkedExistence === "exists") {
+            skippedCount++;
+            return;
+          }
           const d = extractCardData(card);
           if (d) selectedCards.push(d);
         }
       });
 
       if (selectedCards.length === 0) {
-        alert("请先勾选需要跟品的商品！");
+        if (skippedCount > 0) {
+          alert(`所勾选的 ${skippedCount} 件商品均已在跟品库中，已全部跳过，无需重复采集！`);
+        } else {
+          alert("请先勾选需要跟品的商品！");
+        }
         return;
+      }
+
+      if (skippedCount > 0) {
+        const msgEl = document.getElementById("makro-bar-msg");
+        if (msgEl) {
+          msgEl.style.display = "block";
+          msgEl.style.color = "#fbbf24";
+          msgEl.innerHTML = `⚠️ 已自动跳过 ${skippedCount} 件已在库商品，准备入库剩余 ${selectedCards.length} 件...`;
+        }
       }
       runBatchCollect(selectedCards, document.getElementById("makro-collect-selected-btn"));
     });
 
-    // 采集整页
+    // 采集整页 (自动跳过已在库商品)
     document.getElementById("makro-collect-all-page-btn").addEventListener("click", () => {
-      const allCards = [];
-      document.querySelectorAll("div[data-id]").forEach(card => {
-        const d = extractCardData(card);
-        if (d) allCards.push(d);
-      });
-
+      const allCards = document.querySelectorAll("div[data-id]");
       if (allCards.length === 0) {
         alert("本页未找到可采集的商品卡片！");
         return;
       }
-      runBatchCollect(allCards, document.getElementById("makro-collect-all-page-btn"));
+
+      const toCollectCards = [];
+      let skippedCount = 0;
+      allCards.forEach(card => {
+        if (card.dataset.checkedExistence === "exists") {
+          skippedCount++;
+          return;
+        }
+        const d = extractCardData(card);
+        if (d) toCollectCards.push(d);
+      });
+
+      if (toCollectCards.length === 0) {
+        alert(`本页共 ${allCards.length} 件商品，全部已在跟品库中，已全部自动跳过！无需重复采集。`);
+        return;
+      }
+
+      const btn = document.getElementById("makro-collect-all-page-btn");
+      if (skippedCount > 0) {
+        const msgEl = document.getElementById("makro-bar-msg");
+        if (msgEl) {
+          msgEl.style.display = "block";
+          msgEl.style.color = "#fbbf24";
+          msgEl.innerHTML = `⚡ 本页共 ${allCards.length} 件，已自动跳过 ${skippedCount} 件已在库商品，正在导入剩余 ${toCollectCards.length} 件新商品...`;
+        }
+      }
+      runBatchCollect(toCollectCards, btn);
     });
 
     function runBatchCollect(itemsList, actionBtn) {
@@ -666,35 +765,50 @@
       const originalText = actionBtn.innerHTML;
       actionBtn.innerHTML = `<span>⏳</span> 正在入库 (${itemsList.length} 件)...`;
       const msgEl = document.getElementById("makro-bar-msg");
-      msgEl.style.display = "none";
+      if (msgEl) msgEl.style.display = "none";
 
-      chrome.runtime.sendMessage({
-        action: "COLLECT_MAKRO_PIGGYBACK_BATCH",
-        rich_items: itemsList
-      }, (res) => {
-        actionBtn.disabled = false;
-        actionBtn.innerHTML = originalText;
-        msgEl.style.display = "block";
+      chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+        const storeId = sRes?.makro_target_store_id || null;
+        chrome.runtime.sendMessage({
+          action: "COLLECT_MAKRO_PIGGYBACK_BATCH",
+          rich_items: itemsList,
+          store_id: storeId
+        }, (res) => {
+          actionBtn.disabled = false;
+          actionBtn.innerHTML = originalText;
+          if (msgEl) msgEl.style.display = "block";
 
-        if (res && res.success) {
-          msgEl.style.color = "#34d399";
-          msgEl.innerHTML = `✅ 成功入库 ${res.data?.success_count || itemsList.length} 件商品！`;
-          // 将已采集卡片按钮置为已入库
-          itemsList.forEach(it => {
-            const card = document.querySelector(`div[data-id="${it.fsn}"]`);
-            if (card) {
-              const b = card.querySelector(".makro-search-quick-btn");
-              if (b) {
-                b.style.background = "#059669";
-                b.innerText = "✅ 已入库";
+          if (res && res.success) {
+            msgEl.style.color = "#34d399";
+            const newAdded = res.data?.success_count || itemsList.length;
+            const skipped = res.data?.skipped_existing_count || 0;
+            msgEl.innerHTML = skipped > 0 
+              ? `✅ 成功入库 ${newAdded} 件，跳过已在库 ${skipped} 件商品！`
+              : `✅ 成功入库 ${newAdded} 件商品！`;
+            // 将已采集卡片置为已入库
+            itemsList.forEach(it => {
+              const card = document.querySelector(`div[data-id="${it.fsn}"]`);
+              if (card) {
+                card.dataset.checkedExistence = "exists";
+                const b = card.querySelector(".makro-search-quick-btn");
+                if (b) {
+                  b.style.background = "#059669";
+                  b.innerText = "✅ 已入库";
+                }
+                const cb = card.querySelector(".makro-search-cb");
+                if (cb) {
+                  cb.checked = false;
+                  cb.style.opacity = "0.5";
+                }
               }
-            }
-          });
-          setTimeout(() => { msgEl.style.display = "none"; }, 5000);
-        } else {
-          msgEl.style.color = "#f87171";
-          msgEl.innerHTML = "❌ 采集失败: " + ((res && res.error) || "未知错误");
-        }
+            });
+            updateToolbarCount();
+            setTimeout(() => { if (msgEl) msgEl.style.display = "none"; }, 5000);
+          } else {
+            msgEl.style.color = "#f87171";
+            msgEl.innerHTML = "❌ 采集失败: " + ((res && res.error) || "未知错误");
+          }
+        });
       });
     }
 

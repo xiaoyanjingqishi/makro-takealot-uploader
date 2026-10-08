@@ -113,7 +113,15 @@ class TaskManager:
                 return True
             return False
 
-    def finish_task(self, task_id: str, status: str = "SUCCESS", message: str = ""):
+    def finish_task(
+        self,
+        task_id: str,
+        status: str = "SUCCESS",
+        message: str = "",
+        success_count: Optional[int] = None,
+        fail_count: Optional[int] = None,
+        **kwargs
+    ):
         """
         结束任务并记录系统操作日志
         """
@@ -131,6 +139,10 @@ class TaskManager:
             t["finished_at"] = now_str
             t["updated_at"] = now_str
             t["progress"] = 100
+            if success_count is not None:
+                t["success_count"] = success_count
+            if fail_count is not None:
+                t["fail_count"] = fail_count
             if not message:
                 message = f"执行完成: 成功 {t['success_count']} 项, 失败 {t['fail_count']} 项"
             t["message"] = message

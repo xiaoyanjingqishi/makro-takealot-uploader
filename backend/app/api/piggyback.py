@@ -180,8 +180,18 @@ def collect_single_piggyback(
         MakroPiggybackItem.makro_product_id == fsn
     ).first()
 
+    # 如果当前店铺未找到，但未指定明确的 store_id 时，检查该 FSN 是否已在其他任意店铺中存在 (防止未传 store_id 导致在默认店产生幽灵重复)
+    if not existing and req.store_id is None:
+        any_existing = db.query(MakroPiggybackItem).filter(
+            MakroPiggybackItem.makro_product_id == fsn
+        ).first()
+        if any_existing:
+            existing = any_existing
+
+    is_already_exists = False
     if existing:
-        # 更新参数
+        is_already_exists = True
+        # 更新参数（绝不修改 seller_sku，避免引发 Makro Listing SKU 冲突）
         existing.item_id = item_id or existing.item_id
         existing.makro_url = data.get("makro_url", existing.makro_url)
         existing.title = data.get("title", existing.title)
@@ -193,10 +203,12 @@ def collect_single_piggyback(
         existing.original_mrp = data.get("original_mrp", existing.original_mrp)
         existing.original_seller = data.get("original_seller", existing.original_seller)
         existing.seller_count = data.get("seller_count", existing.seller_count or 1)
-        existing.target_price = target_p
-        existing.target_mrp = target_m
-        if not existing.min_price_floor or existing.min_price_floor <= 0:
-            existing.min_price_floor = floor_val
+        # 若商品已在售/已挂靠，保持既有在售目标价格，不破坏调价系统
+        if existing.status not in ["ACTIVE", "PUBLISHED"]:
+            existing.target_price = target_p
+            existing.target_mrp = target_m
+            if not existing.min_price_floor or existing.min_price_floor <= 0:
+                existing.min_price_floor = floor_val
         existing.variant_attributes = req.variant_attributes or existing.variant_attributes
         existing.variant_name = req.variant_name or existing.variant_name
         if req.auto_reprice is not None:
@@ -274,9 +286,11 @@ def collect_single_piggyback(
         db=db
     )
 
+    msg = f"该商品 (FSN: {item.makro_product_id}) 已在跟品库中，已更新前台最新情报，无需重复入库" if is_already_exists else f"成功采集商品「{item.title[:30]}...」入库"
     return {
         "success": True,
-        "message": f"成功采集商品「{item.title[:30]}...」入库",
+        "already_exists": is_already_exists,
+        "message": msg,
         "item": _format_piggyback_item(item)
     }
 
@@ -289,6 +303,7 @@ def batch_collect_piggyback(
 ):
     store = _get_target_store(db, req.store_id)
     success_count = 0
+    skipped_existing_count = 0
     failed_items = []
 
     # 1. 优先处理来自插件扩展的结构化数据 (搜索页批量采集 / 多变体采集，后端直接发起官方与前台权威抓取)
@@ -345,7 +360,16 @@ def batch_collect_piggyback(
                     MakroPiggybackItem.makro_product_id == target_fsn
                 ).first()
 
+                # 未指定 store_id 时，检查全库是否已存在此 FSN
+                if not existing and req.store_id is None:
+                    any_existing = db.query(MakroPiggybackItem).filter(
+                        MakroPiggybackItem.makro_product_id == target_fsn
+                    ).first()
+                    if any_existing:
+                        existing = any_existing
+
                 if existing:
+                    # 已在库商品：仅更新前台情报，绝不新增重复记录或生成冲突 SKU
                     existing.item_id = target_item_id or existing.item_id
                     existing.makro_url = raw_url
                     existing.title = title or existing.title
@@ -355,14 +379,16 @@ def batch_collect_piggyback(
                     existing.original_mrp = real_mrp or existing.original_mrp
                     existing.original_seller = seller_name or existing.original_seller
                     existing.seller_count = seller_count or existing.seller_count
-                    existing.target_price = target_p
-                    existing.target_mrp = target_m
-                    if not existing.min_price_floor or existing.min_price_floor <= 0:
-                        existing.min_price_floor = floor_val
+                    if existing.status not in ["ACTIVE", "PUBLISHED"]:
+                        existing.target_price = target_p
+                        existing.target_mrp = target_m
+                        if not existing.min_price_floor or existing.min_price_floor <= 0:
+                            existing.min_price_floor = floor_val
                     if variant_name:
                         existing.variant_name = variant_name
                     if variant_attributes:
                         existing.variant_attributes = variant_attributes
+                    skipped_existing_count += 1
                 else:
                     sku = _generate_piggyback_sku()
                     if variant_name and not title_zh.endswith(f"({variant_name})"):
@@ -398,7 +424,7 @@ def batch_collect_piggyback(
                         status="PENDING"
                     )
                     db.add(new_item)
-                success_count += 1
+                    success_count += 1
             except Exception as re_err:
                 failed_items.append({"item": str(rit.get("fsn") or rit.get("title")), "error": str(re_err)})
 
@@ -438,7 +464,16 @@ def batch_collect_piggyback(
                     MakroPiggybackItem.makro_product_id == fsn
                 ).first()
 
+                # 未指定 store_id 时，检查全库是否已存在此 FSN
+                if not existing and req.store_id is None:
+                    any_existing = db.query(MakroPiggybackItem).filter(
+                        MakroPiggybackItem.makro_product_id == fsn
+                    ).first()
+                    if any_existing:
+                        existing = any_existing
+
                 if existing:
+                    # 已在库商品：仅更新前台情报，绝不新增重复记录或生成冲突 SKU
                     existing.item_id = item_id or existing.item_id
                     existing.makro_url = data.get("makro_url", existing.makro_url)
                     existing.image_url = data.get("image_url") or existing.image_url
@@ -446,10 +481,12 @@ def batch_collect_piggyback(
                     existing.original_mrp = data.get("original_mrp", existing.original_mrp)
                     existing.original_seller = data.get("original_seller") or existing.original_seller
                     existing.seller_count = data.get("seller_count") or existing.seller_count or 1
-                    existing.target_price = target_p
-                    existing.target_mrp = target_m
-                    if not existing.min_price_floor or existing.min_price_floor <= 0:
-                        existing.min_price_floor = floor_val
+                    if existing.status not in ["ACTIVE", "PUBLISHED"]:
+                        existing.target_price = target_p
+                        existing.target_mrp = target_m
+                        if not existing.min_price_floor or existing.min_price_floor <= 0:
+                            existing.min_price_floor = floor_val
+                    skipped_existing_count += 1
                 else:
                     sku = _generate_piggyback_sku()
                     new_item = MakroPiggybackItem(
@@ -482,17 +519,18 @@ def batch_collect_piggyback(
                         status="PENDING"
                     )
                     db.add(new_item)
-                success_count += 1
+                    success_count += 1
             except Exception as e:
                 failed_items.append({"item": clean_text, "error": str(e)})
 
     db.commit()
     total_requested = (len(req.items) if req.items else 0) + (len(req.rich_items) if req.rich_items else 0)
+    audit_msg = f"批量跟品采集: 成功入库 {success_count} 件，自动跳过已在库 {skipped_existing_count} 件" + (f"，失败 {len(failed_items)} 件" if failed_items else "")
     record_audit_log(
         task_type="PIGGYBACK_COLLECT",
-        status="SUCCESS" if success_count > 0 else "FAILED",
-        message=f"批量跟品采集: 成功 {success_count}/{total_requested} 件商品入库",
-        detail_logs={"total": total_requested, "success": success_count, "failed": len(failed_items)},
+        status="SUCCESS" if (success_count > 0 or skipped_existing_count > 0) else "FAILED",
+        message=audit_msg,
+        detail_logs={"total": total_requested, "new_added": success_count, "skipped_existing": skipped_existing_count, "failed": len(failed_items)},
         user_id=current_user.id,
         operator_name=current_user.nickname or current_user.username,
         db=db
@@ -501,8 +539,10 @@ def batch_collect_piggyback(
         "success": True,
         "total_requested": total_requested,
         "success_count": success_count,
+        "skipped_existing_count": skipped_existing_count,
         "failed_count": len(failed_items),
-        "failed_items": failed_items
+        "failed_items": failed_items,
+        "message": audit_msg
     }
 
 
@@ -621,6 +661,8 @@ def check_piggyback_existence(
     for it in matched:
         res[it.makro_product_id] = {
             "id": it.id,
+            "store_id": it.store_id,
+            "store_name": it.store.name if it.store else f"店铺#{it.store_id}",
             "status": it.status,
             "seller_sku": it.seller_sku,
             "target_price": it.target_price,
