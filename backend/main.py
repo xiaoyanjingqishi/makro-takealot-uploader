@@ -314,6 +314,7 @@ except Exception as _reprice_err:
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
+    version=settings.SYSTEM_VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc"
@@ -334,6 +335,7 @@ app.add_middleware(
 
 from fastapi.responses import HTMLResponse, Response, FileResponse
 import os
+import json
 from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "app" / "templates" / "index.html"
@@ -350,11 +352,23 @@ def favicon():
 @app.get("/download/extension.zip", include_in_schema=False)
 def download_extension():
     zip_path = Path(__file__).resolve().parent / "app" / "static" / "makro-extension.zip"
+    ext_dir = Path(__file__).resolve().parent.parent / "extension"
+    if not ext_dir.exists():
+        ext_dir = Path(__file__).resolve().parent / "extension"
+
+    ext_ver = settings.EXTENSION_VERSION
+    manifest_path = ext_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as _mf:
+                _m_data = json.load(_mf)
+                if _m_data.get("version"):
+                    ext_ver = str(_m_data["version"]).strip()
+        except Exception:
+            pass
+
     if not zip_path.exists():
         import zipfile
-        ext_dir = Path(__file__).resolve().parent.parent / "extension"
-        if not ext_dir.exists():
-            ext_dir = Path(__file__).resolve().parent / "extension"
         if ext_dir.exists():
             zip_path.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -367,10 +381,10 @@ def download_extension():
         return Response(content="Extension package not found", status_code=404)
     return FileResponse(
         path=str(zip_path),
-        filename="makro-extension-v1.0.0.zip",
+        filename=f"makro-extension-v{ext_ver}.zip",
         media_type="application/zip",
         headers={
-            "Content-Disposition": "attachment; filename=makro-extension-v1.0.0.zip",
+            "Content-Disposition": f"attachment; filename=makro-extension-v{ext_ver}.zip",
             "Cache-Control": "no-cache, no-store, must-revalidate"
         }
     )

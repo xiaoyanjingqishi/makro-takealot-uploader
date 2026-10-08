@@ -1,4 +1,12 @@
 document.addEventListener("DOMContentLoaded", () => {
+  // 动态自动同步展示 Manifest 插件真实版本号
+  try {
+    const verEl = document.querySelector(".ver");
+    if (verEl && chrome.runtime?.getManifest) {
+      verEl.innerText = `v${chrome.runtime.getManifest().version}`;
+    }
+  } catch (e) {}
+
   const backendStatus = document.getElementById("backend-status");
   const pageInfo = document.getElementById("page-info");
   const actionBtn = document.getElementById("action-btn");

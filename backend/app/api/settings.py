@@ -153,7 +153,16 @@ def get_network_config():
         **info,
         "lan_url": lan_url,
         "lan_direct_url": lan_direct_url,
-        "localhost_url": localhost_url
+        "localhost_url": localhost_url,
+        "system_version": settings.SYSTEM_VERSION,
+        "extension_version": settings.EXTENSION_VERSION
+    }
+
+@router.get("/version", summary="获取当前系统版本与插件版本号")
+def get_system_version():
+    return {
+        "system_version": settings.SYSTEM_VERSION,
+        "extension_version": settings.EXTENSION_VERSION
     }
 
 @router.post("/test-jev", summary="测试 Jev (TypeSafe AI) 决策模型连通性与响应时延")
