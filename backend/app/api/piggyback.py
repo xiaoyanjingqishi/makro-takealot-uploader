@@ -2,10 +2,11 @@ import uuid
 import time
 import json
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..database import get_db
 from ..models.makro_piggyback import MakroPiggybackItem
@@ -307,92 +308,170 @@ def batch_collect_piggyback(
     skipped_existing_count = 0
     failed_items = []
 
-    # 1. 优先处理来自插件扩展的结构化数据 (搜索页批量采集 / 多变体采集，后端直接发起官方与前台权威抓取)
-    if req.rich_items and len(req.rich_items) > 0:
+    # 1. 规整待处理商品，提取目标标识并进行批内去重
+    targets = []
+    seen_target_keys = set()
+    all_fsns = set()
+
+    # 1.1 处理富数据 (插件整页 / 变体采集)
+    if req.rich_items:
         for rit in req.rich_items:
+            fsn = (rit.get("fsn") or rit.get("makro_product_id") or rit.get("pid") or "").strip().upper()
+            raw_url = rit.get("url") or ""
+            if not fsn and raw_url:
+                ext_fsn, ext_itm = MakroScraperService.extract_identifiers(raw_url)
+                fsn = (ext_fsn or "").upper()
+                if not rit.get("item_id") and ext_itm:
+                    rit["item_id"] = ext_itm
+            
+            dedup_key = fsn or raw_url
+            if not dedup_key or dedup_key in seen_target_keys:
+                continue
+            seen_target_keys.add(dedup_key)
+            if fsn:
+                all_fsns.add(fsn)
+            targets.append({
+                "type": "rich",
+                "fsn": fsn,
+                "item_id": rit.get("item_id"),
+                "raw": raw_url or fsn,
+                "payload": rit
+            })
+
+    # 1.2 处理纯字符串链接或 FSN 列表
+    if req.items:
+        for raw in req.items:
+            clean_text = raw.strip()
+            if not clean_text:
+                continue
+            ext_fsn, ext_itm = MakroScraperService.extract_identifiers(clean_text)
+            fsn = (ext_fsn or "").upper()
+            dedup_key = fsn or clean_text
+            if dedup_key in seen_target_keys:
+                continue
+            seen_target_keys.add(dedup_key)
+            if fsn:
+                all_fsns.add(fsn)
+            targets.append({
+                "type": "raw",
+                "fsn": fsn,
+                "item_id": ext_itm,
+                "raw": clean_text,
+                "payload": None
+            })
+
+    # 2. 前置内存级快速排重与黑名单拦截 (单次 SQL 批量查询，耗时 1ms)
+    abandoned_map = {}
+    existing_map = {}
+
+    if all_fsns:
+        # 2.1 弃用黑名单批量检测
+        abandoned_records = db.query(MakroPiggybackItem.makro_product_id, MakroPiggybackItem.abandoned_reason).filter(
+            MakroPiggybackItem.makro_product_id.in_(list(all_fsns)),
+            MakroPiggybackItem.is_abandoned == True
+        ).all()
+        abandoned_map = {rec[0]: (rec[1] or "侵权违规拦截") for rec in abandoned_records}
+
+        # 2.2 已在库商品批量检测
+        existing_query = db.query(MakroPiggybackItem).filter(
+            MakroPiggybackItem.makro_product_id.in_(list(all_fsns))
+        )
+        if store and req.store_id is not None:
+            existing_records = existing_query.filter(MakroPiggybackItem.store_id == store.id).all()
+        else:
+            existing_records = existing_query.all()
+        existing_map = {item.makro_product_id: item for item in existing_records}
+
+    # 3. 本地分流：已在库或黑名单商品直接处理，完全免除外部网络请求
+    to_fetch_targets = []
+    for t in targets:
+        target_fsn = t.get("fsn")
+        # 黑名单拦截
+        if target_fsn and target_fsn in abandoned_map:
+            failed_items.append({"item": target_fsn, "error": f"已在弃用黑名单中 ({abandoned_map[target_fsn]})，禁止重复采集"})
+            continue
+        
+        # 已在库商品快速跳过 / 增量更新变体信息 (0 外部网络开销)
+        if target_fsn and target_fsn in existing_map:
+            existing = existing_map[target_fsn]
+            if t["type"] == "rich":
+                rit = t["payload"]
+                if rit.get("variant_name"):
+                    existing.variant_name = rit.get("variant_name")
+                if rit.get("variant_attributes"):
+                    va = rit.get("variant_attributes")
+                    existing.variant_attributes = json.dumps(va, ensure_ascii=False) if isinstance(va, (dict, list)) else str(va)
+                if rit.get("item_id") and not existing.item_id:
+                    existing.item_id = rit.get("item_id")
+            skipped_existing_count += 1
+            continue
+
+        to_fetch_targets.append(t)
+
+    # 4. 高并发线程池拉取新品数据 (8 工作线程并行多路复用)
+    if to_fetch_targets:
+        def _fetch_target_worker(tgt: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[str]]:
             try:
-                fsn = (rit.get("fsn") or rit.get("makro_product_id") or rit.get("pid") or "").strip().upper()
-                if not fsn:
-                    continue
-                item_id = rit.get("item_id")
-                
-                # 后端直接调用 MakroScraperService 获取权威价格、MRP、标题与主图
-                data = MakroScraperService.resolve_piggyback_product(fsn, store, client_data={"item_id": item_id})
+                raw_input = tgt["raw"]
+                client_info = tgt["payload"] if tgt["type"] == "rich" else ({"item_id": tgt["item_id"]} if tgt["item_id"] else None)
+                data = MakroScraperService.resolve_piggyback_product(raw_input, store, client_data=client_info)
+                return (tgt, data, None)
+            except Exception as ex:
+                return (tgt, None, str(ex))
 
-                target_fsn = data["makro_product_id"]
-                target_item_id = item_id or data.get("item_id")
-
-                # 弃用黑名单拦截 (防止侵权商品或废弃品被批量重复采集)
-                abandoned = db.query(MakroPiggybackItem).filter(
-                    MakroPiggybackItem.makro_product_id == target_fsn,
-                    MakroPiggybackItem.is_abandoned == True
-                ).first()
-                if abandoned:
-                    failed_items.append({"item": target_fsn, "error": f"已在弃用黑名单中 ({abandoned.abandoned_reason or '侵权违规拦截'})，禁止重复采集"})
+        max_workers = min(8, len(to_fetch_targets))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {executor.submit(_fetch_target_worker, tgt): tgt for tgt in to_fetch_targets}
+            for fut in as_completed(future_map):
+                tgt, data, err = fut.result()
+                if err or not data:
+                    failed_items.append({"item": tgt.get("fsn") or tgt.get("raw"), "error": err or "抓取商品详情失败"})
                     continue
 
-                raw_url = data.get("makro_url") or MakroScraperService.format_canonical_makro_url(target_fsn, target_item_id)
-                title = data.get("title") or fsn
-                title_zh = data.get("title_zh") or title
-                image_url = data.get("image_url") or ""
-                seller_name = data.get("original_seller") or ""
-                seller_count = int(data.get("seller_count") or 1)
-                real_price = float(data.get("original_price") or 0.0)
-                real_mrp = float(data.get("original_mrp") or (real_price * 1.5 if real_price > 0 else 0.0))
+                try:
+                    res_fsn = data.get("makro_product_id") or tgt.get("fsn")
+                    if not res_fsn:
+                        failed_items.append({"item": tgt.get("raw"), "error": "未能提取商品 FSN 编码"})
+                        continue
 
-                variant_name = rit.get("variant_name") or ""
-                variant_attributes = rit.get("variant_attributes")
-                if isinstance(variant_attributes, (dict, list)):
-                    variant_attributes = json.dumps(variant_attributes, ensure_ascii=False)
+                    # 再次校验是否在抓取结果中被黑名单拦截或重复
+                    if res_fsn in abandoned_map:
+                        failed_items.append({"item": res_fsn, "error": f"已在弃用黑名单中 ({abandoned_map[res_fsn]})，禁止重复采集"})
+                        continue
 
-                floor_val = float(req.min_price_floor or 0.0)
-                if floor_val <= 0:
-                    floor_val = MakroPiggybackService.calculate_default_floor(real_price, db)
+                    if res_fsn in existing_map:
+                        skipped_existing_count += 1
+                        continue
 
-                target_p, target_m = MakroPiggybackService.calculate_price(
-                    original_price=real_price,
-                    strategy=req.price_strategy or "MINUS_15",
-                    min_floor=floor_val,
-                    original_mrp=real_mrp
-                )
+                    target_item_id = tgt.get("item_id") or data.get("item_id")
+                    raw_url = data.get("makro_url") or MakroScraperService.format_canonical_makro_url(res_fsn, target_item_id)
+                    title = data.get("title") or res_fsn
+                    title_zh = data.get("title_zh") or title
+                    image_url = data.get("image_url") or ""
+                    seller_name = data.get("original_seller") or ""
+                    seller_count = int(data.get("seller_count") or 1)
+                    real_price = float(data.get("original_price") or 0.0)
+                    real_mrp = float(data.get("original_mrp") or (real_price * 1.5 if real_price > 0 else 0.0))
 
-                existing = db.query(MakroPiggybackItem).filter(
-                    MakroPiggybackItem.store_id == store.id,
-                    MakroPiggybackItem.makro_product_id == target_fsn
-                ).first()
+                    variant_name = ""
+                    variant_attributes = None
+                    if tgt["type"] == "rich" and tgt["payload"]:
+                        variant_name = tgt["payload"].get("variant_name") or ""
+                        variant_attributes = tgt["payload"].get("variant_attributes")
+                        if isinstance(variant_attributes, (dict, list)):
+                            variant_attributes = json.dumps(variant_attributes, ensure_ascii=False)
 
-                # 未指定 store_id 时，检查全库是否已存在此 FSN
-                if not existing and req.store_id is None:
-                    any_existing = db.query(MakroPiggybackItem).filter(
-                        MakroPiggybackItem.makro_product_id == target_fsn
-                    ).first()
-                    if any_existing:
-                        existing = any_existing
+                    floor_val = float(req.min_price_floor or 0.0)
+                    if floor_val <= 0:
+                        floor_val = MakroPiggybackService.calculate_default_floor(real_price, db)
 
-                if existing:
-                    # 已在库商品：仅更新前台情报，绝不新增重复记录或生成冲突 SKU
-                    existing.item_id = target_item_id or existing.item_id
-                    existing.makro_url = raw_url
-                    existing.title = title or existing.title
-                    existing.title_zh = title_zh or existing.title_zh
-                    existing.image_url = image_url or existing.image_url
-                    # 保护外部竞对基准：若当前商品已赢取黄金购物车，不被前台爬到的本店自身信息覆盖
-                    if existing.buybox_status != "WINNING":
-                        existing.original_price = real_price or existing.original_price
-                        existing.original_seller = seller_name or existing.original_seller
-                    existing.original_mrp = real_mrp or existing.original_mrp
-                    existing.seller_count = seller_count or existing.seller_count
-                    if existing.status not in ["ACTIVE", "PUBLISHED"]:
-                        existing.target_price = target_p
-                        existing.target_mrp = target_m
-                        if not existing.min_price_floor or existing.min_price_floor <= 0:
-                            existing.min_price_floor = floor_val
-                    if variant_name:
-                        existing.variant_name = variant_name
-                    if variant_attributes:
-                        existing.variant_attributes = variant_attributes
-                    skipped_existing_count += 1
-                else:
+                    target_p, target_m = MakroPiggybackService.calculate_price(
+                        original_price=real_price,
+                        strategy=req.price_strategy or "MINUS_15",
+                        min_floor=floor_val,
+                        original_mrp=real_mrp
+                    )
+
                     sku = _generate_piggyback_sku()
                     if variant_name and not title_zh.endswith(f"({variant_name})"):
                         title_zh = f"{title_zh} ({variant_name})"
@@ -400,7 +479,7 @@ def batch_collect_piggyback(
                     new_item = MakroPiggybackItem(
                         store_id=store.id,
                         user_id=current_user.id if current_user else None,
-                        makro_product_id=target_fsn,
+                        makro_product_id=res_fsn,
                         item_id=target_item_id,
                         makro_url=raw_url,
                         title=title,
@@ -408,6 +487,8 @@ def batch_collect_piggyback(
                         brand=data.get("brand") or getattr(store, "default_brand", "Generic") or "Generic",
                         vertical=data.get("vertical") or "general",
                         image_url=image_url,
+                        model_number=data.get("model_number"),
+                        barcode=data.get("barcode"),
                         original_price=real_price,
                         original_mrp=real_mrp,
                         original_seller=seller_name,
@@ -427,106 +508,10 @@ def batch_collect_piggyback(
                         status="PENDING"
                     )
                     db.add(new_item)
+                    existing_map[res_fsn] = new_item  # 批内排重保护
                     success_count += 1
-            except Exception as re_err:
-                failed_items.append({"item": str(rit.get("fsn") or rit.get("title")), "error": str(re_err)})
-
-    # 2. 处理纯字符串链接或 FSN 列表
-    if req.items and len(req.items) > 0:
-        for raw in req.items:
-            clean_text = raw.strip()
-            if not clean_text:
-                continue
-            try:
-                data = MakroScraperService.resolve_piggyback_product(clean_text, store)
-                fsn = data["makro_product_id"]
-                item_id = data.get("item_id")
-
-                # 弃用黑名单拦截
-                abandoned = db.query(MakroPiggybackItem).filter(
-                    MakroPiggybackItem.makro_product_id == fsn,
-                    MakroPiggybackItem.is_abandoned == True
-                ).first()
-                if abandoned:
-                    failed_items.append({"item": fsn, "error": f"已在弃用黑名单中 ({abandoned.abandoned_reason or '侵权违规拦截'})，禁止重复采集"})
-                    continue
-
-                floor_val = float(req.min_price_floor or 0.0)
-                if floor_val <= 0:
-                    floor_val = MakroPiggybackService.calculate_default_floor(data.get("original_price", 0.0), db)
-
-                target_p, target_m = MakroPiggybackService.calculate_price(
-                    original_price=data.get("original_price", 0.0),
-                    strategy=req.price_strategy or "MINUS_15",
-                    min_floor=floor_val,
-                    original_mrp=data.get("original_mrp", 0.0)
-                )
-
-                existing = db.query(MakroPiggybackItem).filter(
-                    MakroPiggybackItem.store_id == store.id,
-                    MakroPiggybackItem.makro_product_id == fsn
-                ).first()
-
-                # 未指定 store_id 时，检查全库是否已存在此 FSN
-                if not existing and req.store_id is None:
-                    any_existing = db.query(MakroPiggybackItem).filter(
-                        MakroPiggybackItem.makro_product_id == fsn
-                    ).first()
-                    if any_existing:
-                        existing = any_existing
-
-                if existing:
-                    # 已在库商品：仅更新前台情报，绝不新增重复记录或生成冲突 SKU
-                    existing.item_id = item_id or existing.item_id
-                    existing.makro_url = data.get("makro_url", existing.makro_url)
-                    existing.image_url = data.get("image_url") or existing.image_url
-                    # 保护外部竞对基准：若当前商品已赢取黄金购物车，不被前台爬到的本店自身信息覆盖
-                    if existing.buybox_status != "WINNING":
-                        existing.original_price = data.get("original_price", existing.original_price)
-                        existing.original_seller = data.get("original_seller") or existing.original_seller
-                    existing.original_mrp = data.get("original_mrp", existing.original_mrp)
-                    existing.seller_count = data.get("seller_count") or existing.seller_count or 1
-                    if existing.status not in ["ACTIVE", "PUBLISHED"]:
-                        existing.target_price = target_p
-                        existing.target_mrp = target_m
-                        if not existing.min_price_floor or existing.min_price_floor <= 0:
-                            existing.min_price_floor = floor_val
-                    skipped_existing_count += 1
-                else:
-                    sku = _generate_piggyback_sku()
-                    new_item = MakroPiggybackItem(
-                        store_id=store.id,
-                        user_id=current_user.id if current_user else None,
-                        makro_product_id=fsn,
-                        item_id=item_id,
-                        makro_url=data.get("makro_url"),
-                        title=data.get("title"),
-                        title_zh=data.get("title_zh"),
-                        brand=data.get("brand"),
-                        vertical=data.get("vertical"),
-                        image_url=data.get("image_url"),
-                        model_number=data.get("model_number"),
-                        barcode=data.get("barcode"),
-                        original_price=data.get("original_price", 0.0),
-                        original_mrp=data.get("original_mrp", 0.0),
-                        original_seller=data.get("original_seller"),
-                        seller_count=data.get("seller_count", 1),
-                        seller_sku=sku,
-                        target_price=target_p,
-                        target_mrp=target_m,
-                        min_price_floor=floor_val,
-                        price_strategy=req.price_strategy or "MINUS_15",
-                        auto_reprice=True,
-                        inventory=500,
-                        lead_time_days=14,
-                        is_abandoned=False,
-                        compliance_status="PENDING_CHECK",
-                        status="PENDING"
-                    )
-                    db.add(new_item)
-                    success_count += 1
-            except Exception as e:
-                failed_items.append({"item": clean_text, "error": str(e)})
+                except Exception as b_err:
+                    failed_items.append({"item": tgt.get("fsn") or tgt.get("raw"), "error": str(b_err)})
 
     db.commit()
     total_requested = (len(req.items) if req.items else 0) + (len(req.rich_items) if req.rich_items else 0)
@@ -536,8 +521,8 @@ def batch_collect_piggyback(
         status="SUCCESS" if (success_count > 0 or skipped_existing_count > 0) else "FAILED",
         message=audit_msg,
         detail_logs={"total": total_requested, "new_added": success_count, "skipped_existing": skipped_existing_count, "failed": len(failed_items)},
-        user_id=current_user.id,
-        operator_name=current_user.nickname or current_user.username,
+        user_id=current_user.id if current_user else None,
+        operator_name=((current_user.nickname or current_user.username) if current_user else "系统"),
         db=db
     )
     return {

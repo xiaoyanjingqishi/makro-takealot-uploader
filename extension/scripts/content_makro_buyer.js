@@ -294,6 +294,7 @@
           }
         });
 
+        const startTime = Date.now();
         chrome.runtime.sendMessage({
           action: "COLLECT_MAKRO_PIGGYBACK_BATCH",
           rich_items: richItems
@@ -301,19 +302,24 @@
           collectVarsBtn.disabled = false;
           collectVarsBtn.innerHTML = "<span>⚡</span> 批量跟品选中变体";
           const msg = document.getElementById("makro-piggyback-msg");
+          const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
           if (res && res.success) {
             msg.style.display = "block";
             msg.style.background = "rgba(16, 185, 129, 0.2)";
             msg.style.color = "#34d399";
             msg.style.border = "1px solid #059669";
-            msg.innerHTML = `✅ 成功入库 ${res.data?.success_count || richItems.length} 个规格变体！`;
+            const newAdded = res.data?.success_count || 0;
+            const skipped = res.data?.skipped_existing_count || 0;
+            let text = `⚡ 并发入库完成 (耗时 ${elapsedSec}s)：成功 ${newAdded} 件`;
+            if (skipped > 0) text += `，跳过已在库 ${skipped} 件`;
+            msg.innerHTML = `✅ ${text}！`;
             setTimeout(() => { msg.style.display = "none"; }, 4000);
           } else {
             msg.style.display = "block";
             msg.style.background = "rgba(239, 68, 68, 0.2)";
             msg.style.color = "#f87171";
             msg.style.border = "1px solid #dc2626";
-            msg.innerHTML = "❌ 批量采集失败: " + ((res && res.error) || "未知错误");
+            msg.innerHTML = `❌ 批量采集失败 (耗时 ${elapsedSec}s): ` + ((res && res.error) || "未知错误");
           }
         });
       });
@@ -427,7 +433,7 @@
   // 模块二：搜索列表页卡片注入与批量工具栏 (Search Page Collector)
   // =============================================================
 
-  // 从搜索卡片 DOM 解析单品信息 (仅提取 FSN 与 Item ID 等标识，具体售价与详情由后端直接访问 Makro 权威抓取)
+  // 从搜索卡片 DOM 解析单品信息 (提取 FSN、Item ID、并解析卡片已渲染的标题、主图与前台价格)
   function extractCardData(cardEl) {
     const fsn = (cardEl.getAttribute("data-id") || "").trim().toUpperCase();
     if (!fsn) return null;
@@ -443,10 +449,40 @@
       }
     }
 
+    // 提取卡片已渲染的标题
+    let title = "";
+    if (titleLink) {
+      title = (titleLink.getAttribute("title") || titleLink.innerText || "").trim();
+    }
+
+    // 提取卡片主图
+    const imgEl = cardEl.querySelector("img._396cs4") || cardEl.querySelector("img");
+    const imageUrl = imgEl ? (imgEl.src || imgEl.getAttribute("data-src") || "") : "";
+
+    // 提取卡片前台价格
+    const priceEl = cardEl.querySelector("div._30jeq3") || cardEl.querySelector("div[class*='_30jeq3']");
+    let price = 0;
+    if (priceEl) {
+      const pMatch = priceEl.innerText.replace(/,/g, "").match(/(\d+(?:\.\d+)?)/);
+      if (pMatch) price = parseFloat(pMatch[1]);
+    }
+
+    // 提取划线原价
+    const mrpEl = cardEl.querySelector("div._27UcVY") || cardEl.querySelector("div[class*='_27UcVY']");
+    let mrp = 0;
+    if (mrpEl) {
+      const mMatch = mrpEl.innerText.replace(/,/g, "").match(/(\d+(?:\.\d+)?)/);
+      if (mMatch) mrp = parseFloat(mMatch[1]);
+    }
+
     return {
       fsn,
       item_id: itemId,
-      url: href || `https://www.makro.co.za/-/p/${itemId || fsn}?pid=${fsn}`
+      url: href || `https://www.makro.co.za/-/p/${itemId || fsn}?pid=${fsn}`,
+      title: title || undefined,
+      image_url: imageUrl || undefined,
+      price: price > 0 ? price : undefined,
+      mrp: mrp > 0 ? mrp : undefined
     };
   }
 
@@ -763,9 +799,10 @@
     function runBatchCollect(itemsList, actionBtn) {
       actionBtn.disabled = true;
       const originalText = actionBtn.innerHTML;
-      actionBtn.innerHTML = `<span>⏳</span> 正在入库 (${itemsList.length} 件)...`;
+      actionBtn.innerHTML = `<span>⚡</span> 正在极速并发入库 (${itemsList.length} 件)...`;
       const msgEl = document.getElementById("makro-bar-msg");
       if (msgEl) msgEl.style.display = "none";
+      const startTime = Date.now();
 
       chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
         const storeId = sRes?.makro_target_store_id || null;
@@ -778,13 +815,19 @@
           actionBtn.innerHTML = originalText;
           if (msgEl) msgEl.style.display = "block";
 
+          const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+
           if (res && res.success) {
             msgEl.style.color = "#34d399";
-            const newAdded = res.data?.success_count || itemsList.length;
+            const newAdded = res.data?.success_count || 0;
             const skipped = res.data?.skipped_existing_count || 0;
-            msgEl.innerHTML = skipped > 0 
-              ? `✅ 成功入库 ${newAdded} 件，跳过已在库 ${skipped} 件商品！`
-              : `✅ 成功入库 ${newAdded} 件商品！`;
+            const failed = res.data?.failed_count || 0;
+
+            let tipText = `⚡ 并发采集完成 (耗时 ${elapsedSec}s)：成功入库 ${newAdded} 件`;
+            if (skipped > 0) tipText += `，跳过已在库 ${skipped} 件`;
+            if (failed > 0) tipText += `，失败 ${failed} 件`;
+            msgEl.innerHTML = `✅ ${tipText}！`;
+
             // 将已采集卡片置为已入库
             itemsList.forEach(it => {
               const card = document.querySelector(`div[data-id="${it.fsn}"]`);
@@ -803,10 +846,10 @@
               }
             });
             updateToolbarCount();
-            setTimeout(() => { if (msgEl) msgEl.style.display = "none"; }, 5000);
+            setTimeout(() => { if (msgEl) msgEl.style.display = "none"; }, 6000);
           } else {
             msgEl.style.color = "#f87171";
-            msgEl.innerHTML = "❌ 采集失败: " + ((res && res.error) || "未知错误");
+            msgEl.innerHTML = `❌ 采集失败 (耗时 ${elapsedSec}s): ` + ((res && res.error) || "未知错误");
           }
         });
       });

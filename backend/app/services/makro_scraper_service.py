@@ -2,6 +2,7 @@ import re
 import json
 import logging
 import requests
+import threading
 from typing import Optional, Dict, Any, Tuple
 from .translation_service import TranslationService
 
@@ -150,20 +151,26 @@ class MakroScraperService:
             logger.error(f"调用 Makro searchProduct 异常: {e}")
         return None
 
-    _buyer_session: Optional[Any] = None
+    _buyer_local = threading.local()
 
     @classmethod
     def get_buyer_session(cls) -> Any:
-        if cls._buyer_session is None:
+        session = getattr(cls._buyer_local, "session", None)
+        if session is None:
             if HAS_CURL_CFFI:
-                cls._buyer_session = cffi_requests.Session(impersonate="chrome124")
+                session = cffi_requests.Session(impersonate="chrome124")
             else:
                 s = requests.Session()
                 adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
                 s.mount("https://", adapter)
                 s.mount("http://", adapter)
-                cls._buyer_session = s
-        return cls._buyer_session
+                session = s
+            cls._buyer_local.session = session
+        return session
+
+    @classmethod
+    def reset_buyer_session(cls) -> None:
+        cls._buyer_local.session = None
 
     @classmethod
     def scrape_buyer_frontend(cls, url_or_fsn: str) -> Dict[str, Any]:
@@ -241,7 +248,7 @@ class MakroScraperService:
                 if "/blocked" in resp.url or "<title>Are you a human?</title>" in html:
                     logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}")
                     blocked = True
-                    cls._buyer_session = None
+                    cls.reset_buyer_session()
                     # 遭遇 IP 级反爬阻断时即刻止损，禁止在同一 IP 上无谓轮询其他候选链接
                     break
 
@@ -420,7 +427,7 @@ class MakroScraperService:
 
             except Exception as req_err:
                 logger.warning(f"请求 Makro 前台链接 {cur_url} 异常: {req_err}")
-                cls._buyer_session = None
+                cls.reset_buyer_session()
 
         return {
             "price": price,
