@@ -31,6 +31,7 @@ class AutoRepriceService:
         item: MakroPiggybackItem,
         db: Session,
         force: bool = False,
+        allow_inspect_only: bool = False,
         proxy: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -45,8 +46,8 @@ class AutoRepriceService:
             logger.warning(msg)
             return {"status": "FAILED", "reason": msg, "item_id": item.id}
 
-        # 检查是否启用了自动跟价 (force 参数可强制单次触发)
-        if not force and not item.auto_reprice:
+        # 检查是否启用了自动跟价 (force 参数可强制单次触发调价，allow_inspect_only 允许未开启自动跟价时仅做买家前台巡检和 Buybox 归属分析，不主动调价)
+        if not force and not item.auto_reprice and not allow_inspect_only:
             return {"status": "SKIPPED", "reason": "商品未开启自动跟价开关", "item_id": item.id}
 
         # 1. 获取买家前台最新在售与竞争情报 (遇反爬自动秒切代理)
@@ -153,38 +154,47 @@ class AutoRepriceService:
             reason = f"矩阵友军店铺 [{winning_store_name or comp_seller}] 已占位黄金购物车，为避免内部互相压价削减利润，本店铺维持现价 R{old_selling_price}，不内卷跟价"
             new_price = old_selling_price
         else:
-            # 外部竞对占位，根据该商品的跟价公式策略计算抢流出价
-            calc_p = MakroPiggybackService.eval_price_by_strategy(
-                base_price=comp_price,
-                strategy=strategy,
-                min_floor=0.0  # 先算裸价，以精确识别是否击穿保本线
-            )
-
-            # 保本底线防穿保护
-            if min_floor > 0 and calc_p < min_floor:
-                new_price = min_floor
-                action = "REACHED_FLOOR"
-                reason = f"竞对 ({comp_seller}) 报价 R{comp_price} 过低，按公式算价 R{calc_p} 已击穿保本底线 R{min_floor}，触发锁定防护"
-            elif abs(calc_p - old_selling_price) < 0.01:
+            # 外部竞对占位
+            if not item.auto_reprice and not force:
+                action = "INSPECTED"
                 new_price = old_selling_price
-                action = "NO_CHANGE"
-                reason = f"计算跟价 R{calc_p} (策略: {strategy}) 与当前本店售价一致，无需重复调价"
+                reason = f"买家前台巡检更新 (未开启自动跟价): 竞对 ({comp_seller or '无'}) 报价 R{comp_price}, 在售商家: {seller_count}"
             else:
-                new_price = calc_p
-                action = "UNDER_CUT"
-                reason = f"竞对 ({comp_seller}) 报价 R{comp_price}，按公式 [{strategy}] 下调至 R{new_price} 抢占购物车"
+                # 开启自动跟价，根据该商品的跟价公式策略计算抢流出价
+                calc_p = MakroPiggybackService.eval_price_by_strategy(
+                    base_price=comp_price,
+                    strategy=strategy,
+                    min_floor=0.0  # 先算裸价，以精确识别是否击穿保本线
+                )
 
-        # 5. 若价格发生实质变动，向 Makro 官方 API 提交更新
+                # 保本底线防穿保护
+                if min_floor > 0 and calc_p < min_floor:
+                    new_price = min_floor
+                    action = "REACHED_FLOOR"
+                    reason = f"竞对 ({comp_seller}) 报价 R{comp_price} 过低，按公式算价 R{calc_p} 已击穿保本底线 R{min_floor}，触发锁定防护"
+                elif abs(calc_p - old_selling_price) < 0.01:
+                    new_price = old_selling_price
+                    action = "NO_CHANGE"
+                    reason = f"计算跟价 R{calc_p} (策略: {strategy}) 与当前本店售价一致，无需重复调价"
+                else:
+                    new_price = calc_p
+                    action = "UNDER_CUT"
+                    reason = f"竞对 ({comp_seller}) 报价 R{comp_price}，按公式 [{strategy}] 下调至 R{new_price} 抢占购物车"
+
+        # 5. 若价格发生实质变动且开启跟价，向 Makro 官方 API 提交更新
         if action in ["UNDER_CUT", "REACHED_FLOOR"] and abs(new_price - old_selling_price) >= 0.01:
-            try:
-                cls._push_price_to_makro(item, store, new_price)
-                item.target_price = new_price
-                if item.target_mrp and item.target_mrp < new_price:
-                    item.target_mrp = round(new_price * 1.5, 2)
-            except Exception as api_err:
-                logger.error(f"调用 Makro API 更新价格失败 [{item.seller_sku}]: {api_err}")
-                action = "FAILED"
-                reason = f"调价计算成功但推送官方失败: {str(api_err)}"
+            if not item.auto_reprice and not force:
+                logger.info(f"商品 [{item.seller_sku}] 未开启自动跟价，跳过官方 API 调价推送")
+            else:
+                try:
+                    cls._push_price_to_makro(item, store, new_price)
+                    item.target_price = new_price
+                    if item.target_mrp and item.target_mrp < new_price:
+                        item.target_mrp = round(new_price * 1.5, 2)
+                except Exception as api_err:
+                    logger.error(f"调用 Makro API 更新价格失败 [{item.seller_sku}]: {api_err}")
+                    action = "FAILED"
+                    reason = f"调价计算成功但推送官方失败: {str(api_err)}"
 
         # 6. 计算最终 Buybox 归属状态 (实事求是反映买家前台真实权属)
         if comp_price <= 0:
@@ -394,3 +404,127 @@ class AutoRepriceService:
             "failed_count": failed_count,
             "details": details
         }
+
+    @classmethod
+    def run_full_cruise_task(
+        cls,
+        tm: Any,
+        task_id: str,
+        item_ids: List[int],
+        concurrency: int = 6
+    ):
+        """
+        全量立刻巡检巡航后台执行器 (集成 TaskManager，支持多线程高并发、防页面刷新、实时进度与取消)
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        from ..database import SessionLocal
+
+        total = len(item_ids)
+        if total == 0:
+            tm.finish_task(task_id, status="SUCCESS", message="未找到符合巡检条件的在售跟品商品", success_count=0, fail_count=0)
+            return
+
+        done_count = 0
+        undercut_count = 0
+        winning_count = 0
+        floor_count = 0
+        inspected_count = 0
+        failed_count = 0
+        no_change_count = 0
+        lock = threading.Lock()
+
+        def _cruise_one(iid: int):
+            nonlocal done_count, undercut_count, winning_count, floor_count, inspected_count, failed_count, no_change_count
+            if tm.is_cancelled(task_id):
+                return
+
+            worker_db = SessionLocal()
+            try:
+                target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
+                if not target_item:
+                    with lock:
+                        done_count += 1
+                        failed_count += 1
+                        tm.update_progress(task_id, current=done_count, fail_inc=1, error=f"ID {iid} 商品不存在")
+                    return
+
+                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True)
+                action = res.get("action", "")
+                status = res.get("status", "")
+
+                with lock:
+                    done_count += 1
+                    if action == "UNDER_CUT":
+                        undercut_count += 1
+                    elif action == "WINNING_HOLD":
+                        winning_count += 1
+                    elif action == "REACHED_FLOOR":
+                        floor_count += 1
+                    elif action == "INSPECTED":
+                        inspected_count += 1
+                    elif action == "NO_CHANGE":
+                        no_change_count += 1
+
+                    if status == "SUCCESS":
+                        succ_inc = 1
+                        fail_inc = 0
+                    else:
+                        succ_inc = 0
+                        fail_inc = 1
+                        failed_count += 1
+
+                    sku_display = target_item.seller_sku or f"Item#{iid}"
+                    action_display = {
+                        "UNDER_CUT": f"抢流降价至 R{res.get('new_price')}",
+                        "WINNING_HOLD": "胜出保持现价",
+                        "REACHED_FLOOR": f"触底锁死 R{res.get('new_price')}",
+                        "INSPECTED": f"巡检归属 [{target_item.buybox_status}]",
+                        "NO_CHANGE": "价格一致无需调整",
+                        "FAILED": f"失败: {res.get('reason', '')[:30]}"
+                    }.get(action, action or "完成")
+
+                    tm.update_progress(
+                        task_id=task_id,
+                        current=done_count,
+                        current_title=f"{sku_display}: {action_display}",
+                        success_inc=succ_inc,
+                        fail_inc=fail_inc
+                    )
+            except Exception as ex:
+                logger.error(f"巡检单品 [ID: {iid}] 发生异常: {ex}", exc_info=True)
+                with lock:
+                    done_count += 1
+                    failed_count += 1
+                    tm.update_progress(task_id, current=done_count, fail_inc=1, error=str(ex))
+            finally:
+                worker_db.close()
+
+        actual_workers = max(1, min(concurrency, total, 8))
+        logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，并发线程数: {actual_workers}")
+
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            futures = [executor.submit(_cruise_one, iid) for iid in item_ids]
+            for fut in as_completed(futures):
+                if tm.is_cancelled(task_id):
+                    break
+                try:
+                    fut.result()
+                except Exception:
+                    pass
+
+        if tm.is_cancelled(task_id):
+            tm.finish_task(task_id, status="CANCELLED", message="任务已被用户取消")
+            return
+
+        success_total = done_count - failed_count
+        summary_msg = f"全量巡检巡航完成！共处理 {done_count}/{total} 件 (降价抢流: {undercut_count}, 胜出保持: {winning_count}, 触底保本: {floor_count}, 巡检更新: {inspected_count}, 维持不变: {no_change_count}, 失败: {failed_count})"
+        logger.info(f"全量巡检巡航任务 [{task_id}] 执行完毕: {summary_msg}")
+        tm.finish_task(
+            task_id=task_id,
+            status="SUCCESS",
+            message=summary_msg,
+            success_count=success_total,
+            fail_count=failed_count
+        )
+

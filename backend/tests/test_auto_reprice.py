@@ -202,5 +202,52 @@ class TestAutoReprice(unittest.TestCase):
         self.assertIn("items", data)
         self.assertIn("total", data)
 
+    def test_inspect_only_when_auto_reprice_disabled(self):
+        """测试未开启自动跟价时，allow_inspect_only 仅巡检前台与 Buybox 归属，绝不调用官方调价推送"""
+        item = MakroPiggybackItem(
+            store_id=self.store.id,
+            makro_product_id="TEST_FSN_INSPECT_001",
+            title="Inspect Only Item",
+            seller_sku="SKU-INSPECT-001",
+            target_price=200.0,
+            original_price=200.0,
+            min_price_floor=150.0,
+            auto_reprice=False,  # 未开启自动跟价
+            price_strategy="MINUS_1",
+            status="ACTIVE"
+        )
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+
+        with patch("app.services.makro_scraper_service.MakroScraperService.scrape_buyer_frontend") as mock_scrape, \
+             patch("app.services.auto_reprice_service.AutoRepriceService._push_price_to_makro") as mock_push:
+            mock_scrape.return_value = {
+                "price": 185.0,
+                "mrp": 250.0,
+                "seller_name": "ExternalCompetitor",
+                "seller_count": 3
+            }
+
+            res = AutoRepriceService.reprice_single_item(item, self.db, allow_inspect_only=True)
+            self.assertEqual(res["status"], "SUCCESS")
+            self.assertEqual(res["action"], "INSPECTED")
+            # 价格保持不变
+            self.assertEqual(item.target_price, 200.0)
+            # Buybox 归属识别为被外部对手抢走
+            self.assertEqual(item.buybox_status, "LOSING")
+            # 官方推送未被调用
+            mock_push.assert_not_called()
+
+    def test_trigger_full_cruise_endpoint(self):
+        """测试全量立刻巡检 API 接口触发与后台任务启动"""
+        res = self.client.post("/api/reprice/trigger-full-cruise", json={"store_id": self.store.id, "concurrency": 2}, headers=self.headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("success"))
+        if data.get("total", 0) > 0:
+            self.assertIsNotNone(data.get("task_id"))
+
 if __name__ == "__main__":
     unittest.main()
+

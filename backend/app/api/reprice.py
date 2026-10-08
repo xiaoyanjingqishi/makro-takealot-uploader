@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
+from pydantic import BaseModel
 from ..database import get_db
 from ..models.user import User
 from ..models.store import Store
@@ -12,11 +13,21 @@ from ..models.makro_reprice_log import MakroRepriceLog
 from ..schemas.piggyback import RepriceLogResponse
 from ..services.auto_reprice_service import AutoRepriceService
 from ..services.auto_reprice_scheduler import auto_reprice_scheduler
+from ..services.task_manager import task_manager
 from ..utils.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/reprice", tags=["Makro 智能跟价系统"])
+
+class BatchRepriceRequest(BaseModel):
+    ids: Optional[List[int]] = None
+    store_id: Optional[int] = None
+    force: Optional[bool] = False
+
+class FullCruiseRequest(BaseModel):
+    store_id: Optional[int] = None
+    concurrency: Optional[int] = 6
 
 @router.get("/logs")
 def get_reprice_logs(
@@ -85,35 +96,122 @@ def trigger_single_item_reprice(
         "result": res
     }
 
+@router.post("/trigger-full-cruise")
+def trigger_full_cruise_reprice(
+    req: Optional[FullCruiseRequest] = None,
+    store_id: Optional[int] = Query(None),
+    concurrency: Optional[int] = Query(6),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    全量立刻发起后台高并发巡检巡航任务：
+    抓取买家前台最新在售竞对与 Buybox 归属，对已开启自动跟价的在售商品执行智能调价，未开启的商品全面刷新 Buybox 状态并同步最新竞品情报。
+    """
+    target_store_id = (req.store_id if req and req.store_id is not None else store_id)
+    target_concurrency = (req.concurrency if req and req.concurrency else concurrency) or 6
+
+    store_name = "全店铺"
+    if target_store_id:
+        store = db.query(Store).filter(Store.id == target_store_id).first()
+        if not store:
+            raise HTTPException(status_code=404, detail=f"指定的店铺 ID {target_store_id} 不存在")
+        store_name = store.name
+
+    # 查询目标在售已发布商品
+    query = db.query(MakroPiggybackItem.id).filter(
+        MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]),
+        MakroPiggybackItem.makro_product_id.notlike("TEST_FSN_%")
+    )
+    if target_store_id:
+        query = query.filter(MakroPiggybackItem.store_id == target_store_id)
+
+    item_ids = [it[0] for it in query.all()]
+    total = len(item_ids)
+
+    if total == 0:
+        return {
+            "success": True,
+            "message": f"【{store_name}】暂无符合巡检条件的在售跟品商品",
+            "total": 0,
+            "task_id": None
+        }
+
+    # 创建标准后台异步批处理任务
+    task = task_manager.create_task(
+        task_type="FULL_CRUISE_INSPECTION",
+        name=f"全量巡检巡航 [{store_name}] ({total} 件)",
+        total=total,
+        product_ids=item_ids
+    )
+    task_id = task["id"]
+
+    # 启动后台守护任务线程
+    task_manager.start_task(
+        task_id,
+        lambda tm, tid: AutoRepriceService.run_full_cruise_task(
+            tm=tm,
+            task_id=tid,
+            item_ids=item_ids,
+            concurrency=target_concurrency
+        )
+    )
+
+    return {
+        "success": True,
+        "message": f"已在后台启动【{store_name}】全量巡检巡航任务 (共 {total} 件)",
+        "task_id": task_id,
+        "total": total,
+        "store_id": target_store_id,
+        "store_name": store_name
+    }
+
 @router.post("/trigger-batch")
 def trigger_batch_reprice(
-    ids: Optional[List[int]] = None,
-    store_id: Optional[int] = None,
+    req: Optional[BatchRepriceRequest] = None,
+    ids: Optional[List[int]] = Query(None),
+    store_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     批量立即触发自动跟价 (支持多选商品 ID 或全店铺触发)
     """
-    if ids and len(ids) > 0:
-        items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(ids)).all()
+    target_ids = (req.ids if req and req.ids else ids) or []
+    target_store_id = (req.store_id if req and req.store_id is not None else store_id)
+
+    if target_ids and len(target_ids) > 0:
+        items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(target_ids)).all()
         results = []
         success_cnt = 0
+        undercut_cnt = 0
+        winning_hold_cnt = 0
+        floor_cnt = 0
         for it in items:
             r = AutoRepriceService.reprice_single_item(it, db, force=True)
             if r.get("status") == "SUCCESS":
                 success_cnt += 1
+            act = r.get("action")
+            if act == "UNDER_CUT":
+                undercut_cnt += 1
+            elif act == "WINNING_HOLD":
+                winning_hold_cnt += 1
+            elif act == "REACHED_FLOOR":
+                floor_cnt += 1
             results.append(r)
         return {
             "total": len(items),
             "success_count": success_cnt,
+            "undercut_count": undercut_cnt,
+            "winning_hold_count": winning_hold_cnt,
+            "floor_count": floor_cnt,
             "details": results
         }
     
     # 全店铺触发
     store_query = db.query(Store).filter(Store.is_active == True)
-    if store_id:
-        store_query = store_query.filter(Store.id == store_id)
+    if target_store_id:
+        store_query = store_query.filter(Store.id == target_store_id)
     stores = store_query.all()
 
     summary = {

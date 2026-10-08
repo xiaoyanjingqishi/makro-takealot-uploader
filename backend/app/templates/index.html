@@ -169,7 +169,7 @@
                 <div class="overflow-hidden whitespace-nowrap transition-opacity duration-150">
                   <div class="flex items-center space-x-1.5">
                     <span class="font-bold text-white text-xs tracking-tight">Makro 搬品</span>
-                    <span class="px-1 py-0.2 rounded text-[9px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">v2.1.0</span>
+                    <span class="px-1 py-0.2 rounded text-[9px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">v2.1.1</span>
                   </div>
                   <p class="text-[10px] text-slate-400 tracking-tight truncate">双 AI 智能刊登系统</p>
                 </div>
@@ -2417,15 +2417,26 @@
                 <span>跟价公式 ({{ piggyback.selectedIds.length }})</span>
               </button>
 
-              <!-- 批量自动跟价巡检 -->
+              <!-- 全量立刻巡检 -->
+              <button 
+                @click="triggerFullCruiseReprice"
+                :disabled="runningFullCruise"
+                class="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40"
+                title="立刻在后台发起全量巡航：并发抓取全店在售商品最新前台竞价、重新评定 Buybox 赢车状态并自动执行跟价调价"
+              >
+                <span :class="{'inline-block animate-spin': runningFullCruise}">⚡</span>
+                <span>{{ runningFullCruise ? '全量巡检中...' : '全量立刻巡检' }}</span>
+              </button>
+
+              <!-- 批量自动跟价巡检 (对选中商品) -->
               <button 
                 @click="triggerBatchReprice"
-                :disabled="runningBatchReprice"
-                class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40"
-                title="立即巡检在售跟品前台竞对价格并执行自动调价"
+                :disabled="runningBatchReprice || piggyback.selectedIds.length === 0"
+                class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title="立即对选中的在售跟品巡检前台竞对价格并执行自动调价"
               >
                 <span>🤖</span>
-                <span>{{ runningBatchReprice ? '跟价中...' : (piggyback.selectedIds.length > 0 ? `跟价选中 (${piggyback.selectedIds.length})` : '全店跟价') }}</span>
+                <span>{{ runningBatchReprice ? '跟价中...' : `跟价选中 (${piggyback.selectedIds.length})` }}</span>
               </button>
 
               <!-- 调价审计日志 -->
@@ -7520,14 +7531,14 @@
               <div class="space-y-1 text-center sm:text-left">
                 <div class="flex items-center justify-center sm:justify-start space-x-2">
                   <span class="text-sm font-bold text-slate-900">Makro 搬品插件安装包</span>
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 font-mono">v1.1.0</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 font-mono">v1.1.1</span>
                 </div>
                 <p class="text-xs text-slate-500">已预设当前云端服务接口，解压安装即可直接连通</p>
               </div>
 
               <a 
                 href="/api/download/extension" 
-                download="makro-extension-v1.1.0zip"
+                download="makro-extension-v1.1.1zip"
                 class="inline-flex items-center justify-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer shrink-0"
               >
                 <span>📥</span>
@@ -7551,7 +7562,7 @@
                     <span class="font-bold text-slate-900">解压安装包</span>
                   </div>
                   <p class="text-slate-500 text-[11.5px] leading-relaxed">
-                    下载完成后，右键将压缩包解压到一个文件夹（如 <strong class="text-slate-800 font-mono">makro-extension-v1.1.0</strong>）。
+                    下载完成后，右键将压缩包解压到一个文件夹（如 <strong class="text-slate-800 font-mono">makro-extension-v1.1.1</strong>）。
                   </p>
                 </div>
 
@@ -9123,6 +9134,7 @@
             actionFilter: ''
           },
           runningBatchReprice: false,
+          runningFullCruise: false,
           translatingTitles: false,
           verticalZhMap: {
             "cases_covers": "手机保护套 / 保护壳",
@@ -10475,19 +10487,49 @@
             this.showToast('执行跟价失败: ' + e.message, 'error');
           }
         },
+        async triggerFullCruiseReprice() {
+          const storeId = this.piggyback.store_id || null;
+          let storeName = '全部店铺';
+          if (storeId && this.stores && this.stores.length > 0) {
+            const foundStore = this.stores.find(s => s.id == storeId);
+            if (foundStore) storeName = foundStore.name;
+          }
+
+          const promptText = `确定立即对【${storeName}】的所有在售跟品发起全量巡检巡航吗？\n\n系统将在后台高并发抓取买家前台最新竞对报价、重新评定 Buybox 黄金购物车赢车归属，并对已开启自动跟价的商品执行智能调价。`;
+          if (!confirm(promptText)) return;
+
+          this.runningFullCruise = true;
+          this.showToast(`🚀 正在发起【${storeName}】全量巡检巡航...`, 'info');
+          try {
+            const res = await fetch('/api/reprice/trigger-full-cruise', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ store_id: storeId, concurrency: 6 })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new Error(data.detail || data.message || '启动全量巡检失败');
+            }
+            this.showToast(data.message || '全量巡检巡航任务已在后台启动！', 'success');
+            this.ensureBgTasksPolling();
+            setTimeout(() => this.pollActiveTasks(), 300);
+          } catch (e) {
+            this.runningFullCruise = false;
+            this.showToast('启动全量巡检异常: ' + e.message, 'error');
+          }
+        },
         async triggerBatchReprice() {
           const isSelected = this.piggyback.selectedIds.length > 0;
-          const promptText = isSelected 
-            ? `确定立即对选中的 ${this.piggyback.selectedIds.length} 件在售跟品执行自动跟价吗？` 
-            : `确定对当前店铺所有在售且开启自动跟价的商品执行全量巡检跟价吗？`;
+          if (!isSelected) {
+            return this.triggerFullCruiseReprice();
+          }
+          const promptText = `确定立即对选中的 ${this.piggyback.selectedIds.length} 件在售跟品执行自动跟价调价吗？`;
           if (!confirm(promptText)) return;
 
           this.runningBatchReprice = true;
           this.showToast('🚀 正在批量探测竞对并执行自动跟价...', 'info');
           try {
-            const payload = isSelected 
-              ? { ids: this.piggyback.selectedIds } 
-              : { store_id: this.piggyback.store_id || null };
+            const payload = { ids: this.piggyback.selectedIds };
             const res = await fetch('/api/reprice/trigger-batch', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -11957,6 +11999,7 @@
             }
 
             const anyLocalRunning = this.activeBgTasks.some(t => t.status === 'RUNNING');
+            this.runningFullCruise = this.activeBgTasks.some(t => t.task_type === 'FULL_CRUISE_INSPECTION' && t.status === 'RUNNING');
             if (!hasRunning && !anyLocalRunning) {
               this.stopBgTasksPolling();
             }
@@ -12052,6 +12095,8 @@
               'RESTORE': { text: '♻️ 恢复单品', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
               'BATCH_RESTORE': { text: '♻️ 批量恢复', bg: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
               'SETTINGS_UPDATE': { text: '⚙️ 配置更新', bg: 'bg-slate-100 text-slate-600 border-slate-300' },
+              'FULL_CRUISE_INSPECTION': { text: '⚡ 全量巡检', bg: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
+              'MAKRO_REPRICE': { text: '🤖 自动跟价', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
             };
           }
           return this._taskTypeMap[type] || { text: type, bg: 'bg-slate-100 text-slate-700 border-slate-200' };
