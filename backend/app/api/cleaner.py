@@ -24,12 +24,8 @@ class ArbitrateComplianceRequest(BaseModel):
 
 router = APIRouter(prefix="/cleaner", tags=["AI清洗与规范化"])
 
-LISTING_ONLY_ATTRS = {
-    "country_of_origin", "mrp", "flipkart_selling_price", "shipping_days",
-    "listing_status", "service_profile", "packer_details", "manufacturer_details",
-    "importer_details", "packages", "forbid_shipping", "max_order_quantity_allowed",
-    "minimum_order_quantity", "sku_id"
-}
+from ..constants.makro_attrs import LISTING_ONLY_ATTRS
+
 
 @router.post("/clean/{product_id}", response_model=ProductResponse, summary="单品触发 AI 数据清洗")
 def clean_single_product(

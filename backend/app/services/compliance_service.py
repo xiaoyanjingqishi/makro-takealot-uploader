@@ -13,56 +13,16 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# 国际顶级奢侈品牌库 (侵权零容忍，严禁上架任何箱包、服饰、配饰)
-LUXURY_BRANDS = [
-    "chanel", "louis vuitton", "gucci", "hermes", "prada", "dior", "balenciaga",
-    "fendi", "burberry", "celine", "bottega veneta", "saint laurent", "ysl",
-    "versace", "cartier", "coach", "michael kors"
-]
+from ..constants.brands import (
+    LUXURY_BRANDS,
+    FAMOUS_BRANDS,
+    ACCESSORY_KEYWORDS,
+    COMPATIBILITY_KEYWORDS,
+    RISK_LEVEL_ORDER,
+    get_higher_risk,
+)
+from ..constants.protected_ips import PROTECTED_ENTERTAINMENT_IPS
 
-# 知名受保护品牌库 (包含数码科技、家电工具、运动潮流及顶级奢侈品)
-FAMOUS_BRANDS = [
-    "apple", "iphone", "ipad", "airpods", "airtag", "apple watch", "apple pencil", "macbook", "imac", "magsafe",
-    "samsung", "galaxy", "dyson", "sony", "playstation", "playstation 5", "playstation 4", "ps4", "ps5", "ps5 slim", "ps5 pro",
-    "nintendo switch", "nintendo", "steam deck", "xbox", "huawei", "xiaomi", "redmi", "dji", "gopro",
-    "philips", "makita", "bosch", "dewalt", "milwaukee", "dell", "hp",
-    "lenovo", "asus", "acer", "garmin", "fitbit", "bose", "jbl", "beats",
-    "nike", "adidas", "lego", "stanley", "rolex", "crocs", "kindle",
-    "chanel", "louis vuitton", "gucci", "hermes", "prada", "dior", "balenciaga",
-    "fendi", "burberry", "celine", "bottega veneta", "saint laurent", "ysl",
-    "versace", "cartier", "coach", "michael kors"
-]
-
-# 知名受保护影视/动漫/游戏IP与角色库 (侵权高危，严禁未经授权销售周边或标题蹭词)
-PROTECTED_ENTERTAINMENT_IPS = [
-    "spider man", "spiderman", "spider-man", "batman", "superman", "iron man", "ironman",
-    "captain america", "thor", "hulk", "avengers", "marvel", "disney", "mickey mouse",
-    "frozen", "elsa", "barbie", "star wars", "harry potter", "pokemon", "pikachu",
-    "hello kitty", "sanrio", "kuromi", "cinnamoroll", "labubu", "naruto", "dragon ball",
-    "one piece", "peppa pig", "paw patrol", "transformers", "jurassic park", "jurassic world"
-]
-
-# 配件指示词
-ACCESSORY_KEYWORDS = [
-    "case", "cover", "strap", "band", "charger", "cable", "adapter",
-    "replacement", "filter", "mount", "stand", "battery", "dock",
-    "protector", "screen protector", "stylus", "shell", "ear tips",
-    "pad", "blade", "holder", "pouch", "housing", "nozzle", "head",
-    "sleeve", "bracket", "belt", "refill", "spares", "parts"
-]
-
-# 第三方兼容声明合格词
-COMPATIBILITY_KEYWORDS = [
-    "third-party", "compatible with", "compatible for", "suitable for",
-    "replacement for", "for use with", "designed for", "fits", "fit for"
-]
-
-RISK_LEVEL_ORDER = {"SAFE": 1, "RISK": 2, "PROHIBITED": 3}
-
-def get_higher_risk(level_a: str, level_b: str) -> str:
-    ra = RISK_LEVEL_ORDER.get(level_a, 1)
-    rb = RISK_LEVEL_ORDER.get(level_b, 1)
-    return level_a if ra >= rb else level_b
 
 class ComplianceService:
     """
