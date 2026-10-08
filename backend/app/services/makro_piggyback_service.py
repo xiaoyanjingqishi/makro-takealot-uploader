@@ -268,9 +268,17 @@ class MakroPiggybackService:
         # 3. 组装挂靠核心载荷 (完全对齐 makro跟品协议.har Entry 7)
         create_url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
 
-        # 价格取整数或合法浮点，依据抓包货币为 INR
-        ssp_val = str(int(item.target_price)) if item.target_price.is_integer() else str(item.target_price)
-        mrp_val = str(int(item.target_mrp)) if item.target_mrp.is_integer() else str(item.target_mrp)
+        # 价格强校验与自愈保底: 严禁 Selling Price 大于 Base Price (MRP)
+        ssp_f = float(item.target_price or 199.0)
+        mrp_f = float(item.target_mrp or 0.0)
+        if mrp_f < ssp_f:
+            mrp_f = round(max(ssp_f * 1.5, ssp_f + 30.0), 2)
+            item.target_mrp = mrp_f
+            db.commit()
+
+        safe_mrp_f = max(mrp_f, round(ssp_f * 1.5, 2), ssp_f + 10.0)
+        ssp_val = str(int(ssp_f)) if ssp_f.is_integer() else str(round(ssp_f, 2))
+        mrp_val = str(int(safe_mrp_f)) if safe_mrp_f.is_integer() else str(round(safe_mrp_f, 2))
         lead_time = str(item.lead_time_days or 14)
         pkg_len = str(int(item.length)) if item.length and item.length.is_integer() else str(item.length or 15)
         pkg_brd = str(int(item.breadth)) if item.breadth and item.breadth.is_integer() else str(item.breadth or 10)

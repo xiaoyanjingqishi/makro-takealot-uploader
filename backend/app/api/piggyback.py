@@ -863,6 +863,10 @@ def update_piggyback_item(
         item.target_price = new_price
     if req.target_mrp is not None:
         item.target_mrp = float(req.target_mrp)
+
+    # 强一致性校验与自愈: Selling Price 严禁大于 Base Price (MRP)
+    if item.target_price and (not item.target_mrp or item.target_price > item.target_mrp):
+        item.target_mrp = round(max(float(item.target_price) * 1.5, float(item.target_price) + 30.0), 2)
     if req.min_price_floor is not None:
         item.min_price_floor = float(req.min_price_floor)
         # 若当前售价低于新底价，自动抬升至底价

@@ -1,4 +1,6 @@
 import logging
+import time
+import random
 import requests
 from datetime import datetime
 from typing import Dict, Any, List, Optional
@@ -119,9 +121,16 @@ class AutoRepriceService:
 
         is_own_any_store = is_own_current_store or is_matrix_sister_store
 
+        is_blocked = scraped.get("blocked", False)
+
         if comp_price <= 0:
-            action = "FAILED"
-            reason = "未能获取到前台有效竞对售价"
+            if is_blocked and (old_selling_price > 0 or (item.original_price or 0.0) > 0):
+                action = "WINNING_HOLD" if item.buybox_status in ["WINNING", "NO_COMPETITOR"] else "NO_CHANGE"
+                reason = f"前台反爬瞬时流控保护：保留历史{'赢车' if action == 'WINNING_HOLD' else '在售'}状态及现价 R{old_selling_price}"
+                new_price = old_selling_price
+            else:
+                action = "FAILED"
+                reason = "未能获取到前台有效竞对售价"
         elif is_own_current_store:
             # 本店铺自己已经赢得黄金购物车！坚决不自我压价！
             action = "WINNING_HOLD"
@@ -224,7 +233,8 @@ class AutoRepriceService:
             "competitor_price": comp_price,
             "old_price": old_selling_price,
             "new_price": item.target_price,
-            "reason": reason
+            "reason": reason,
+            "blocked": is_blocked
         }
 
     @classmethod
@@ -235,8 +245,10 @@ class AutoRepriceService:
         url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
         headers = MakroPiggybackService._build_headers(store)
 
+        safe_mrp = max(float(item.target_mrp or 0.0), float(new_price) * 1.5, float(new_price) + 10.0)
+        item.target_mrp = round(safe_mrp, 2)
         ssp_val = str(int(new_price)) if float(new_price).is_integer() else str(round(new_price, 2))
-        mrp_val = str(int(item.target_mrp)) if item.target_mrp and float(item.target_mrp).is_integer() else str(round(item.target_mrp or (new_price * 1.5), 2))
+        mrp_val = str(int(safe_mrp)) if float(safe_mrp).is_integer() else str(round(safe_mrp, 2))
         lead_time = str(item.lead_time_days or 14)
 
         payload = {
@@ -287,7 +299,8 @@ class AutoRepriceService:
         items = db.query(MakroPiggybackItem).filter(
             MakroPiggybackItem.store_id == store.id,
             MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]),
-            MakroPiggybackItem.auto_reprice == True
+            MakroPiggybackItem.auto_reprice == True,
+            MakroPiggybackItem.makro_product_id.notlike("TEST_FSN_%")
         ).all()
 
         total = len(items)
@@ -298,11 +311,28 @@ class AutoRepriceService:
         failed_count = 0
 
         details = []
+        consecutive_blocked = 0
 
-        for item in items:
+        for idx, item in enumerate(items):
+            # 拟人化延时：每件商品之间等待 1.2 ~ 2.0 秒，避免被 PerimeterX 判定为恶意高频并发
+            if idx > 0:
+                time.sleep(random.uniform(1.2, 2.0))
+
             try:
                 res = cls.reprice_single_item(item, db)
                 action = res.get("action")
+                is_blocked = res.get("blocked", False)
+
+                if is_blocked:
+                    consecutive_blocked += 1
+                    # 熔断退避：如果连续 3 次被反爬拦截，说明当前 IP 处于短暂停滞期，休眠 15 秒冷却
+                    if consecutive_blocked >= 3:
+                        logger.warning(f"店铺 [{store.name}] 连续 {consecutive_blocked} 次遭遇反爬拦截，触发熔断休眠 15 秒冷却...")
+                        time.sleep(15.0)
+                        consecutive_blocked = 0
+                else:
+                    consecutive_blocked = 0
+
                 if action == "UNDER_CUT":
                     undercut_count += 1
                 elif action == "WINNING_HOLD":
