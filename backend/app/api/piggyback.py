@@ -198,10 +198,11 @@ def collect_single_piggyback(
         existing.title_zh = data.get("title_zh", existing.title_zh)
         existing.brand = data.get("brand", existing.brand)
         existing.vertical = data.get("vertical", existing.vertical)
-        existing.image_url = data.get("image_url", existing.image_url)
-        existing.original_price = data.get("original_price", existing.original_price)
+        # 保护外部竞对基准：若当前商品已赢取黄金购物车，不被前台爬到的本店自身信息覆盖
+        if existing.buybox_status != "WINNING":
+            existing.original_price = data.get("original_price", existing.original_price)
+            existing.original_seller = data.get("original_seller", existing.original_seller)
         existing.original_mrp = data.get("original_mrp", existing.original_mrp)
-        existing.original_seller = data.get("original_seller", existing.original_seller)
         existing.seller_count = data.get("seller_count", existing.seller_count or 1)
         # 若商品已在售/已挂靠，保持既有在售目标价格，不破坏调价系统
         if existing.status not in ["ACTIVE", "PUBLISHED"]:
@@ -375,9 +376,11 @@ def batch_collect_piggyback(
                     existing.title = title or existing.title
                     existing.title_zh = title_zh or existing.title_zh
                     existing.image_url = image_url or existing.image_url
-                    existing.original_price = real_price or existing.original_price
+                    # 保护外部竞对基准：若当前商品已赢取黄金购物车，不被前台爬到的本店自身信息覆盖
+                    if existing.buybox_status != "WINNING":
+                        existing.original_price = real_price or existing.original_price
+                        existing.original_seller = seller_name or existing.original_seller
                     existing.original_mrp = real_mrp or existing.original_mrp
-                    existing.original_seller = seller_name or existing.original_seller
                     existing.seller_count = seller_count or existing.seller_count
                     if existing.status not in ["ACTIVE", "PUBLISHED"]:
                         existing.target_price = target_p
@@ -477,9 +480,11 @@ def batch_collect_piggyback(
                     existing.item_id = item_id or existing.item_id
                     existing.makro_url = data.get("makro_url", existing.makro_url)
                     existing.image_url = data.get("image_url") or existing.image_url
-                    existing.original_price = data.get("original_price", existing.original_price)
+                    # 保护外部竞对基准：若当前商品已赢取黄金购物车，不被前台爬到的本店自身信息覆盖
+                    if existing.buybox_status != "WINNING":
+                        existing.original_price = data.get("original_price", existing.original_price)
+                        existing.original_seller = data.get("original_seller") or existing.original_seller
                     existing.original_mrp = data.get("original_mrp", existing.original_mrp)
-                    existing.original_seller = data.get("original_seller") or existing.original_seller
                     existing.seller_count = data.get("seller_count") or existing.seller_count or 1
                     if existing.status not in ["ACTIVE", "PUBLISHED"]:
                         existing.target_price = target_p

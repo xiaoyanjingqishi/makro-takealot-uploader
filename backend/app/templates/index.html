@@ -2673,9 +2673,29 @@
                             ❓ 待巡检
                           </span>
 
-                          <span class="text-[10.5px] text-slate-500">
-                            🏆 当前Buybox: <strong :class="item.buybox_status === 'WINNING' ? 'text-emerald-700 font-bold' : (item.buybox_status === 'LOSING' ? 'text-rose-600 font-bold' : (item.buybox_status === 'FLOOR_HIT' ? 'text-amber-700 font-bold' : 'text-slate-700 font-semibold'))">{{ item.original_seller || '自营/当前' }}</strong>
-                          </span>
+                          <template v-if="item.buybox_status === 'WINNING'">
+                            <span class="text-[10.5px] text-emerald-700 font-bold flex items-center space-x-1">
+                              <span>🏆 Buybox: {{ item.store_name || '本店' }} (已赢车 🥇)</span>
+                            </span>
+                            <span v-if="item.original_seller && item.original_seller !== item.store_name" class="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200" :title="'原竞争对手店铺: ' + item.original_seller">
+                              对手: <strong class="text-slate-700 font-semibold">{{ item.original_seller }}</strong>
+                            </span>
+                          </template>
+                          <template v-else-if="item.buybox_status === 'LOSING'">
+                            <span class="text-[10.5px] text-rose-600 font-bold flex items-center space-x-1">
+                              <span>🚨 Buybox: {{ item.original_seller || '外部竞对' }} (丢车需调价)</span>
+                            </span>
+                          </template>
+                          <template v-else-if="item.buybox_status === 'NO_COMPETITOR'">
+                            <span class="text-[10.5px] text-slate-600 font-medium">
+                              🏆 Buybox: {{ item.store_name || '本店' }} (独家在售)
+                            </span>
+                          </template>
+                          <template v-else>
+                            <span class="text-[10.5px] text-slate-500">
+                              🏆 Buybox: <strong class="text-slate-700 font-semibold">{{ item.original_seller || '自营/当前' }}</strong>
+                            </span>
+                          </template>
                           <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 font-mono">共 {{ item.seller_count || 1 }} 家在售</span>
                         </div>
                       </div>
@@ -2686,13 +2706,23 @@
                   <td class="py-3 px-3 align-top">
                     <div class="space-y-1 font-mono">
                       <div class="flex items-center justify-between text-[11px] text-slate-500">
-                        <span>原网在售价:</span>
-                        <span class="font-medium">R {{ item.original_price.toFixed(2) }}</span>
+                        <span :title="item.buybox_status === 'WINNING' ? '外部原链接/竞对基准报价' : '前台当前竞对报价'">
+                          {{ item.buybox_status === 'WINNING' ? '竞对原价:' : '原网/竞对:' }}
+                        </span>
+                        <div class="flex items-center space-x-1">
+                          <span class="font-medium text-slate-600">R {{ (item.original_price || 0).toFixed(2) }}</span>
+                          <span v-if="item.buybox_status === 'WINNING' && item.original_price > item.target_price" class="text-[9.5px] text-emerald-600 font-bold bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200" :title="'比外部竞对低 R ' + (item.original_price - item.target_price).toFixed(2) + ' 稳赢黄金购物车'">
+                            -R{{ (item.original_price - item.target_price).toFixed(2) }}
+                          </span>
+                        </div>
                       </div>
 
                       <!-- 本店跟品价 (行内单击快改) -->
                       <div class="flex items-center justify-between group/price">
-                        <span class="text-[11px] font-bold text-slate-700">跟品售价:</span>
+                        <span class="text-[11px] font-bold text-slate-700 flex items-center space-x-0.5">
+                          <span>跟品售价:</span>
+                          <span v-if="item.buybox_status === 'WINNING'" class="text-[9.5px] text-emerald-600 font-bold" title="本店已抢占黄金购物车">👑</span>
+                        </span>
                         <div v-if="inlineEditing.id === item.id && inlineEditing.field === 'target_price'" class="flex items-center space-x-1">
                           <span class="text-xs font-bold text-emerald-600">R</span>
                           <input 

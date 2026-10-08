@@ -57,15 +57,6 @@ class AutoRepriceService:
         comp_seller = (scraped.get("seller_name") or "").strip()
         seller_count = scraped.get("seller_count", 1)
 
-        # 同步更新原链接情报
-        if comp_price > 0:
-            item.original_price = comp_price
-        if comp_mrp > 0:
-            item.original_mrp = comp_mrp
-        if comp_seller:
-            item.original_seller = comp_seller
-        item.seller_count = seller_count
-
         old_selling_price = float(item.target_price or 0.0)
         min_floor = float(item.min_price_floor or 0.0)
         strategy = item.price_strategy or "MINUS_1"
@@ -120,6 +111,25 @@ class AutoRepriceService:
                     break
 
         is_own_any_store = is_own_current_store or is_matrix_sister_store
+
+        # ★★★ 核心修复：更新竞品情报时的身份保护 ★★★
+        # 无论谁赢车，在售商家数量与划线 MRP 始终同步
+        item.seller_count = seller_count
+        if comp_mrp > 0:
+            item.original_mrp = comp_mrp
+
+        if is_own_any_store:
+            # 本店或矩阵友军占位赢车：严禁把本店出价/店名覆盖为外部原网基准价和原卖家！
+            # 外部原价与原卖家保持历史真实竞对记录，若从未记录过才兜底补齐
+            if (item.original_price or 0.0) <= 0 and comp_price > 0:
+                item.original_price = comp_price
+        else:
+            # 外部真实竞对占位：正常同步最新竞对价格与卖家名称
+            if comp_price > 0:
+                item.original_price = comp_price
+                item.last_competitor_price = comp_price
+            if comp_seller:
+                item.original_seller = comp_seller
 
         is_blocked = scraped.get("blocked", False)
 
@@ -201,19 +211,28 @@ class AutoRepriceService:
             buybox_status = "UNKNOWN"
 
         item.buybox_status = buybox_status
-        if comp_price > 0:
+        if not is_own_any_store and comp_price > 0:
             item.last_competitor_price = comp_price
+        elif is_own_any_store and (not item.last_competitor_price or item.last_competitor_price <= 0) and (item.original_price or 0.0) > 0:
+            item.last_competitor_price = item.original_price
 
         # 7. 更新商品记录状态与审计日志
         item.last_reprice_at = datetime.now()
         item.last_reprice_result = f"{action}: {reason[:120]}"
+
+        # 竞对卖家审计文案：清晰区分真实外部竞对与本店/友军占位
+        logged_seller = comp_seller or "未知/无竞对"
+        if is_own_current_store:
+            logged_seller = f"{comp_seller or store.name} (本店抢占)"
+        elif is_matrix_sister_store:
+            logged_seller = f"{winning_store_name or comp_seller} (友军抢占)"
 
         log_entry = MakroRepriceLog(
             piggyback_id=item.id,
             store_id=store.id,
             seller_sku=item.seller_sku,
             makro_product_id=item.makro_product_id,
-            competitor_seller=comp_seller or "未知/无竞对",
+            competitor_seller=logged_seller,
             competitor_price=comp_price,
             old_price=old_selling_price,
             new_price=new_price if action in ["UNDER_CUT", "REACHED_FLOOR"] else old_selling_price,
