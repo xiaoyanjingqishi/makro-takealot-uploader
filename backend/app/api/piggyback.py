@@ -42,89 +42,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/piggyback", tags=["Makro跟品与合规挂靠"])
 
-def _generate_piggyback_sku() -> str:
-    """自动生成规范且不重复的跟品 SKU，如 GP2609301234"""
-    ts = datetime.now().strftime("%y%m%d%H%M%S")
-    rand_suffix = str(uuid.uuid4().hex[:4]).upper()
-    return f"GP{ts}{rand_suffix}"
+from ..services.piggyback import PiggybackService, PiggybackPricingCalculator
 
-def _get_target_store(db: Session, store_id: Optional[int] = None) -> Store:
-    if store_id:
-        store = db.query(Store).filter(Store.id == store_id).first()
-        if store:
-            return store
-    # 默认取 active 且 default 的店铺，或首个店铺
-    store = db.query(Store).filter(Store.is_default == True, Store.is_active == True).first()
-    if not store:
-        store = db.query(Store).filter(Store.is_active == True).first()
-    if not store:
-        raise HTTPException(status_code=400, detail="系统未找到任何可用店铺，请先在多店铺管理中添加店铺凭据。")
-    return store
+_generate_piggyback_sku = PiggybackService.generate_piggyback_sku
+_get_target_store = PiggybackService.get_target_store
+_format_piggyback_item = PiggybackService.format_piggyback_item
 
-def _format_piggyback_item(item: MakroPiggybackItem) -> dict:
-    comp_details = None
-    if item.compliance_details:
-        try:
-            comp_details = json.loads(item.compliance_details)
-        except Exception:
-            pass
-
-    op_name = None
-    if getattr(item, "creator", None):
-        op_name = item.creator.nickname or item.creator.username
-    elif getattr(item, "user", None):
-        op_name = item.user.nickname or item.user.username
-
-    return {
-        "id": item.id,
-        "store_id": item.store_id,
-        "store_name": item.store.name if item.store else "未知店铺",
-        "user_id": item.user_id,
-        "operator_name": op_name,
-        "makro_product_id": item.makro_product_id,
-        "item_id": item.item_id,
-        "makro_url": item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, item.item_id),
-        "title": item.title,
-        "title_zh": item.title_zh,
-        "brand": item.brand,
-        "vertical": item.vertical,
-        "image_url": item.image_url,
-        "barcode": item.barcode,
-        "model_number": item.model_number,
-        "original_price": item.original_price or 0.0,
-        "original_mrp": item.original_mrp or 0.0,
-        "original_seller": item.original_seller or "",
-        "seller_count": item.seller_count or 1,
-        "seller_sku": item.seller_sku,
-        "target_price": item.target_price or 0.0,
-        "target_mrp": item.target_mrp or 0.0,
-        "min_price_floor": item.min_price_floor or 0.0,
-        "max_price_ceiling": item.max_price_ceiling or 0.0,
-        "auto_reprice": item.auto_reprice if item.auto_reprice is not None else True,
-        "last_reprice_at": item.last_reprice_at.strftime("%Y-%m-%d %H:%M:%S") if item.last_reprice_at else None,
-        "last_reprice_result": item.last_reprice_result or "",
-        "buybox_status": item.buybox_status or "UNKNOWN",
-        "last_competitor_price": item.last_competitor_price,
-        "price_strategy": item.price_strategy or "MINUS_15",
-        "inventory": item.inventory or 500,
-        "lead_time_days": item.lead_time_days or 14,
-        "variant_attributes": item.variant_attributes,
-        "variant_name": item.variant_name or "",
-        "weight": item.weight or 0.5,
-        "length": item.length or 15.0,
-        "breadth": item.breadth or 10.0,
-        "height": item.height or 5.0,
-        "compliance_status": item.compliance_status or "PENDING_CHECK",
-        "compliance_details": comp_details,
-        "status": item.status or "PENDING",
-        "makro_listing_id": item.makro_listing_id,
-        "error_message": item.error_message,
-        "is_abandoned": bool(item.is_abandoned),
-        "abandoned_reason": item.abandoned_reason or "",
-        "abandoned_at": item.abandoned_at.strftime("%Y-%m-%d %H:%M:%S") if item.abandoned_at else None,
-        "created_at": item.created_at.strftime("%Y-%m-%d %H:%M:%S") if item.created_at else None,
-        "updated_at": item.updated_at.strftime("%Y-%m-%d %H:%M:%S") if item.updated_at else None
-    }
 
 @router.post("/collect", summary="采集单个 Makro 商品并加入跟品池")
 def collect_single_piggyback(
