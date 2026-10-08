@@ -16,6 +16,11 @@ from ..services.audit_logger import record_audit_log
 from ..models.user import User
 from ..utils.auth import get_optional_current_user
 from .products import _format_product
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from ..database import SessionLocal
+from ..services.translation_service import TranslationService
+from ..services.vertical_service import VerticalService
+from ..services.compliance_service import ComplianceService
 
 
 class ArbitrateComplianceRequest(BaseModel):
@@ -72,7 +77,6 @@ def clean_single_product(
         }, target_brand=product.makro_brand or "Beishi", clean_mode=mode)
 
         product.makro_title = cleaned.get("makro_title", product.takealot_title)
-        from ..services.translation_service import TranslationService
         product.takealot_title_zh = cleaned.get("takealot_title_zh") or TranslationService.translate_title(product.takealot_title, db=db)
         product.makro_title_zh = cleaned.get("makro_title_zh") or TranslationService.translate_title(product.makro_title, db=db)
         raw_seo_kw = cleaned.get("seo_keywords") or []
@@ -82,7 +86,6 @@ def clean_single_product(
         raw_desc = cleaned.get("description", product.takealot_description)
         product.makro_description = "\n".join(str(x) for x in raw_desc) if isinstance(raw_desc, list) else (str(raw_desc) if raw_desc else None)
         
-        from ..services.vertical_service import VerticalService
         raw_vertical = cleaned.get("vertical", "")
         resolved_v, _ = VerticalService.resolve_vertical(raw_vertical)
         if resolved_v == "bath_towel" and "towel" not in (product.takealot_title or "").lower():
@@ -217,16 +220,11 @@ def batch_clean_products(
         spu_groups.setdefault(spu_key, []).append(pid)
 
     def _worker(tm: TaskManager, tid: str):
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from ..database import SessionLocal
-        from ..services.vertical_service import VerticalService
-        from ..services.ai_cleaner_service import truncate_title_safely
 
         def _clean_product_entity(prod: Product, cleaned: dict, applied_mode: str):
             """统一将结构化清洗产物赋给 Product 模型并执行本地契约就地预检"""
             target_b = prod.makro_brand or "Beishi"
             prod.makro_title = cleaned.get("makro_title", prod.takealot_title)
-            from ..services.translation_service import TranslationService
             prod.takealot_title_zh = cleaned.get("takealot_title_zh") or TranslationService.translate_title(prod.takealot_title)
             prod.makro_title_zh = cleaned.get("makro_title_zh") or TranslationService.translate_title(prod.makro_title)
             raw_seo_kw = cleaned.get("seo_keywords") or []
@@ -489,7 +487,6 @@ def batch_check_compliance(
     u_id = current_user.id if current_user else None
     op_name = (current_user.nickname or current_user.username) if current_user else None
 
-    from ..services.compliance_service import ComplianceService
     cs = ComplianceService.from_db(db)
     total = len(req.product_ids)
     concurrency_limit = max(1, min(req.concurrency or 20, 50))
@@ -498,8 +495,6 @@ def batch_check_compliance(
 
 
     def _worker(tm: TaskManager, tid: str):
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from ..database import SessionLocal
 
         def _do_one(pid: int):
             if tm.is_cancelled(tid):
@@ -588,7 +583,6 @@ def check_single_compliance(
     u_id = current_user.id if current_user else product.user_id
     op_name = (current_user.nickname or current_user.username) if current_user else None
 
-    from ..services.compliance_service import ComplianceService
     cs = ComplianceService.from_db(db)
     specs = json.loads(product.takealot_specs) if product.takealot_specs else {}
 
@@ -793,7 +787,6 @@ def get_compliance_logs(
 
 @router.get("/verticals", summary="获取系统支持的全部 Makro 垂直类目")
 def get_supported_verticals():
-    from ..services.vertical_service import VerticalService
     return {
         "supported_verticals": VerticalService.list_verticals()
     }

@@ -10,7 +10,10 @@ from datetime import datetime
 from ..database import get_db
 from ..models.product import Product, ProductVariant
 from ..models.user import User
-from ..models.setting import SystemSetting
+from ..models.store import Store
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from ..database import SessionLocal
+import threading
 from ..models.task import TaskLog
 from ..schemas.setting import SyncCredentialsRequest
 from ..schemas.product import BatchPublishRequest
@@ -71,7 +74,6 @@ def publish_product_to_makro(
         )
 
     # 确定目标店铺列表
-    from ..models.store import Store
     target_stores = []
     if publish_all_stores:
         target_stores = db.query(Store).filter(Store.is_active == True).all()
@@ -273,7 +275,6 @@ def batch_publish_products(
 
 
     # 读取批量上品并发度配置 (支持请求显式指定，默认取系统配置 publish_concurrency，限制 1~5 线程)
-    from ..models.setting import SystemSetting
     setting_concurrency = db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
     try:
         cfg_concurrency = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else getattr(settings, "DEFAULT_PUBLISH_CONCURRENCY", 2)
@@ -284,7 +285,6 @@ def batch_publish_products(
     raw_concurrency = req_concurrency if (req_concurrency is not None and req_concurrency > 0) else cfg_concurrency
     concurrency = max(1, min(5, raw_concurrency))
 
-    from ..models.store import Store
     target_stores = []
     if req.publish_all_stores:
         target_stores = db.query(Store).filter(Store.is_active == True).all()
@@ -311,9 +311,6 @@ def batch_publish_products(
     task_id = task["id"]
 
     def _worker(tm: TaskManager, tid: str):
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from ..database import SessionLocal
-        import threading
 
         completed_lock = threading.Lock()
         completed_count = 0
@@ -447,7 +444,6 @@ def publish_single_variant_to_makro(
     if product.compliance_status == "PROHIBITED" and not force:
         raise HTTPException(status_code=400, detail="【违禁品拦截】该商品命中平台禁售规则！")
 
-    from ..models.store import Store
     target_store = None
     if store_id:
         target_store = db.query(Store).filter(Store.id == store_id).first()
@@ -521,7 +517,6 @@ def get_submit_payload_preview(
     if variant_id:
         target_variant = db.query(ProductVariant).filter(ProductVariant.id == variant_id).first()
 
-    from ..models.store import Store
     target_store = None
     if store_id:
         target_store = db.query(Store).filter(Store.id == store_id).first()
@@ -549,7 +544,6 @@ def sync_credentials(req: SyncCredentialsRequest, db: Session = Depends(get_db))
             db.add(SystemSetting(key=k, value=v))
 
     # 联动同步更新 stores 表中的店铺实体 (优先按 seller_id 匹配，兜底按默认/首个活跃店)
-    from ..models.store import Store
     matched_stores = []
     if req.seller_id:
         matched_stores = db.query(Store).filter(Store.seller_id == req.seller_id).all()
