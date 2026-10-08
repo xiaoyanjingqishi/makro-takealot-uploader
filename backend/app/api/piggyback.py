@@ -408,7 +408,7 @@ def batch_collect_piggyback(
 
         to_fetch_targets.append(t)
 
-    # 4. 高并发线程池拉取新品数据 (8 工作线程并行多路复用)
+    # 4. 超高并发线程池拉取新品数据 (16 工作线程并行多路复用，遇反爬秒切代理)
     if to_fetch_targets:
         def _fetch_target_worker(tgt: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[str]]:
             try:
@@ -419,7 +419,7 @@ def batch_collect_piggyback(
             except Exception as ex:
                 return (tgt, None, str(ex))
 
-        max_workers = min(8, len(to_fetch_targets))
+        max_workers = min(16, len(to_fetch_targets))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_map = {executor.submit(_fetch_target_worker, tgt): tgt for tgt in to_fetch_targets}
             for fut in as_completed(future_map):

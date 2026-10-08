@@ -30,7 +30,8 @@ class AutoRepriceService:
         cls,
         item: MakroPiggybackItem,
         db: Session,
-        force: bool = False
+        force: bool = False,
+        proxy: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         对单件在售跟品执行一次自动跟价巡检与调价
@@ -48,9 +49,9 @@ class AutoRepriceService:
         if not force and not item.auto_reprice:
             return {"status": "SKIPPED", "reason": "商品未开启自动跟价开关", "item_id": item.id}
 
-        # 1. 获取买家前台最新在售与竞争情报
+        # 1. 获取买家前台最新在售与竞争情报 (遇反爬自动秒切代理)
         target_ref = item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, item.item_id)
-        scraped = MakroScraperService.scrape_buyer_frontend(target_ref)
+        scraped = MakroScraperService.scrape_buyer_frontend(target_ref, proxy=proxy)
         
         comp_price = scraped.get("price", 0.0)
         comp_mrp = scraped.get("mrp", 0.0)
@@ -311,10 +312,13 @@ class AutoRepriceService:
             raise Exception(f"官方更新失败 (状态: {status}): {errors}")
 
     @classmethod
-    def run_reprice_for_store(cls, store: Store, db: Session) -> Dict[str, Any]:
+    def run_reprice_for_store(cls, store: Store, db: Session, max_workers: int = 8) -> Dict[str, Any]:
         """
-        为指定店铺中所有在售已激活且开启自动跟价的跟品执行全量跟价巡检
+        为指定店铺中所有在售已激活且开启自动跟价的跟品执行超高并发智能跟价巡检 (8线程多路复用，遇反爬秒切代理)
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from ..database import SessionLocal
+
         items = db.query(MakroPiggybackItem).filter(
             MakroPiggybackItem.store_id == store.id,
             MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]),
@@ -323,50 +327,63 @@ class AutoRepriceService:
         ).all()
 
         total = len(items)
+        if total == 0:
+            return {
+                "total_items": 0,
+                "success_count": 0,
+                "undercut_count": 0,
+                "winning_hold_count": 0,
+                "floor_count": 0,
+                "failed_count": 0,
+                "details": []
+            }
+
+        item_ids = [it.id for it in items]
         success_count = 0
         undercut_count = 0
         winning_hold_count = 0
         floor_count = 0
         failed_count = 0
-
         details = []
-        consecutive_blocked = 0
 
-        for idx, item in enumerate(items):
-            # 拟人化延时：每件商品之间等待 1.2 ~ 2.0 秒，避免被 PerimeterX 判定为恶意高频并发
-            if idx > 0:
-                time.sleep(random.uniform(1.2, 2.0))
+        logger.info(f"店铺 [{store.name}] 启动高并发自动跟价巡航：共 {total} 件商品，并发工作线程数: {min(max_workers, total)}")
 
+        def _cruise_worker(iid: int) -> Dict[str, Any]:
+            worker_db = SessionLocal()
             try:
-                res = cls.reprice_single_item(item, db)
-                action = res.get("action")
-                is_blocked = res.get("blocked", False)
+                target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
+                if not target_item:
+                    return {"status": "FAILED", "reason": "商品不存在", "item_id": iid}
+                return cls.reprice_single_item(target_item, worker_db)
+            except Exception as w_err:
+                return {"status": "FAILED", "reason": str(w_err), "item_id": iid}
+            finally:
+                worker_db.close()
 
-                if is_blocked:
-                    consecutive_blocked += 1
-                    # 熔断退避：如果连续 3 次被反爬拦截，说明当前 IP 处于短暂停滞期，休眠 15 秒冷却
-                    if consecutive_blocked >= 3:
-                        logger.warning(f"店铺 [{store.name}] 连续 {consecutive_blocked} 次遭遇反爬拦截，触发熔断休眠 15 秒冷却...")
-                        time.sleep(15.0)
-                        consecutive_blocked = 0
-                else:
-                    consecutive_blocked = 0
-
-                if action == "UNDER_CUT":
-                    undercut_count += 1
-                elif action == "WINNING_HOLD":
-                    winning_hold_count += 1
-                elif action == "REACHED_FLOOR":
-                    floor_count += 1
-                elif action == "FAILED":
+        actual_workers = min(max_workers, total)
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            future_map = {executor.submit(_cruise_worker, iid): iid for iid in item_ids}
+            for fut in as_completed(future_map):
+                try:
+                    res = fut.result()
+                    action = res.get("action")
+                    if action == "UNDER_CUT":
+                        undercut_count += 1
+                    elif action == "WINNING_HOLD":
+                        winning_hold_count += 1
+                    elif action == "REACHED_FLOOR":
+                        floor_count += 1
+                    elif action == "FAILED":
+                        failed_count += 1
+                    
+                    if res.get("status") == "SUCCESS":
+                        success_count += 1
+                    details.append(res)
+                except Exception as ex:
+                    logger.error(f"并发巡检线程执行异常: {ex}")
                     failed_count += 1
-                
-                if res.get("status") == "SUCCESS":
-                    success_count += 1
-                details.append(res)
-            except Exception as e:
-                logger.error(f"批量跟价异常 [ID: {item.id}]: {e}")
-                failed_count += 1
+
+        logger.info(f"店铺 [{store.name}] 高并发巡航巡检完成: 处理 {total} 件，成功 {success_count} 件 (降价跟进: {undercut_count}, 保持胜出: {winning_hold_count}, 触底保本: {floor_count}, 失败: {failed_count})")
 
         return {
             "total_items": total,

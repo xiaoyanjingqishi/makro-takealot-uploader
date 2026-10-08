@@ -5,6 +5,7 @@ import requests
 import threading
 from typing import Optional, Dict, Any, Tuple
 from .translation_service import TranslationService
+from .proxy_service import ProxyPoolService
 
 try:
     from curl_cffi import requests as cffi_requests
@@ -173,10 +174,10 @@ class MakroScraperService:
         cls._buyer_local.session = None
 
     @classmethod
-    def scrape_buyer_frontend(cls, url_or_fsn: str) -> Dict[str, Any]:
+    def scrape_buyer_frontend(cls, url_or_fsn: str, proxy: Optional[str] = None) -> Dict[str, Any]:
         """
         强化抓取 Makro 前台买家商城 (makro.co.za) 详情页获取当前售价、MRP 与竞争情报
-        具备 Chrome 124 浏览器指纹模拟 (curl_cffi)、国内清洁 IP 强制直连、长连接复用与深度多层级价格解析。
+        具备 Chrome 124 浏览器指纹模拟 (curl_cffi)、国内清洁 IP 强制直连与遇到反爬秒切携趣动态代理池。
         """
         fsn, item_id = cls.extract_identifiers(url_or_fsn)
         
@@ -221,15 +222,16 @@ class MakroScraperService:
         for cur_url in candidate_urls:
             chosen_url = cur_url
             try:
-                # 强化反爬：强制直连国内清洁 IP (proxies={"http": "", "https": ""})，绕过污染海外代理
-                # 同时使用 curl_cffi 模拟 Chrome 124 真实 TLS (JA3/JA4) 与 HTTP/2
+                # 初始请求：若指定代理则走代理；未指定则直连国内清洁 IP (极速 0 延迟)
+                cur_proxies = {"http": proxy, "https": proxy} if proxy else ({"http": "", "https": ""} if HAS_CURL_CFFI else {"http": None, "https": None})
+                
                 if HAS_CURL_CFFI:
                     resp = session.get(
                         cur_url,
                         headers=headers,
                         timeout=15,
                         allow_redirects=True,
-                        proxies={"http": "", "https": ""},
+                        proxies=cur_proxies,
                         impersonate="chrome124"
                     )
                 else:
@@ -238,19 +240,56 @@ class MakroScraperService:
                         headers=headers,
                         timeout=15,
                         allow_redirects=True,
-                        proxies={"http": None, "https": None}
+                        proxies=cur_proxies
                     )
 
                 if resp.status_code != 200:
                     continue
 
                 html = resp.text
-                if "/blocked" in resp.url or "<title>Are you a human?</title>" in html:
-                    logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}")
+                is_hit_bot = ("/blocked" in resp.url) or ("<title>Are you a human?</title>" in html) or (resp.status_code in [403, 429])
+
+                if is_hit_bot:
+                    logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}，启动动态代理自动故障转移...")
                     blocked = True
                     cls.reset_buyer_session()
-                    # 遭遇 IP 级反爬阻断时即刻止损，禁止在同一 IP 上无谓轮询其他候选链接
-                    break
+
+                    # ★★★ 遇反爬立即从动态代理池取国内 IP 自动换 IP 重试 ★★★
+                    dyn_proxy = ProxyPoolService.get_proxy()
+                    if dyn_proxy:
+                        logger.info(f"正在使用携趣国内动态代理换 IP 破防重试: {dyn_proxy}")
+                        try:
+                            dyn_proxies = {"http": dyn_proxy, "https": dyn_proxy}
+                            if HAS_CURL_CFFI:
+                                dyn_resp = cffi_requests.get(
+                                    cur_url,
+                                    headers=headers,
+                                    timeout=15,
+                                    allow_redirects=True,
+                                    proxies=dyn_proxies,
+                                    impersonate="chrome124"
+                                )
+                            else:
+                                dyn_resp = requests.get(
+                                    cur_url,
+                                    headers=headers,
+                                    timeout=15,
+                                    allow_redirects=True,
+                                    proxies=dyn_proxies
+                                )
+
+                            if dyn_resp.status_code == 200 and "/blocked" not in dyn_resp.url and "<title>Are you a human?</title>" not in dyn_resp.text:
+                                html = dyn_resp.text
+                                blocked = False
+                                logger.info(f"国内动态代理 {dyn_proxy} 成功破除反爬阻断，恢复正常解析！")
+                            else:
+                                ProxyPoolService.report_failure(dyn_proxy)
+                        except Exception as p_err:
+                            logger.warning(f"动态代理请求异常: {p_err}")
+                            ProxyPoolService.report_failure(dyn_proxy)
+
+                    if blocked:
+                        break
 
                 # 1. 深度解析 window.__INITIAL_STATE__
                 state_m = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.S)
@@ -479,15 +518,35 @@ class MakroScraperService:
 
         # 3. 整合权威数据
         final_item_id = item_id or frontend_info.get("item_id") or ""
-        title = (official.get("title") if official else "") or frontend_info.get("title") or f"Makro Product {fsn}"
+        
+        # 标题提取：优先官方/前台，若无则尝试客户端卡片数据
+        title = (official.get("title") if official else "") or frontend_info.get("title")
+        if not title and client_data and client_data.get("title"):
+            title = str(client_data["title"]).strip()
+
+        # 主图提取：优先官方高精/前台主图，若无则尝试客户端卡片图片
+        image_url = (official.get("image_url") if official else "") or frontend_info.get("image_url") or ""
+        if not image_url and client_data and client_data.get("image_url"):
+            image_url = str(client_data["image_url"]).strip()
+
+        price = float(frontend_info.get("price") or 0.0)
+        if price <= 0 and client_data and client_data.get("price"):
+            try:
+                price = float(client_data["price"])
+            except Exception:
+                pass
+
+        # ★★★ 严格数据守门员：若既无前台在售价又无主图，判定为下架/失效商品，坚决拒绝入库防污染！★★★
+        if price <= 0 and not image_url:
+            raise ValueError(f"Makro 官方接口及前台详情均未获取到有效在售数据或已失效下架 (FSN: {fsn})，已自动拦截防污染")
+
+        title = title or f"Makro Product {fsn}"
         brand = (official.get("brand") if official else "") or frontend_info.get("brand") or getattr(store, "default_brand", "Generic") or "Generic"
         vertical = (official.get("vertical") if official else "") or frontend_info.get("vertical") or "general"
-        image_url = (official.get("image_url") if official else "") or frontend_info.get("image_url") or ""
         model_number = (official.get("model_number") if official else "")
         barcode = (official.get("barcode") if official else "")
         title_zh = official.get("title_zh") if official else TranslationService.translate_title(title)
 
-        price = float(frontend_info.get("price") or 0.0)
         mrp = float(frontend_info.get("mrp") or (round(price * 1.5, 2) if price > 0 else 0.0))
         if price > 0 and mrp < price:
             mrp = round(price * 1.5, 2)
