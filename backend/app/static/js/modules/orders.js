@@ -6,7 +6,8 @@ export const ordersMethods = {
   changeOrderStatus(stKey) {
     this.orders.status = stKey;
     this.loadStoreOrders(1);
-  },,
+  },
+
 
   async loadStoreOrders(page = 1) {
     if (!this.selectedStoreId) return;
@@ -37,7 +38,8 @@ export const ordersMethods = {
     } finally {
       this.orders.loading = false;
     }
-  },,
+  },
+
 
   async syncStoreOrders() {
     if (!this.selectedStoreId) {
@@ -62,7 +64,8 @@ export const ordersMethods = {
     } finally {
       this.syncingOrders = false;
     }
-  },,
+  },
+
 
   formatOrderState(st) {
     const map = {

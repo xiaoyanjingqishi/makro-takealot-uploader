@@ -13,7 +13,8 @@ export const settingsMethods = {
     } catch (e) {
       console.error(e);
     }
-  },,
+  },
+
 
   async saveSettings() {
     try {
@@ -31,7 +32,8 @@ export const settingsMethods = {
     } catch (e) {
       alert('保存失败: ' + e);
     }
-  },,
+  },
+
 
   async testJevConnectivity() {
     this.testingJev = true;

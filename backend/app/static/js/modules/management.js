@@ -38,14 +38,16 @@ export const managementMethods = {
       e = this.management.customEnd || todayStr;
     }
     return { start_date: s, end_date: e };
-  },,
+  },
+
 
   setManagementDateRange(range) {
     this.management.dateRange = range;
     if (range !== 'custom') {
       this.loadManagementData();
     }
-  },,
+  },
+
 
   async loadManagementData() {
     if (!this.currentUser || this.currentUser.role !== 'ADMIN') return;
@@ -60,7 +62,8 @@ export const managementMethods = {
     } finally {
       this.management.loading = false;
     }
-  },,
+  },
+
 
   async loadManagementOverview() {
     try {
@@ -75,7 +78,8 @@ export const managementMethods = {
     } catch (e) {
       console.error('加载管理概览失败:', e);
     }
-  },,
+  },
+
 
   async loadManagementLeaderboard() {
     try {
@@ -90,7 +94,8 @@ export const managementMethods = {
     } catch (e) {
       console.error('加载人效排行榜失败:', e);
     }
-  },,
+  },
+
 
   async loadManagementHourly() {
     try {
@@ -104,7 +109,8 @@ export const managementMethods = {
     } catch (e) {
       console.error('加载时段节奏失败:', e);
     }
-  },,
+  },
+
 
   async loadManagementLogs(page = 1) {
     this.management.logs.loading = true;
@@ -127,7 +133,8 @@ export const managementMethods = {
     } finally {
       this.management.logs.loading = false;
     }
-  },,
+  },
+
 
   drillDownUser(userId) {
     this.management.filterUserId = userId;
@@ -138,20 +145,23 @@ export const managementMethods = {
       const el = document.getElementById('management-stream-section');
       if (el) el.scrollIntoView({ behavior: 'smooth' });
     });
-  },,
+  },
+
 
   clearUserDrillDown() {
     this.management.filterUserId = null;
     this.loadManagementOverview();
     this.loadManagementHourly();
     this.loadManagementLogs(1);
-  },,
+  },
+
 
   exportManagementWorkload() {
     const { start_date, end_date } = this.getManagementDateParams();
     const token = localStorage.getItem('makro_auth_token') || '';
     window.open(`/api/management/export-workload?start_date=${start_date}&end_date=${end_date}&token=${token}`);
-  },,
+  },
+
 
   async loadMyDailySummary() {
     if (!this.currentUser) return;
@@ -163,7 +173,8 @@ export const managementMethods = {
     } catch (e) {
       console.error('加载个人今日战报失败:', e);
     }
-  },,
+  },
+
 
   getUserDisplayName(userId) {
     if (!userId) return '系统/未分配';

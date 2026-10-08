@@ -483,7 +483,7 @@ const app = createApp({
           isCsvCollecting: false,
           productAbortController: null
         };
-      },,
+      },
 
   computed: {
         businessTabs() {
@@ -672,7 +672,7 @@ const app = createApp({
           }
           return { orig, newFloor };
         }
-      },,
+      },
 
   async mounted() {
         const authed = await this.checkAuth();
@@ -705,7 +705,7 @@ const app = createApp({
             this.closeImagePreview();
           }
         });
-      },,
+      },
 
   methods: {
     ...coreMethods,

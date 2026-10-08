@@ -18,12 +18,14 @@ export const storesMethods = {
         this.loadStoreOrders(1);
       }
     }
-  },,
+  },
+
 
   getStoreNameById(sid) {
     const s = (this.stores || []).find(x => x.id === sid);
     return s ? s.name : `店铺#${sid}`;
-  },,
+  },
+
 
   async loadStores() {
     this.loadingStores = true;
@@ -37,7 +39,8 @@ export const storesMethods = {
     } finally {
       this.loadingStores = false;
     }
-  },,
+  },
+
 
   openAddStoreModal() {
     this.storeForm = {
@@ -62,7 +65,8 @@ export const storesMethods = {
     };
     this.storeModalTitle = '➕ 添加新店铺';
     this.showStoreModal = true;
-  },,
+  },
+
 
   openEditStoreModal(s) {
     this.storeForm = {
@@ -87,7 +91,8 @@ export const storesMethods = {
     };
     this.storeModalTitle = `✏️ 编辑店铺: ${s.name}`;
     this.showStoreModal = true;
-  },,
+  },
+
 
   detectEmailProvider(emailAddr) {
     if (!emailAddr || !emailAddr.includes('@')) return 'custom';
@@ -97,7 +102,8 @@ export const storesMethods = {
     if (domain.includes('qq')) return 'qq';
     if (domain.includes('outlook') || domain.includes('hotmail') || domain.includes('live')) return 'outlook';
     return 'custom';
-  },,
+  },
+
 
   resolveImapDefaults(emailAddr) {
     if (!emailAddr || !emailAddr.includes('@')) return { server: 'imap.gmail.com', port: 993 };
@@ -110,7 +116,8 @@ export const storesMethods = {
     if (domain === 'exmail.qq.com') return { server: 'imap.exmail.qq.com', port: 993 };
     if (domain === 'outlook.com' || domain === 'hotmail.com' || domain === 'live.com' || domain === 'office365.com') return { server: 'outlook.office365.com', port: 993 };
     return { server: 'imap.' + domain, port: 993 };
-  },,
+  },
+
 
   onStoreEmailInput() {
     const em = (this.storeForm.login_email || '').trim();
@@ -120,7 +127,8 @@ export const storesMethods = {
       this.storeForm.imap_port = def.port;
       this.storeForm.imap_provider = this.detectEmailProvider(em);
     }
-  },,
+  },
+
 
   setStoreFormMailProvider(prov) {
     this.storeForm.imap_provider = prov.id;
@@ -128,7 +136,8 @@ export const storesMethods = {
       this.storeForm.imap_server = prov.srv;
       this.storeForm.imap_port = 993;
     }
-  },,
+  },
+
 
   async testEmailConnection(emailAddr, password, server, port) {
     if (!emailAddr || !password) {
@@ -161,7 +170,8 @@ export const storesMethods = {
     } finally {
       this.testingEmail = false;
     }
-  },,
+  },
+
 
   testEmailFromStoreForm() {
     const emailAddr = this.storeForm.imap_user || this.storeForm.login_email;
@@ -171,7 +181,8 @@ export const storesMethods = {
       return;
     }
     this.testEmailConnection(emailAddr, pwd, this.storeForm.imap_server, this.storeForm.imap_port);
-  },,
+  },
+
 
   openAutoLoginFromStoreForm() {
     this.openAutoLoginModal({
@@ -183,7 +194,8 @@ export const storesMethods = {
       imap_port: this.storeForm.imap_port,
       imap_user: this.storeForm.imap_user
     });
-  },,
+  },
+
 
   openAutoLoginModal(store = null) {
     this.autoLoginStore = store;
@@ -210,12 +222,14 @@ export const storesMethods = {
     this.autoLoginCountdown = 60;
     if (this.autoLoginTimer) clearInterval(this.autoLoginTimer);
     this.showAutoLoginModal = true;
-  },,
+  },
+
 
   closeAutoLoginModal() {
     if (this.autoLoginTimer) clearInterval(this.autoLoginTimer);
     this.showAutoLoginModal = false;
-  },,
+  },
+
 
   onAutoLoginStoreChange() {
     const s = this.stores.find(x => x.id === this.autoLoginForm.store_id);
@@ -238,7 +252,8 @@ export const storesMethods = {
         this.autoLoginForm.imap_port = s.imap_port;
       }
     }
-  },,
+  },
+
 
   onAutoLoginEmailInput() {
     const em = (this.autoLoginForm.email || '').trim();
@@ -248,7 +263,8 @@ export const storesMethods = {
       this.autoLoginForm.imap_port = def.port;
       this.autoLoginForm.imap_provider = this.detectEmailProvider(em);
     }
-  },,
+  },
+
 
   selectAutoLoginProvider(prov) {
     this.autoLoginForm.imap_provider = prov.id;
@@ -256,7 +272,8 @@ export const storesMethods = {
       this.autoLoginForm.imap_server = prov.srv;
       this.autoLoginForm.imap_port = prov.port || 993;
     }
-  },,
+  },
+
 
   async startAutoLoginPipeline() {
     const hasCachedPwd = this.autoLoginStore && this.autoLoginStore.has_login_password;
@@ -350,7 +367,8 @@ export const storesMethods = {
         this.autoLoginErrorMsg = '发起登录请求网络异常: ' + e;
       }
     }
-  },,
+  },
+
 
   switchToManualOtpMode() {
     if (this.autoLoginTimer) clearInterval(this.autoLoginTimer);
@@ -358,7 +376,8 @@ export const storesMethods = {
     this.$nextTick(() => {
       if (this.$refs.otpInput) this.$refs.otpInput.focus();
     });
-  },,
+  },
+
 
   async submitManualOtp() {
     if (!this.autoLoginForm.otp || this.autoLoginForm.otp.trim().length !== 6) {
@@ -397,7 +416,8 @@ export const storesMethods = {
     } catch (e) {
       alert('核验验证码网络异常: ' + e);
     }
-  },,
+  },
+
 
   async saveStore() {
     if (!this.storeForm.name || !this.storeForm.seller_id) {
@@ -443,7 +463,8 @@ export const storesMethods = {
     } catch (e) {
       alert('保存店铺网络异常: ' + e);
     }
-  },,
+  },
+
 
   async triggerAutoLoginAllStores() {
     if (!confirm('确定立即对所有已配置账密的店铺执行全自动保活检测与登录刷新吗？')) return;
@@ -465,7 +486,8 @@ export const storesMethods = {
     } finally {
       this.triggeringAutoLoginAll = false;
     }
-  },,
+  },
+
 
   async deleteStore(s) {
     if (!confirm(`确定要删除店铺【${s.name}】吗？\n注意：如果该店铺已有关联的上架记录，删除将同时清理该店铺的数据！`)) return;
@@ -489,7 +511,8 @@ export const storesMethods = {
     } catch (e) {
       alert('删除店铺异常: ' + e);
     }
-  },,
+  },
+
 
   async setDefaultStore(storeId) {
     try {
@@ -512,7 +535,8 @@ export const storesMethods = {
     } catch (e) {
       alert('网络异常: ' + e);
     }
-  },,
+  },
+
 
   async testStore(storeId, silent = false) {
     this.testingStoreId = storeId;

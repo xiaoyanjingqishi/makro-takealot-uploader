@@ -15,7 +15,8 @@ export const piggybackMethods = {
     } catch (e) {
       console.warn('加载跟品 KPI 异常:', e);
     }
-  },,
+  },
+
 
   selectKpiFilter(filterType) {
     if (filterType === 'total') {
@@ -38,13 +39,15 @@ export const piggybackMethods = {
       this.piggyback.buybox_status = 'MISSING_FLOOR';
     }
     this.loadPiggybackItems(1);
-  },,
+  },
+
 
   changePiggybackStage(stage) {
     this.piggyback.stage = stage;
     this.piggyback.buybox_status = 'ALL';
     this.loadPiggybackItems(1);
-  },,
+  },
+
 
   startInlineEdit(item, field) {
     this.inlineEditing = {
@@ -60,11 +63,13 @@ export const piggybackMethods = {
         else input.focus();
       }
     });
-  },,
+  },
+
 
   cancelInlineEdit() {
     this.inlineEditing = { id: null, field: null, tempValue: null, saving: false };
-  },,
+  },
+
 
   async saveInlineEdit(item) {
     if (!this.inlineEditing.id || this.inlineEditing.id !== item.id) return;
@@ -107,7 +112,8 @@ export const piggybackMethods = {
       item[field] = oldVal;
       this.showToast('修改失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   openBatchFloorModal() {
     if (this.piggyback.selectedIds.length === 0) {
@@ -115,7 +121,8 @@ export const piggybackMethods = {
       return;
     }
     this.showBatchFloorModal = true;
-  },,
+  },
+
 
   async handleBatchSetFloor() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -142,7 +149,8 @@ export const piggybackMethods = {
     } finally {
       this.submittingBatchFloor = false;
     }
-  },,
+  },
+
 
   async batchToggleAutoReprice(enable) {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -162,7 +170,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('批量修改跟价状态异常: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async loadPiggybackItems(page = 1) {
     this.loadingPiggyback = true;
@@ -218,7 +227,8 @@ export const piggybackMethods = {
     } finally {
       this.loadingPiggyback = false;
     }
-  },,
+  },
+
 
   getMakroProductUrl(item) {
     if (item.makro_url && item.makro_url.includes('/p/')) {
@@ -227,24 +237,28 @@ export const piggybackMethods = {
     const fsn = item.makro_product_id;
     const itm = item.item_id || fsn;
     return `https://www.makro.co.za/-/p/${itm}?pid=${fsn}`;
-  },,
+  },
+
 
   savePiggybackAutoCompliance() {
     localStorage.setItem('makro_piggyback_auto_compliance', this.piggyback.autoCompliance ? 'true' : 'false');
     this.showToast(this.piggyback.autoCompliance ? '已开启采集后自动AI侵权检测' : '已关闭自动检测，改为手动批量质检', 'info');
-  },,
+  },
+
 
   changePiggybackState(st) {
     this.piggyback.status = st;
     this.piggyback.isAllFilteredSelected = false;
     this.loadPiggybackItems(1);
-  },,
+  },
+
 
   changePiggybackCompliance(cst) {
     this.piggyback.compliance_status = cst;
     this.piggyback.isAllFilteredSelected = false;
     this.loadPiggybackItems(1);
-  },,
+  },
+
 
   toggleSelectAllPiggyback() {
     this.piggyback.selectAll = !this.piggyback.selectAll;
@@ -258,19 +272,22 @@ export const piggybackMethods = {
       this.piggyback.selectedIds = this.piggyback.selectedIds.filter(id => !curIds.has(id));
       this.piggyback.isAllFilteredSelected = false;
     }
-  },,
+  },
+
 
   handlePiggybackItemCheckboxChange() {
     this.piggyback.isAllFilteredSelected = false;
     this.piggyback.selectAll = this.piggyback.items.length > 0 && 
       this.piggyback.items.every(it => this.piggyback.selectedIds.includes(it.id));
-  },,
+  },
+
 
   clearPiggybackSelection() {
     this.piggyback.selectedIds = [];
     this.piggyback.selectAll = false;
     this.piggyback.isAllFilteredSelected = false;
-  },,
+  },
+
 
   async selectAllFilteredPiggyback() {
     this.loadingPiggyback = true;
@@ -296,7 +313,8 @@ export const piggybackMethods = {
     } finally {
       this.loadingPiggyback = false;
     }
-  },,
+  },
+
 
   async handleCollectPiggyback() {
     if (!this.collectPiggybackForm.url_or_fsn) return;
@@ -322,7 +340,8 @@ export const piggybackMethods = {
     } finally {
       this.collectingPiggyback = false;
     }
-  },,
+  },
+
 
   async handleBatchCollectPiggyback() {
     const lines = this.batchCollectPiggybackForm.raw_text.split('\n').map(x => x.trim()).filter(Boolean);
@@ -350,7 +369,8 @@ export const piggybackMethods = {
     } finally {
       this.batchCollectingPiggyback = false;
     }
-  },,
+  },
+
 
   openBatchPricingModal() {
     if (this.piggyback.selectedIds.length === 0) {
@@ -358,7 +378,8 @@ export const piggybackMethods = {
       return;
     }
     this.showBatchPricingPiggybackModal = true;
-  },,
+  },
+
 
   async handleBatchApplyPricing() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -391,7 +412,8 @@ export const piggybackMethods = {
     } finally {
       this.applyingBatchPricing = false;
     }
-  },,
+  },
+
 
   getStrategyLabel(st) {
     if (!st) return '比竞对低 R1.00';
@@ -402,7 +424,8 @@ export const piggybackMethods = {
     if (st.startsWith('CUSTOM:')) return `自定义差额 R${st.split(':')[1]}`;
     if (st === 'MANUAL') return '平价跟卖';
     return st;
-  },,
+  },
+
 
   getStrategyShortTag(item) {
     const st = item.price_strategy || 'MINUS_1';
@@ -414,7 +437,8 @@ export const piggybackMethods = {
     if (st === 'MANUAL') return '平价';
     if (item.original_price > item.target_price) return `-R${(item.original_price - item.target_price).toFixed(2)}`;
     return '平价';
-  },,
+  },
+
 
   toggleStrategyDropdown(item) {
     if (this.activeStrategyDropdownId === item.id) {
@@ -422,11 +446,13 @@ export const piggybackMethods = {
     } else {
       this.activeStrategyDropdownId = item.id;
     }
-  },,
+  },
+
 
   closeStrategyDropdown() {
     this.activeStrategyDropdownId = null;
-  },,
+  },
+
 
   async selectItemStrategy(item, strategy, customDelta = null) {
     this.activeStrategyDropdownId = null;
@@ -453,7 +479,8 @@ export const piggybackMethods = {
       item.price_strategy = oldStrategy;
       this.showToast('修改跟价公式失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   openCustomStrategyPrompt(item) {
     this.activeStrategyDropdownId = null;
@@ -466,7 +493,8 @@ export const piggybackMethods = {
     }
     const st = `CUSTOM:${val >= 0 ? '+' : ''}${val}`;
     this.selectItemStrategy(item, st, val);
-  },,
+  },
+
 
   async handleCheckCompliance(item) {
     this.showToast('正在调用双 AI 执行文本+主图视觉侵权与合规全项质检...', 'info');
@@ -485,7 +513,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('检测失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async handleBatchCheckCompliance() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -520,7 +549,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('批量质检异常: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async handlePublishPiggyback(item) {
     if (item.compliance_status === 'PROHIBITED') {
@@ -548,7 +578,8 @@ export const piggybackMethods = {
       item.error_message = e.message;
       this.showToast('跟品挂靠失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   openBatchPublishPiggybackModal() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -559,7 +590,8 @@ export const piggybackMethods = {
       this.batchPublishPiggybackTargetStoreId = this.activeStores[0].id;
     }
     this.showBatchPublishPiggybackModal = true;
-  },,
+  },
+
 
   async executeBatchPublishPiggyback() {
     if (this.piggyback.selectedIds.length === 0 || this.isBatchPublishingPiggyback) return;
@@ -609,7 +641,8 @@ export const piggybackMethods = {
     } finally {
       this.isBatchPublishingPiggyback = false;
     }
-  },,
+  },
+
 
   openBatchSetStoreModal() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -619,7 +652,8 @@ export const piggybackMethods = {
       this.batchSetStoreTargetId = this.activeStores[0].id;
     }
     this.showBatchSetStoreModal = true;
-  },,
+  },
+
 
   async executeBatchSetStore() {
     if (this.piggyback.selectedIds.length === 0 || !this.batchSetStoreTargetId || this.isBatchSettingStore) return;
@@ -646,11 +680,13 @@ export const piggybackMethods = {
     } finally {
       this.isBatchSettingStore = false;
     }
-  },,
+  },
+
 
   async handleBatchPublishPiggyback() {
     this.openBatchPublishPiggybackModal();
-  },,
+  },
+
 
   async handleAbandonPiggyback(item) {
     const isPublished = item.status === 'ACTIVE' || item.status === 'PUBLISHED';
@@ -672,7 +708,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('弃用失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async handleBatchAbandonPiggyback() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -694,7 +731,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('批量弃用失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async handleRestorePiggyback(item) {
     if (!confirm(`确认恢复「${item.title.substring(0, 25)}...」回到正常跟品待处理池吗？`)) return;
@@ -710,7 +748,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('恢复失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async handleBatchRestorePiggyback() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -731,7 +770,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('批量恢复失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async handleDeletePiggyback(item) {
     if (!confirm(`确认从跟品池移除「${item.title.substring(0, 30)}...」吗？`)) return;
@@ -743,7 +783,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast(e.message, 'error');
     }
-  },,
+  },
+
 
   async handleBatchDeletePiggyback() {
     if (this.piggyback.selectedIds.length === 0) return;
@@ -763,12 +804,14 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('批量删除失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   openEditPiggyback(item) {
     this.editingPiggybackItem = JSON.parse(JSON.stringify(item));
     this.showEditPiggybackModal = true;
-  },,
+  },
+
 
   async saveEditPiggyback() {
     if (!this.editingPiggybackItem) return;
@@ -802,13 +845,15 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast(e.message, 'error');
     }
-  },,
+  },
+
 
   openComplianceDetails(item) {
     this.currentComplianceItem = item;
     this.piggybackArbitrationNotes = (item.compliance_details && item.compliance_details.human_arbitration && item.compliance_details.human_arbitration.notes) || '';
     this.showComplianceDetailModal = true;
-  },,
+  },
+
 
   async submitPiggybackArbitration(item, verdict) {
     if (!item) return;
@@ -833,7 +878,8 @@ export const piggybackMethods = {
     } finally {
       this.isArbitratingPiggyback = false;
     }
-  },,
+  },
+
 
   async triggerSingleItemReprice(item) {
     this.showToast(`正在探测竞对价格并为 [${item.seller_sku}] 执行跟价...`, 'info');
@@ -857,7 +903,8 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('执行跟价失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async triggerFullCruiseReprice() {
     const storeId = this.piggyback.store_id || null;
@@ -889,7 +936,8 @@ export const piggybackMethods = {
       this.runningFullCruise = false;
       this.showToast('启动全量巡检异常: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   async triggerBatchReprice() {
     const isSelected = this.piggyback.selectedIds.length > 0;
@@ -916,7 +964,8 @@ export const piggybackMethods = {
     } finally {
       this.runningBatchReprice = false;
     }
-  },,
+  },
+
 
   async toggleItemAutoReprice(item) {
     const nextState = !item.auto_reprice;
@@ -932,12 +981,14 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('切换自动跟价开关失败: ' + e.message, 'error');
     }
-  },,
+  },
+
 
   openRepriceLogsModal() {
     this.showRepriceLogsModal = true;
     this.loadRepriceLogs(1);
-  },,
+  },
+
 
   async loadRepriceLogs(page = 1) {
     this.loadingRepriceLogs = true;

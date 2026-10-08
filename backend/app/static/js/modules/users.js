@@ -17,7 +17,8 @@ export const usersMethods = {
     } finally {
       this.loadingUsers = false;
     }
-  },,
+  },
+
 
   openAddUserModal() {
     this.userModalTitle = '新建员工账号';
@@ -30,7 +31,8 @@ export const usersMethods = {
       store_ids: this.stores.map(s => s.id)
     };
     this.showUserModal = true;
-  },,
+  },
+
 
   openEditUserModal(u) {
     this.userModalTitle = `编辑用户: ${u.username}`;
@@ -43,7 +45,8 @@ export const usersMethods = {
       store_ids: [...(u.store_ids || [])]
     };
     this.showUserModal = true;
-  },,
+  },
+
 
   async saveUser() {
     this.isSavingUser = true;
@@ -96,7 +99,8 @@ export const usersMethods = {
     } finally {
       this.isSavingUser = false;
     }
-  },,
+  },
+
 
   deleteUser(u) {
     this.openConfirm({
@@ -122,13 +126,15 @@ export const usersMethods = {
         }
       }
     });
-  },,
+  },
+
 
   openAuthStoresModal(u) {
     this.targetAuthUser = u;
     this.targetAuthStoreIds = [...(u.store_ids || [])];
     this.showAuthStoresModal = true;
-  },,
+  },
+
 
   async saveUserStores() {
     if (!this.targetAuthUser) return;
@@ -151,7 +157,8 @@ export const usersMethods = {
     } catch (e) {
       alert('保存店铺授权网络异常: ' + e);
     }
-  },,
+  },
+
 
   async loadOperators() {
     try {
@@ -163,7 +170,8 @@ export const usersMethods = {
     } catch (e) {
       console.warn('获取员工列表异常:', e);
     }
-  },,
+  },
+
 
   openBatchAssignModal() {
     if (this.selectedIds.length === 0) {
@@ -172,7 +180,8 @@ export const usersMethods = {
     }
     this.batchAssignTargetUserId = this.operatorsList.length > 0 ? this.operatorsList[0].id : '';
     this.showBatchAssignModal = true;
-  },,
+  },
+
 
   async submitBatchAssignUser() {
     if (this.selectedIds.length === 0 || this.isAssigningUser) return;

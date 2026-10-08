@@ -6,7 +6,8 @@ export const store_productsMethods = {
   changeStoreProductState(stKey) {
     this.storeProducts.internal_state = stKey;
     this.loadStoreProducts(1);
-  },,
+  },
+
 
   async loadStoreProducts(page = 1) {
     if (!this.selectedStoreId) return;
@@ -37,7 +38,8 @@ export const store_productsMethods = {
     } finally {
       this.storeProducts.loading = false;
     }
-  },,
+  },
+
 
   async syncStoreProducts() {
     if (!this.selectedStoreId) {
@@ -65,12 +67,14 @@ export const store_productsMethods = {
     } finally {
       this.syncingStoreProducts = false;
     }
-  },,
+  },
+
 
   startEditInventory(item) {
     this.editingInventoryId = item.id;
     this.editingInventoryVal = item.inventory;
-  },,
+  },
+
 
   async saveInlineInventory(item) {
     if (this.editingInventoryId !== item.id) return;
@@ -107,7 +111,8 @@ export const store_productsMethods = {
       item.inventory = oldQty;
       alert('修改库存网络异常: ' + e);
     }
-  },,
+  },
+
 
   formatListingState(st) {
     const map = {
@@ -119,7 +124,8 @@ export const store_productsMethods = {
       'ARCHIVED': '已归档'
     };
     return map[st] || st;
-  },,
+  },
+
 
   toggleSelectCurrentPageStoreProducts() {
     if (this.isAllCurrentPageStoreProductsSelected) {
@@ -131,7 +137,8 @@ export const store_productsMethods = {
       const set = new Set([...this.selectedStoreProductSkus, ...pageSkus]);
       this.selectedStoreProductSkus = Array.from(set);
     }
-  },,
+  },
+
 
   toggleSelectAllStoreProducts() {
     this.isAllStoreProductsSelected = !this.isAllStoreProductsSelected;
@@ -140,7 +147,8 @@ export const store_productsMethods = {
       const set = new Set([...this.selectedStoreProductSkus, ...pageSkus]);
       this.selectedStoreProductSkus = Array.from(set);
     }
-  },,
+  },
+
 
   openBatchInventoryModal() {
     if (!this.isAllStoreProductsSelected && this.selectedStoreProductSkus.length === 0) {
@@ -148,7 +156,8 @@ export const store_productsMethods = {
       return;
     }
     this.showBatchInventoryModal = true;
-  },,
+  },
+
 
   async submitBatchInventory() {
     if (!this.selectedStoreId) {

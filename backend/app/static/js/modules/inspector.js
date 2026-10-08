@@ -8,7 +8,8 @@ export const inspectorMethods = {
     this.activeItem = JSON.parse(JSON.stringify(item));
     this.currentTab = 'inspector';
     this.fetchFullProductDetails(item.id);
-  },,
+  },
+
 
   async saveActiveItem() {
     try {
@@ -59,7 +60,8 @@ export const inspectorMethods = {
     } catch (e) {
       alert('保存失败: ' + e);
     }
-  },,
+  },
+
 
   async reCleanActiveItem(mode = null) {
     this.isCleaning = true;
@@ -97,7 +99,8 @@ export const inspectorMethods = {
     } finally {
       this.isCleaning = false;
     }
-  },,
+  },
+
 
   onInspectorSellingPriceInput() {
     if (this.activeItem) {

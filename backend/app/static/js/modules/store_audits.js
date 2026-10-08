@@ -6,7 +6,8 @@ export const store_auditsMethods = {
   changeStoreAuditStatus(stKey) {
     this.storeAudits.status = stKey;
     this.loadStoreAudits(1);
-  },,
+  },
+
 
   async loadStoreAudits(page = 1) {
     if (!this.selectedStoreId) return;
@@ -42,7 +43,8 @@ export const store_auditsMethods = {
     } finally {
       this.storeAudits.loading = false;
     }
-  },,
+  },
+
 
   async syncStoreAudits() {
     if (!this.selectedStoreId) {
@@ -70,17 +72,20 @@ export const store_auditsMethods = {
     } finally {
       this.syncingStoreAudits = false;
     }
-  },,
+  },
+
 
   openAuditDetail(it) {
     this.activeAuditDetail = it;
     this.showAuditDetailModal = true;
-  },,
+  },
+
 
   openAuditLocalProduct(localP) {
     this.activeAuditLocalProduct = localP;
     this.showAuditLocalProductModal = true;
-  },,
+  },
+
 
   jumpToLocalProduct(target) {
     this.showAuditDetailModal = false;

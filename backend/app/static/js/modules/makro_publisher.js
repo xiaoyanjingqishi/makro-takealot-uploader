@@ -5,7 +5,8 @@
 export const makro_publisherMethods = {
   async publishItem(item) {
     this.triggerProductPublish(item);
-  },,
+  },
+
 
   async publishSingleVariant(v) {
     if (!confirm(`确认单独上传变体【${v.sku_id}】(${v.variant_title || v.colour || v.size}) 到 Makro 吗？`)) return;
@@ -128,7 +129,8 @@ export const makro_publisherMethods = {
     } finally {
       this.publishingVariantId = null;
     }
-  },,
+  },
+
 
   openBatchPublishModal() {
     if (this.selectedIds.length === 0 || this.isBatchPublishing) {
@@ -141,7 +143,8 @@ export const makro_publisherMethods = {
     }
     this.batchPublishForce = false;
     this.showBatchPublishModal = true;
-  },,
+  },
+
 
   async executeBatchPublish() {
     if (this.selectedIds.length === 0 || this.isBatchPublishing) return;
@@ -215,14 +218,16 @@ export const makro_publisherMethods = {
     } finally {
       this.isBatchPublishing = false;
     }
-  },,
+  },
+
 
   triggerProductPublish(item) {
     if (!item) return;
     this.singlePublishItem = item;
     this.singlePublishForce = item.compliance_status === 'PROHIBITED';
     this.showSinglePublishModal = true;
-  },,
+  },
+
 
   async doPublishItem(item, storeId, publishAll, force) {
     if (!item) return;

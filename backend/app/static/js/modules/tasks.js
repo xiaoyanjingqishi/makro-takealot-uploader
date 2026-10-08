@@ -24,7 +24,8 @@ export const tasksMethods = {
     } catch (e) {
       console.error(e);
     }
-  },,
+  },
+
 
   async checkActiveTasks() {
     try {
@@ -35,21 +36,24 @@ export const tasksMethods = {
     } catch (e) {
       console.error('检查活跃任务异常:', e);
     }
-  },,
+  },
+
 
   ensureBgTasksPolling() {
     if (this.bgTasksPollTimer) return;
     this.bgTasksPollTimer = setInterval(async () => {
       await this.pollActiveTasks();
     }, 800);
-  },,
+  },
+
 
   stopBgTasksPolling() {
     if (this.bgTasksPollTimer) {
       clearInterval(this.bgTasksPollTimer);
       this.bgTasksPollTimer = null;
     }
-  },,
+  },
+
 
   async pollActiveTasks() {
     try {
@@ -94,7 +98,8 @@ export const tasksMethods = {
     } catch (err) {
       console.error('轮询后台任务异常:', err);
     }
-  },,
+  },
+
 
   addOrUpdateBgTask(task) {
     const idx = this.activeBgTasks.findIndex(x => x.id === task.id);
@@ -106,14 +111,16 @@ export const tasksMethods = {
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
     }
-  },,
+  },
+
 
   dismissBgTask(taskId) {
     this.activeBgTasks = this.activeBgTasks.filter(t => t.id !== taskId);
     if (this.activeBgTasks.length === 0) {
       this.stopBgTasksPolling();
     }
-  },,
+  },
+
 
   async cancelBgTask(task) {
     if (!confirm(`确定要终止当前任务【${task.name}】吗？`)) return;
@@ -129,7 +136,8 @@ export const tasksMethods = {
     } catch (e) {
       alert('取消任务失败: ' + e);
     }
-  },,
+  },
+
 
   formatJsonLog(logData) {
     if (!logData) return '暂无详细回执数据';
@@ -142,12 +150,14 @@ export const tasksMethods = {
     } catch (e) {
       return String(logData);
     }
-  },,
+  },
+
 
   openLogDetail(t) {
     this.activeLogDetail = t;
     this.showLogDetailModal = true;
-  },,
+  },
+
 
   getTaskTypeInfo(type) {
     if (!this._taskTypeMap) {

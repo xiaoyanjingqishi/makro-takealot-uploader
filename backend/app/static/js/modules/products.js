@@ -61,7 +61,8 @@ export const productsMethods = {
         this.loadingProducts = false;
       }
     }
-  },,
+  },
+
 
   async batchClean() {
     if (this.selectedIds.length === 0 || this.isCleaning) return;
@@ -102,11 +103,13 @@ export const productsMethods = {
     } finally {
       this.isCleaning = false;
     }
-  },,
+  },
+
 
   async batchPublish() {
     this.openBatchPublishModal();
-  },,
+  },
+
 
   async batchCheckCompliance() {
     if (this.selectedIds.length === 0 || this.isBatchCheckingCompliance) return;
@@ -145,7 +148,8 @@ export const productsMethods = {
     } finally {
       this.isBatchCheckingCompliance = false;
     }
-  },,
+  },
+
 
   async submitQuickCollect() {
     const info = this.parsedPlidInfo;
@@ -179,7 +183,8 @@ export const productsMethods = {
     } finally {
       this.isQuickCollecting = false;
     }
-  },,
+  },
+
 
   handleCsvFileSelect(e) {
     const files = e.target.files || (e.dataTransfer && e.dataTransfer.files);
@@ -199,13 +204,15 @@ export const productsMethods = {
       }
     };
     reader.readAsText(file.slice(0, 204800));
-  },,
+  },
+
 
   handleCsvFileDrop(e) {
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       this.handleCsvFileSelect(e);
     }
-  },,
+  },
+
 
   async submitCsvCollect() {
     if (!this.csvFile || this.isCsvCollecting) return;
@@ -255,7 +262,8 @@ export const productsMethods = {
     } finally {
       this.isCsvCollecting = false;
     }
-  },,
+  },
+
 
   async showComplianceModal(item) {
     this.complianceModalItem = item;
@@ -276,13 +284,15 @@ export const productsMethods = {
         console.warn('自动获取完整合规报告异常', e);
       }
     }
-  },,
+  },
+
 
   getProhibitedSummary(item) {
     if (!item.compliance_details) return '违禁';
     const p = item.compliance_details.prohibited_items;
     return p && p.length > 0 ? p.join('、') : '违禁';
-  },,
+  },
+
 
   adoptRecommendedTitle(item) {
     if (!item.compliance_details || !item.compliance_details.brand_info || !item.compliance_details.brand_info.recommended_title) return;
@@ -299,7 +309,8 @@ export const productsMethods = {
       }
     }
     this.showToast('✅ 已采纳合规建议标题！', 'success');
-  },,
+  },
+
 
   async checkCompliance(item) {
     this.checkingComplianceId = item.id;
@@ -331,7 +342,8 @@ export const productsMethods = {
     } finally {
       this.checkingComplianceId = null;
     }
-  },,
+  },
+
 
   async submitArbitration(item, humanVerdict) {
     if (!item) return;
@@ -368,20 +380,23 @@ export const productsMethods = {
     } finally {
       this.isArbitrating = false;
     }
-  },,
+  },
+
 
   getRiskBadgeClass(level) {
     if (level === 'PROHIBITED') return 'bg-rose-600 text-white';
     if (level === 'RISK') return 'bg-amber-500 text-white';
     if (level === 'SAFE') return 'bg-emerald-600 text-white';
     return 'bg-slate-400 text-white';
-  },,
+  },
+
 
   getTextRiskColor(level) {
     if (level === 'PROHIBITED') return 'text-rose-600';
     if (level === 'RISK') return 'text-amber-600';
     return 'text-emerald-600';
-  },,
+  },
+
 
   async deleteItem(item) {
     const isAbandoned = item.status === 'ABANDONED';
@@ -415,7 +430,8 @@ export const productsMethods = {
     } catch (e) {
       alert('操作出错: ' + e);
     }
-  },,
+  },
+
 
   async batchDelete() {
     if (this.selectedIds.length === 0) return;
@@ -439,7 +455,8 @@ export const productsMethods = {
     } catch (e) {
       alert('批量删除出错: ' + e);
     }
-  },,
+  },
+
 
   async restoreItem(item) {
     try {
@@ -460,7 +477,8 @@ export const productsMethods = {
     } catch (e) {
       alert('恢复网络异常: ' + e);
     }
-  },,
+  },
+
 
   async batchRestore() {
     if (this.selectedIds.length === 0) return;
@@ -481,11 +499,13 @@ export const productsMethods = {
     } catch (e) {
       alert('批量恢复网络异常: ' + e);
     }
-  },,
+  },
+
 
   clearSelection() {
     this.selectedIds = [];
-  },,
+  },
+
 
   toggleSelectAll(e) {
     const pageIds = (this.products.items || []).map(x => x.id);
@@ -495,7 +515,8 @@ export const productsMethods = {
       const pageIdSet = new Set(pageIds);
       this.selectedIds = this.selectedIds.filter(id => !pageIdSet.has(id));
     }
-  },,
+  },
+
 
   async selectAllFiltered() {
     if (this.loadingAllFiltered) return;
@@ -571,7 +592,8 @@ export const productsMethods = {
     } finally {
       this.loadingAllFiltered = false;
     }
-  },,
+  },
+
 
   formatStatus(st) {
     const map = {
@@ -584,7 +606,8 @@ export const productsMethods = {
       'ABANDONED': '已弃用'
     };
     return map[st] || st;
-  },,
+  },
+
 
   getStatusBadgeClass(st) {
     if (st === 'CLEANED') return 'bg-blue-100 text-blue-800';
@@ -593,12 +616,14 @@ export const productsMethods = {
     if (st === 'FAILED') return 'bg-red-100 text-red-800';
     if (st === 'ABANDONED') return 'bg-slate-200 text-slate-700 font-medium';
     return 'bg-slate-100 text-slate-700';
-  },,
+  },
+
 
   getListingForStore(item, storeId) {
     if (!item || !item.store_listings) return null;
     return item.store_listings.find(l => l.store_id === storeId);
-  },,
+  },
+
 
   getDisplayMakroSku(item) {
     if (!item) return '';
@@ -612,7 +637,8 @@ export const productsMethods = {
       if (anyWithSku) return anyWithSku.makro_sku_id;
     }
     return '';
-  },,
+  },
+
 
   async quickUpdatePrice(item) {
     const ratio = Number(this.settings.mrp_ratio) || 1.5;
@@ -639,14 +665,16 @@ export const productsMethods = {
     } catch (e) {
       this.showToast(`❌ 价格更新网络异常: ${e}`, 'error');
     }
-  },,
+  },
+
 
   changeStatusTab(st) {
     if (this.statusFilter === st && !this.loadingProducts) return;
     this.statusFilter = st;
     this.selectedIds = [];
     this.loadProducts(1);
-  },,
+  },
+
 
   async fetchFullProductDetails(productId) {
     if (!productId) return;
@@ -664,7 +692,8 @@ export const productsMethods = {
     } catch (e) {
       console.error('获取完整商品详情失败:', e);
     }
-  },,
+  },
+
 
   openBatchPriceModal() {
     if (this.selectedIds.length === 0) return;
@@ -675,7 +704,8 @@ export const productsMethods = {
       fixed_price: null
     };
     this.showBatchPriceModal = true;
-  },,
+  },
+
 
   async submitBatchPriceUpdate() {
     if (this.selectedIds.length === 0) return;

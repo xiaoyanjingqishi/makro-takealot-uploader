@@ -17,7 +17,8 @@ export const coreMethods = {
     } catch (e) {
       console.warn('Failed to load vertical translations:', e);
     }
-  },,
+  },
+
 
   getVerticalZh(vert, item = null) {
     if (!vert) return '';
@@ -36,7 +37,8 @@ export const coreMethods = {
     };
     const parts = tokens.map(t => common[t] || (t.charAt(0).toUpperCase() + t.slice(1)));
     return parts.join(' / ');
-  },,
+  },
+
 
   async translateActiveItemTitles() {
     if (!this.activeItem || !this.activeItem.id) return;
@@ -70,19 +72,22 @@ export const coreMethods = {
     } finally {
       this.translatingTitles = false;
     }
-  },,
+  },
+
 
   toggleSidebar() {
     this.sidebarCollapsed = !this.sidebarCollapsed;
     try {
       localStorage.setItem('makro_sidebar_collapsed', this.sidebarCollapsed ? 'true' : 'false');
     } catch (_) {}
-  },,
+  },
+
 
   getCookie(name) {
     const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
     return match ? decodeURIComponent(match[2]) : null;
-  },,
+  },
+
 
   getAuthHeaders(extra = {}) {
     const headers = Object.assign({}, extra);
@@ -91,7 +96,8 @@ export const coreMethods = {
       headers['Authorization'] = `Bearer ${token}`;
     }
     return headers;
-  },,
+  },
+
 
   async checkAuth() {
     let token = localStorage.getItem('makro_auth_token');
@@ -136,7 +142,8 @@ export const coreMethods = {
       console.warn('检查认证状态失败:', e);
       return false;
     }
-  },,
+  },
+
 
   async doLogin() {
     this.loginForm.loading = true;
@@ -179,7 +186,8 @@ export const coreMethods = {
     } finally {
       this.loginForm.loading = false;
     }
-  },,
+  },
+
 
   logout() {
     localStorage.removeItem('makro_auth_token');
@@ -189,13 +197,15 @@ export const coreMethods = {
     this.showUserMenu = false;
     this.showLoginModal = true;
     this.showToast('已安全退出登录', 'info');
-  },,
+  },
+
 
   openChangePasswordModal() {
     this.showUserMenu = false;
     this.changePwdForm = { old_password: '', new_password: '', confirm_password: '', loading: false, error: '' };
     this.showChangePwdModal = true;
-  },,
+  },
+
 
   async doChangePassword() {
     if (this.changePwdForm.new_password !== this.changePwdForm.confirm_password) {
@@ -229,7 +239,8 @@ export const coreMethods = {
     } finally {
       this.changePwdForm.loading = false;
     }
-  },,
+  },
+
 
   async loadNetworkInfo() {
     try {
@@ -240,7 +251,8 @@ export const coreMethods = {
     } catch (e) {
       console.warn('获取局域网信息失败:', e);
     }
-  },,
+  },
+
 
   copyLanUrl() {
     if (!this.networkInfo || !this.networkInfo.lan_url) return;
@@ -255,7 +267,8 @@ export const coreMethods = {
     } else {
       prompt('请手动复制局域网访问地址:', urlToCopy);
     }
-  },,
+  },
+
 
   cleanImageUrl(url) {
     if (!url || typeof url !== 'string') return '';
@@ -264,13 +277,15 @@ export const coreMethods = {
       u = u.replace(/\{size\}/g, 'pdpxl');
     }
     return u;
-  },,
+  },
+
 
   getImageProxyUrl(url) {
     const clean = this.cleanImageUrl(url);
     if (!clean || clean.startsWith('data:') || clean.startsWith('/api/products/image-proxy')) return clean;
     return `/api/products/image-proxy?url=${encodeURIComponent(clean)}`;
-  },,
+  },
+
 
   getItemImage(item) {
     if (!item) return this.placeholderImg;
@@ -284,7 +299,8 @@ export const coreMethods = {
     }
     if (!url) return this.placeholderImg;
     return this.cleanImageUrl(url);
-  },,
+  },
+
 
   handleImageError(event, fallbackUrl) {
     const img = event.target;
@@ -296,7 +312,8 @@ export const coreMethods = {
     } else {
       img.src = this.placeholderImg;
     }
-  },,
+  },
+
 
   openImagePreview(url) {
     if (!url || (typeof url === 'string' && url.startsWith('data:image/svg'))) return;
@@ -304,7 +321,8 @@ export const coreMethods = {
     this.previewLoading = true;
     this.previewImageFailed = false;
     this.previewImageUrl = clean;
-  },,
+  },
+
 
   handlePreviewImageError() {
     if (!this.previewImageUrl) return;
@@ -315,46 +333,54 @@ export const coreMethods = {
       this.previewLoading = false;
       this.previewImageFailed = true;
     }
-  },,
+  },
+
 
   retryPreviewWithProxy() {
     if (!this.previewImageUrl) return;
     this.previewLoading = true;
     this.previewImageFailed = false;
     this.previewImageUrl = this.getImageProxyUrl(this.previewImageUrl);
-  },,
+  },
+
 
   onPreviewImageLoad() {
     this.previewLoading = false;
     this.previewImageFailed = false;
-  },,
+  },
+
 
   closeImagePreview() {
     this.previewImageUrl = null;
     this.previewLoading = false;
     this.previewImageFailed = false;
-  },,
+  },
+
 
   setViewMode(mode) {
     this.viewMode = mode;
     try {
       localStorage.setItem('makro_view_mode', mode);
     } catch (_) {}
-  },,
+  },
+
 
   toggleGroupExpand(code) {
     this.expandedGroups[code] = !this.expandedGroups[code];
-  },,
+  },
+
 
   isGroupExpanded(code) {
     return !!this.expandedGroups[code];
-  },,
+  },
+
 
   isGroupSelected(grp) {
     if (!grp.items || grp.items.length === 0) return false;
     const s = this.selectedIdSet;
     return grp.items.every(x => s.has(x.id));
-  },,
+  },
+
 
   toggleGroupSelect(grp, e) {
     const ids = grp.items.map(x => x.id);
@@ -363,7 +389,8 @@ export const coreMethods = {
     } else {
       this.selectedIds = this.selectedIds.filter(id => !ids.includes(id));
     }
-  },,
+  },
+
 
   showToast(message, type = 'info', duration = 3000) {
     const id = Date.now() + Math.random();
@@ -371,7 +398,8 @@ export const coreMethods = {
     setTimeout(() => {
       this.toasts = this.toasts.filter(t => t.id !== id);
     }, duration);
-  },,
+  },
+
 
   openConfirm(options) {
     this.confirmDialog = {
@@ -383,7 +411,8 @@ export const coreMethods = {
       type: options.type || 'primary',
       action: options.onConfirm || null
     };
-  },,
+  },
+
 
   async handleConfirm() {
     const act = this.confirmDialog.action;
@@ -391,13 +420,15 @@ export const coreMethods = {
     if (act && typeof act === 'function') {
       await act();
     }
-  },,
+  },
+
 
   onSelectVertical(val) {
     if (val && this.activeItem) {
       this.activeItem.makro_vertical = val;
     }
-  },,
+  },
+
 
   expandAllGroups(expand = true) {
     const map = {};
@@ -407,7 +438,8 @@ export const coreMethods = {
       }
     }
     this.expandedGroups = map;
-  },,
+  },
+
 
   switchTab(tabId) {
     if ((tabId === 'settings' || tabId === 'users' || tabId === 'management') && (!this.currentUser || this.currentUser.role !== 'ADMIN')) {
@@ -442,14 +474,16 @@ export const coreMethods = {
     if (tabId === 'management' && this.currentUser && this.currentUser.role === 'ADMIN') {
       this.loadManagementData();
     }
-  },,
+  },
+
 
   returnToProducts() {
     this.currentTab = 'products';
     if (this.lastInspectedId) {
       this.scrollToProduct(this.lastInspectedId);
     }
-  },,
+  },
+
 
   scrollToProduct(productId) {
     if (!productId) return;
@@ -473,11 +507,13 @@ export const coreMethods = {
         }
       }, 3000);
     });
-  },,
+  },
+
 
   isGroupHighlighted(grp) {
     return this.highlightedProductId && grp && grp.items && grp.items.some(x => x.id === this.highlightedProductId);
-  },,
+  },
+
 
   formatDateTime(dtStr) {
     if (!dtStr) return '-';
