@@ -3,6 +3,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 class CollectPiggybackRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     url_or_fsn: str = Field(..., description="Makro 商品详情页链接或 FSN (如 GSPHPVTNMFHDAWV4)")
     store_id: Optional[int] = Field(None, description="目标跟品店铺 ID，若未填则使用默认店铺")
     price_strategy: Optional[str] = Field("MINUS_15", description="比价策略: MINUS_15(低15兰特), MINUS_1(低1兰特), PERCENT_2(低2%), MANUAL(保持原价)")
@@ -10,11 +12,15 @@ class CollectPiggybackRequest(BaseModel):
     # 扩展端直传真实解析字段 (若有)
     item_id: Optional[str] = Field(None, description="目录 Item ID (如 itmdda5c11c09523)")
     title: Optional[str] = Field(None, description="前台标题")
+    brand: Optional[str] = Field(None, description="商品品牌")
+    vertical: Optional[str] = Field(None, description="商品类目垂直分类")
     price: Optional[float] = Field(None, description="前台实时售价")
     mrp: Optional[float] = Field(None, description="前台划线原价")
     image_url: Optional[str] = Field(None, description="前台主图")
     seller_name: Optional[str] = Field(None, description="当前在售/占位卖家名称")
     seller_count: Optional[int] = Field(1, description="当前在售商家总数")
+    model_number: Optional[str] = Field(None, description="型号 (Model Number)")
+    barcode: Optional[str] = Field(None, description="条形码/EAN")
     auto_compliance: Optional[bool] = Field(None, description="采集时是否自动执行合规检测 (默认不自动，手动触发)")
     variant_attributes: Optional[str] = Field(None, description="变体规格 JSON")
     variant_name: Optional[str] = Field(None, description="变体展示名 (如 Pack of 10)")

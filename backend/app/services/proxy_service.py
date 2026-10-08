@@ -85,18 +85,28 @@ class ProxyPoolService:
         return new_ips
 
     @classmethod
-    def get_proxy(cls) -> Optional[str]:
+    def get_proxy(cls, exclude: Optional[set] = None) -> Optional[str]:
         """
         从活跃代理池中提取一个可用代理 URL (如 http://117.89.88.137:5417)
         采用轮转机制支持高并发多线程复用；当池中代理不足 3 个时，自动后台异步补充
         """
+        exclude_set = exclude or set()
         with cls._lock:
             # 若池中代理偏少，且未在提取中，触发后台补充
             if (len(cls._pool) < 3 or (time.time() - cls._last_fetch_time > 240)) and not cls._is_fetching:
                 threading.Thread(target=cls.refresh_pool, args=(False,), daemon=True, name="ProxyRefreshThread").start()
 
             if cls._pool:
-                # 轮换获取 (Pop from front, push to back)
+                # 优先寻找不在 exclude_set 中的代理
+                for idx, ip in enumerate(cls._pool):
+                    p_url = f"http://{ip}"
+                    if p_url not in exclude_set and ip not in exclude_set:
+                        # 轮转: 移到末尾
+                        chosen = cls._pool.pop(idx)
+                        cls._pool.append(chosen)
+                        return p_url
+
+                # 如果都在 exclude 中，取出队首
                 chosen = cls._pool.pop(0)
                 cls._pool.append(chosen)
                 return f"http://{chosen}"
@@ -104,9 +114,32 @@ class ProxyPoolService:
         # 若池中完全为空，尝试同步拉取一次
         new_ips = cls.refresh_pool(force=True)
         if new_ips:
+            for ip in new_ips:
+                p_url = f"http://{ip}"
+                if p_url not in exclude_set:
+                    return p_url
             return f"http://{new_ips[0]}"
 
         return None
+
+    @classmethod
+    def get_candidate_proxies(cls, max_count: int = 5) -> List[str]:
+        """
+        获取一批可供按序故障转移的候选代理 URL 列表
+        """
+        with cls._lock:
+            pool_len = len(cls._pool)
+
+        # 若代理池为空，立即同步阻塞拉取一批代理
+        if pool_len == 0:
+            cls.refresh_pool(force=True)
+        elif pool_len < max_count and not cls._is_fetching:
+            threading.Thread(target=cls.refresh_pool, args=(False,), daemon=True, name="ProxyRefreshThread").start()
+
+        with cls._lock:
+            candidates = [f"http://{ip}" for ip in cls._pool[:max_count]]
+
+        return candidates
 
     @classmethod
     def report_failure(cls, proxy_url: Optional[str] = None):

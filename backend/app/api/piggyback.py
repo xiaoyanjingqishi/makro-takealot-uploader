@@ -136,11 +136,15 @@ def collect_single_piggyback(
     client_data = {
         "item_id": req.item_id,
         "title": req.title,
+        "brand": req.brand,
+        "vertical": req.vertical,
         "price": req.price,
         "mrp": req.mrp,
         "image_url": req.image_url,
         "seller_name": req.seller_name,
         "seller_count": req.seller_count,
+        "model_number": req.model_number,
+        "barcode": req.barcode,
         "fsn": req.url_or_fsn
     }
     try:
@@ -1483,9 +1487,21 @@ def batch_delete_piggyback(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).delete(synchronize_session=False)
+    if not req.ids:
+        return {"success": True, "deleted_count": 0}
+    
+    del_count = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).delete(synchronize_session=False)
     db.commit()
-    return {"success": True, "deleted_count": len(req.ids)}
+    record_audit_log(
+        task_type="BATCH_DELETE",
+        status="SUCCESS",
+        message=f"批量彻底删除 {del_count} 件跟品库商品",
+        detail_logs={"ids": req.ids[:20]},
+        user_id=current_user.id,
+        operator_name=current_user.nickname or current_user.username,
+        db=db
+    )
+    return {"success": True, "deleted_count": del_count}
 
 @router.post("/items/{item_id}/abandon", summary="弃用单件跟品商品 (移入弃用黑名单，防重复采集，联动下架)")
 def abandon_piggyback_item(

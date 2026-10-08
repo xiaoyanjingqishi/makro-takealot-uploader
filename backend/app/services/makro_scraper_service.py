@@ -89,6 +89,23 @@ class MakroScraperService:
         target_id = item_id if item_id else fsn
         return f"https://www.makro.co.za/-/p/{target_id}?pid={fsn}"
 
+    @staticmethod
+    def sanitize_makro_cookie(cookie_str: Optional[str]) -> str:
+        """
+        清洗 Makro 卖家 Cookie，剔除 PerimeterX、Google Analytics、TikTok 等第三方风控追踪字段，
+        保留核心认证与会话字段，避免触发 Akamai 418。
+        """
+        if not cookie_str:
+            return ""
+        parts = [p.strip() for p in cookie_str.split(";") if p.strip()]
+        cleaned = []
+        exclude_prefixes = ("_px", "_ga", "_gid", "_gat", "_tt", "pxcts", "K-ACTION", "Optanon", "AWSALB", "_fbp", "_twp", "AMCV")
+        for p in parts:
+            k = p.split("=")[0].strip()
+            if not any(k.startswith(prefix) for prefix in exclude_prefixes):
+                cleaned.append(p)
+        return "; ".join(cleaned)
+
     @classmethod
     def fetch_product_by_fsn_from_seller_api(
         cls,
@@ -98,58 +115,112 @@ class MakroScraperService:
         """
         通过 Makro 卖家官方网关 searchProduct 接口高速获取商品官方建档参数
         GET /napi/listing/searchProduct?fsnSearch={FSN}&sellerId={seller_id}
+        采用携趣国内动态代理池候选轮转重试，避免直连网络阻断
         """
-        url = f"https://seller.makro.co.za/napi/listing/searchProduct?fsnSearch={fsn}&sellerId={store.seller_id}"
+        seller_id = getattr(store, "seller_id", None)
+        fk_csrf_token = getattr(store, "fk_csrf_token", None)
+        cookie = getattr(store, "cookie", None)
+        location_id = getattr(store, "default_location_id", None)
+        default_brand = getattr(store, "default_brand", "Generic")
+
+        # 若 store 中缺少有效凭据，尝试从系统设置中读取
+        if not cookie or not seller_id:
+            try:
+                from ..database import SessionLocal
+                from ..models.setting import SystemSetting
+                db_session = SessionLocal()
+                try:
+                    if not cookie:
+                        c_set = db_session.query(SystemSetting).filter(SystemSetting.key == "makro_cookie").first()
+                        if c_set and c_set.value:
+                            cookie = c_set.value
+                    if not seller_id:
+                        s_set = db_session.query(SystemSetting).filter(SystemSetting.key == "makro_seller_id").first()
+                        if s_set and s_set.value:
+                            seller_id = s_set.value
+                    if not fk_csrf_token:
+                        t_set = db_session.query(SystemSetting).filter(SystemSetting.key == "makro_fk_csrf_token").first()
+                        if t_set and t_set.value:
+                            fk_csrf_token = t_set.value
+                finally:
+                    db_session.close()
+            except Exception as e:
+                logger.debug(f"读取系统设置备用凭据异常: {e}")
+
+        if not seller_id:
+            logger.warning("未配置 Makro Seller ID，跳过 searchProduct 调用")
+            return None
+
+        url = f"https://seller.makro.co.za/napi/listing/searchProduct?fsnSearch={fsn}&sellerId={seller_id}"
+        clean_cookie = cls.sanitize_makro_cookie(cookie)
+
         headers = {
             "accept": "application/json, text/javascript, */*; q=0.01",
-            "accept-language": "en-US,en;q=0.9",
+            "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
             "content-type": "application/json",
             "origin": "https://seller.makro.co.za",
             "referer": "https://seller.makro.co.za/index.html",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "x-requested-with": "XMLHttpRequest"
         }
-        if store.fk_csrf_token:
-            headers["fk-csrf-token"] = store.fk_csrf_token.strip()
-        if store.cookie:
-            headers["cookie"] = store.cookie.strip()
-        if store.default_location_id:
-            headers["x-location-id"] = store.default_location_id.strip()
+        if fk_csrf_token:
+            headers["fk-csrf-token"] = fk_csrf_token.strip()
+        if clean_cookie:
+            headers["cookie"] = clean_cookie
+        if location_id:
+            headers["x-location-id"] = location_id.strip()
 
-        try:
-            resp = requests.get(url, headers=headers, timeout=20, proxies={"http": None, "https": None})
-            if resp.status_code == 200:
-                data = resp.json()
-                product_list = data.get("result", {}).get("productList", [])
-                if product_list:
-                    p = product_list[0]
-                    detail = p.get("detail", {})
-                    images = p.get("imagePaths", {})
-                    # 选取最高分辨率图片
-                    best_img = images.get("275x275") or images.get("200x200") or images.get("125x125") or images.get("100x100")
-                    if best_img:
-                        # 兼容带有固定规格子路径的放大替换
-                        best_img = re.sub(r'/(?:100x100|125x125|200x200|275x275)/', '/original/', best_img)
+        # 尝试通过候选代理列表轮转访问
+        candidate_proxies = ProxyPoolService.get_candidate_proxies(max_count=4)
+        attempts = []
+        if candidate_proxies:
+            attempts.extend(candidate_proxies)
+        attempts.append(None)  # 直连兜底
 
-                    title = p.get("title") or detail.get("Model Number") or fsn
-                    title_zh = TranslationService.translate_title(title)
+        for p_url in attempts:
+            p_dict = {"http": p_url, "https": p_url} if p_url else None
+            try:
+                resp = requests.get(url, headers=headers, timeout=8, proxies=p_dict)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    product_list = data.get("result", {}).get("productList", [])
+                    if product_list:
+                        p = product_list[0]
+                        detail = p.get("detail", {})
+                        images = p.get("imagePaths", {})
+                        # 选取最高分辨率图片
+                        best_img = images.get("275x275") or images.get("200x200") or images.get("125x125") or images.get("100x100")
+                        if best_img:
+                            # 兼容带有固定规格子路径的放大替换
+                            best_img = re.sub(r'/(?:100x100|125x125|200x200|275x275)/', '/original/', best_img)
 
-                    return {
-                        "fsn": p.get("entityId", fsn),
-                        "title": title,
-                        "title_zh": title_zh,
-                        "brand": detail.get("Brand") or store.default_brand or "Generic",
-                        "vertical": p.get("vertical", "general"),
-                        "image_url": best_img or "",
-                        "model_number": detail.get("Model Number"),
-                        "barcode": detail.get("Barcode") or detail.get("EAN"),
-                        "already_selling": p.get("alreadySelling", False),
-                        "detail": detail
-                    }
-            else:
-                logger.warning(f"Makro searchProduct 接口返回状态码 {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            logger.error(f"调用 Makro searchProduct 异常: {e}")
+                        title = p.get("title") or detail.get("Model Number") or fsn
+                        title_zh = TranslationService.translate_title(title)
+
+                        logger.info(f"成功通过{'代理 ' + p_url if p_url else '直连'}从 Makro Seller API 解析商品: {title[:40]}")
+                        return {
+                            "fsn": p.get("entityId", fsn),
+                            "title": title,
+                            "title_zh": title_zh,
+                            "brand": detail.get("Brand") or default_brand or "Generic",
+                            "vertical": p.get("vertical", "general"),
+                            "image_url": best_img or "",
+                            "model_number": detail.get("Model Number"),
+                            "barcode": detail.get("Barcode") or detail.get("EAN"),
+                            "already_selling": p.get("alreadySelling", False),
+                            "detail": detail
+                        }
+                elif resp.status_code in (403, 418, 429, 502, 503):
+                    if p_url:
+                        ProxyPoolService.report_failure(p_url)
+                    logger.debug(f"Makro searchProduct 响应 {resp.status_code}，代理 {p_url} 尝试下一个")
+                    continue
+            except Exception as e:
+                if p_url:
+                    ProxyPoolService.report_failure(p_url)
+                logger.debug(f"访问 Makro searchProduct (代理 {p_url}) 异常: {e}")
+                continue
+
         return None
 
     _buyer_local = threading.local()
@@ -177,7 +248,7 @@ class MakroScraperService:
     def scrape_buyer_frontend(cls, url_or_fsn: str, proxy: Optional[str] = None) -> Dict[str, Any]:
         """
         强化抓取 Makro 前台买家商城 (makro.co.za) 详情页获取当前售价、MRP 与竞争情报
-        具备 Chrome 124 浏览器指纹模拟 (curl_cffi)、国内清洁 IP 强制直连与遇到反爬秒切携趣动态代理池。
+        采用国内清洁 IP 与携趣动态代理池多候选轮转破防，杜绝 Windows curl_cffi 代理挂起问题。
         """
         fsn, item_id = cls.extract_identifiers(url_or_fsn)
         
@@ -222,26 +293,13 @@ class MakroScraperService:
         for cur_url in candidate_urls:
             chosen_url = cur_url
             try:
-                # 初始请求：若指定代理则走代理；未指定则直连国内清洁 IP (极速 0 延迟)
-                cur_proxies = {"http": proxy, "https": proxy} if proxy else ({"http": "", "https": ""} if HAS_CURL_CFFI else {"http": None, "https": None})
-                
-                if HAS_CURL_CFFI:
-                    resp = session.get(
-                        cur_url,
-                        headers=headers,
-                        timeout=15,
-                        allow_redirects=True,
-                        proxies=cur_proxies,
-                        impersonate="chrome124"
-                    )
+                # 初始直连请求 (若指定了代理则使用 requests.get，避免 curl_cffi 挂起)
+                if proxy:
+                    resp = requests.get(cur_url, headers=headers, timeout=8, allow_redirects=True, proxies={"http": proxy, "https": proxy})
+                elif HAS_CURL_CFFI:
+                    resp = session.get(cur_url, headers=headers, timeout=15, allow_redirects=True, impersonate="chrome124")
                 else:
-                    resp = session.get(
-                        cur_url,
-                        headers=headers,
-                        timeout=15,
-                        allow_redirects=True,
-                        proxies=cur_proxies
-                    )
+                    resp = session.get(cur_url, headers=headers, timeout=15, allow_redirects=True)
 
                 if resp.status_code != 200:
                     continue
@@ -250,46 +308,38 @@ class MakroScraperService:
                 is_hit_bot = ("/blocked" in resp.url) or ("<title>Are you a human?</title>" in html) or (resp.status_code in [403, 429])
 
                 if is_hit_bot:
-                    logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}，启动动态代理自动故障转移...")
+                    logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}，启动携趣国内动态代理池轮转故障转移...")
                     blocked = True
                     cls.reset_buyer_session()
 
-                    # ★★★ 遇反爬立即从动态代理池取国内 IP 自动换 IP 重试 ★★★
-                    dyn_proxy = ProxyPoolService.get_proxy()
-                    if dyn_proxy:
+                    # ★★★ 遇反爬立即从动态代理池取候选 IP 轮转破防 (使用标准 requests 避免 Windows cffi 挂起) ★★★
+                    candidate_proxies = ProxyPoolService.get_candidate_proxies(max_count=4)
+                    for dyn_proxy in candidate_proxies:
                         logger.info(f"正在使用携趣国内动态代理换 IP 破防重试: {dyn_proxy}")
                         try:
                             dyn_proxies = {"http": dyn_proxy, "https": dyn_proxy}
-                            if HAS_CURL_CFFI:
-                                dyn_resp = cffi_requests.get(
-                                    cur_url,
-                                    headers=headers,
-                                    timeout=15,
-                                    allow_redirects=True,
-                                    proxies=dyn_proxies,
-                                    impersonate="chrome124"
-                                )
-                            else:
-                                dyn_resp = requests.get(
-                                    cur_url,
-                                    headers=headers,
-                                    timeout=15,
-                                    allow_redirects=True,
-                                    proxies=dyn_proxies
-                                )
+                            dyn_resp = requests.get(
+                                cur_url,
+                                headers=headers,
+                                timeout=8,
+                                allow_redirects=True,
+                                proxies=dyn_proxies
+                            )
 
                             if dyn_resp.status_code == 200 and "/blocked" not in dyn_resp.url and "<title>Are you a human?</title>" not in dyn_resp.text:
                                 html = dyn_resp.text
                                 blocked = False
                                 logger.info(f"国内动态代理 {dyn_proxy} 成功破除反爬阻断，恢复正常解析！")
+                                break
                             else:
                                 ProxyPoolService.report_failure(dyn_proxy)
                         except Exception as p_err:
-                            logger.warning(f"动态代理请求异常: {p_err}")
+                            logger.warning(f"动态代理 {dyn_proxy} 请求异常: {p_err}")
                             ProxyPoolService.report_failure(dyn_proxy)
 
                     if blocked:
                         break
+
 
                 # 1. 深度解析 window.__INITIAL_STATE__
                 state_m = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.S)
@@ -541,19 +591,32 @@ class MakroScraperService:
             raise ValueError(f"Makro 官方接口及前台详情均未获取到有效在售数据或已失效下架 (FSN: {fsn})，已自动拦截防污染")
 
         title = title or f"Makro Product {fsn}"
-        brand = (official.get("brand") if official else "") or frontend_info.get("brand") or getattr(store, "default_brand", "Generic") or "Generic"
-        vertical = (official.get("vertical") if official else "") or frontend_info.get("vertical") or "general"
-        model_number = (official.get("model_number") if official else "")
-        barcode = (official.get("barcode") if official else "")
-        title_zh = official.get("title_zh") if official else TranslationService.translate_title(title)
+        brand = (official.get("brand") if official else "") or frontend_info.get("brand") or (client_data.get("brand") if client_data else "") or getattr(store, "default_brand", "Generic") or "Generic"
+        vertical = (official.get("vertical") if official else "") or frontend_info.get("vertical") or (client_data.get("vertical") if client_data else "") or "general"
+        model_number = (official.get("model_number") if official else "") or (client_data.get("model_number") if client_data else "")
+        barcode = (official.get("barcode") if official else "") or (client_data.get("barcode") if client_data else "")
+        title_zh = (official.get("title_zh") if official else "") or TranslationService.translate_title(title)
 
-        mrp = float(frontend_info.get("mrp") or (round(price * 1.5, 2) if price > 0 else 0.0))
+        mrp = float(frontend_info.get("mrp") or 0.0)
+        if mrp <= 0 and client_data and client_data.get("mrp"):
+            try:
+                mrp = float(client_data["mrp"])
+            except Exception:
+                pass
+        if mrp <= 0 and price > 0:
+            mrp = round(price * 1.5, 2)
         if price > 0 and mrp < price:
             mrp = round(price * 1.5, 2)
             
         raw_seller_count = frontend_info.get("seller_count")
         seller_count = int(raw_seller_count) if raw_seller_count is not None else 1
-        seller_name = frontend_info.get("seller_name") or ("暂无在售卖家" if seller_count == 0 else "")
+        if seller_count <= 1 and client_data and client_data.get("seller_count"):
+            try:
+                seller_count = int(client_data["seller_count"])
+            except Exception:
+                pass
+
+        seller_name = frontend_info.get("seller_name") or (client_data.get("seller_name") if client_data else "") or ("暂无在售卖家" if seller_count == 0 else "")
 
         makro_url = cls.format_canonical_makro_url(fsn, final_item_id)
 

@@ -2493,6 +2493,17 @@
                 <span>🔄</span>
                 <span>批量恢复 ({{ piggyback.selectedIds.length }})</span>
               </button>
+
+              <!-- 批量彻底删除按钮 (支持任何阶段选中项物理清除) -->
+              <button 
+                @click="handleBatchDeletePiggyback"
+                :disabled="piggyback.selectedIds.length === 0"
+                class="px-2.5 py-1.5 text-xs bg-red-50 text-red-700 hover:bg-red-100 border border-red-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title="批量从跟品库中彻底删除选中的商品"
+              >
+                <span>🗑️</span>
+                <span>批量删除 ({{ piggyback.selectedIds.length }})</span>
+              </button>
             </div>
           </div>
         </div>
@@ -3099,6 +3110,15 @@
               class="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-medium flex items-center space-x-1 transition cursor-pointer"
             >
               <span>🔍 质检</span>
+            </button>
+
+            <!-- 批量删除 -->
+            <button 
+              @click="handleBatchDeletePiggyback"
+              class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-medium flex items-center space-x-1 transition cursor-pointer"
+              title="批量彻底删除选中的跟品商品"
+            >
+              <span>🗑️ 删除</span>
             </button>
 
             <!-- 取消选择 -->
@@ -10344,6 +10364,25 @@
             this.loadPiggybackItems(this.piggyback.page);
           } catch (e) {
             this.showToast(e.message, 'error');
+          }
+        },
+        async handleBatchDeletePiggyback() {
+          if (this.piggyback.selectedIds.length === 0) return;
+          const count = this.piggyback.selectedIds.length;
+          if (!confirm(`⚠️ 警告：该操作将彻底从跟品库中删除选中的 ${count} 件商品！\n（注：若希望保留记录并阻断后续重复采集，建议使用「批量弃用」）\n\n确认彻底删除这 ${count} 件商品吗？`)) return;
+          try {
+            const res = await fetch('/api/piggyback/batch-delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids: this.piggyback.selectedIds })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || '批量删除失败');
+            this.showToast(`🗑️ 成功彻底删除 ${data.deleted_count} 件跟品商品`, 'success');
+            this.clearPiggybackSelection();
+            this.loadPiggybackItems(this.piggyback.page);
+          } catch (e) {
+            this.showToast('批量删除失败: ' + e.message, 'error');
           }
         },
         openEditPiggyback(item) {

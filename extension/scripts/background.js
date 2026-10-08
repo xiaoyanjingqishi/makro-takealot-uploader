@@ -208,6 +208,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           url_or_fsn: urlOrFsn,
           item_id: request.item_id || null,
           store_id: request.store_id || null,
+          title: request.title || null,
+          brand: request.brand || null,
+          vertical: request.vertical || null,
+          price: request.price || null,
+          mrp: request.mrp || null,
+          image_url: request.image_url || null,
+          seller_name: request.seller_name || null,
+          seller_count: request.seller_count || 1,
+          model_number: request.model_number || null,
+          barcode: request.barcode || null,
           variant_name: request.variant_name || null,
           variant_attributes: request.variant_attributes || null
         })

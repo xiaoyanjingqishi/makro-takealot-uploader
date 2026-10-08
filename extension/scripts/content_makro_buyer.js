@@ -108,10 +108,20 @@
     return variants;
   }
 
-  // 解析当前页面主商品 (仅提取 PID 与 Item ID 等标识，具体售价与元数据由系统后端直接访问 Makro 官方抓取入库)
+  // 解析当前页面主商品（提取 PID、Item ID、标题、主图、实时售价、划线原价、品牌、类目、在售卖家等丰富元数据）
   function extractProductPageData() {
     let fsn = null;
     let itemId = null;
+    let title = "";
+    let price = 0.0;
+    let mrp = 0.0;
+    let imageUrl = "";
+    let brand = "";
+    let vertical = "";
+    let sellerName = "";
+    let sellerCount = 1;
+    let modelNumber = "";
+    let barcode = "";
     const currentUrl = window.location.href;
 
     const urlObj = new URL(currentUrl);
@@ -130,32 +140,104 @@
       }
     }
 
-    // 兜底从 script __INITIAL_STATE__ 获取
-    if (!fsn || !itemId) {
-      try {
-        const scripts = document.querySelectorAll("script");
-        for (const s of scripts) {
-          const text = s.textContent || "";
-          if (text.includes("window.__INITIAL_STATE__")) {
-            const m = text.match(/window\.__INITIAL_STATE__\s*=\s*(\{.*?\});/s);
-            if (m) {
-              const state = JSON.parse(m[1]);
-              const ctx = state?.pageDataV4?.page?.pageData?.pageContext;
-              if (ctx) {
-                if (!fsn && ctx.productId) fsn = String(ctx.productId).toUpperCase();
-                if (!itemId && ctx.itemId) itemId = String(ctx.itemId);
+    // 1. 从 window.__INITIAL_STATE__ 获取全量权威数据
+    try {
+      const scripts = document.querySelectorAll("script");
+      for (const s of scripts) {
+        const text = s.textContent || "";
+        if (text.includes("window.__INITIAL_STATE__")) {
+          const m = text.match(/window\.__INITIAL_STATE__\s*=\s*(\{.*?\});/s);
+          if (m) {
+            const state = JSON.parse(m[1]);
+            const pageDataV4 = state?.pageDataV4 || {};
+            const page = pageDataV4.page || {};
+            const pageData = page.pageData || {};
+            const ctx = pageData.pageContext || {};
+
+            if (!fsn && ctx.productId) fsn = String(ctx.productId).toUpperCase();
+            if (!itemId && ctx.itemId) itemId = String(ctx.itemId);
+
+            if (ctx.titles) {
+              title = ctx.titles.title || ctx.titles.subtitle || "";
+            }
+            if (ctx.imageUrl) {
+              imageUrl = ctx.imageUrl.replace("{@width}", "400").replace("{@height}", "400").replace("{@quality}", "80");
+            }
+
+            const tracking = ctx.trackingDataV2 || {};
+            if (tracking) {
+              if (tracking.brand) brand = tracking.brand;
+              if (tracking.vertical) vertical = tracking.vertical;
+              if (tracking.sellerName) sellerName = tracking.sellerName;
+              if (tracking.sellerCount !== undefined) sellerCount = parseInt(tracking.sellerCount) || 1;
+            }
+
+            const pricing = ctx.pricing;
+            if (pricing && typeof pricing === "object") {
+              const finalP = pricing.finalPrice || {};
+              if (finalP.decimalValue) {
+                price = parseFloat(String(finalP.decimalValue).replace(/[^0-9.]/g, "")) || 0.0;
+              } else if (finalP.value) {
+                const val = parseFloat(finalP.value);
+                price = val >= 5000 && pricing.fsp === val ? val / 100.0 : val;
+              } else if (pricing.fsp) {
+                const fsp = parseFloat(pricing.fsp);
+                price = fsp >= 5000 ? fsp / 100.0 : fsp;
+              }
+
+              const prices = pricing.prices || [];
+              for (const pItem of prices) {
+                if (pItem.priceType === "MRP") {
+                  if (pItem.decimalValue) {
+                    mrp = parseFloat(String(pItem.decimalValue).replace(/[^0-9.]/g, "")) || 0.0;
+                  } else if (pItem.value) {
+                    const mVal = parseFloat(pItem.value);
+                    mrp = mVal >= 5000 && pricing.mrp === mVal ? mVal / 100.0 : mVal;
+                  }
+                }
               }
             }
-            break;
           }
+          break;
         }
-      } catch (e) {}
+      }
+    } catch (e) {}
+
+    // 2. DOM 提取补充
+    if (!title) {
+      const h1 = document.querySelector("h1._35KyD6") || document.querySelector("h1[class*='_35KyD6']") || document.querySelector("h1");
+      if (h1) title = h1.innerText.trim();
+    }
+    if (!imageUrl) {
+      const img = document.querySelector("img._396cs4") || document.querySelector("div._1tagpn img");
+      if (img && img.src) imageUrl = img.src;
+    }
+    if (price <= 0) {
+      const priceEl = document.querySelector("div._30jeq3") || document.querySelector("div[class*='_30jeq3']");
+      if (priceEl) price = parsePrice(priceEl.innerText);
+    }
+    if (mrp <= 0) {
+      const mrpEl = document.querySelector("div._27UcVY") || document.querySelector("div[class*='_27UcVY']");
+      if (mrpEl) mrp = parsePrice(mrpEl.innerText);
+    }
+    if (mrp <= 0 && price > 0) {
+      mrp = Math.round(price * 1.5 * 100) / 100;
     }
 
     return {
       fsn: fsn || "",
       itemId: itemId || "",
-      url: currentUrl
+      url: currentUrl,
+      title: title || "",
+      price: price || 0.0,
+      mrp: mrp || 0.0,
+      imageUrl: imageUrl || "",
+      brand: brand || "",
+      vertical: vertical || "",
+      sellerName: sellerName || "",
+      sellerCount: sellerCount || 1,
+      modelNumber: modelNumber || "",
+      barcode: barcode || ""
     };
   }
 
@@ -353,7 +435,17 @@
           url: latestData.url,
           fsn: latestData.fsn || latestData.url,
           item_id: latestData.itemId,
-          store_id: storeId
+          store_id: storeId,
+          title: latestData.title || null,
+          brand: latestData.brand || null,
+          vertical: latestData.vertical || null,
+          price: latestData.price || null,
+          mrp: latestData.mrp || null,
+          image_url: latestData.imageUrl || null,
+          seller_name: latestData.sellerName || null,
+          seller_count: latestData.sellerCount || 1,
+          model_number: latestData.modelNumber || null,
+          barcode: latestData.barcode || null
         }, (response) => {
           btn.disabled = false;
           btn.innerHTML = hasVariants ? "<span>🚀</span> 仅采集当前单品" : "<span>🚀</span> 采集跟品到本地系统";
@@ -558,7 +650,11 @@
             url: cardData.url,
             fsn: cardData.fsn,
             item_id: cardData.item_id,
-            store_id: storeId
+            store_id: storeId,
+            title: cardData.title || null,
+            image_url: cardData.image_url || null,
+            price: cardData.price || null,
+            mrp: cardData.mrp || null
           }, (res) => {
             if (res && res.success) {
               card.dataset.checkedExistence = "exists";

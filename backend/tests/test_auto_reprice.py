@@ -149,6 +149,9 @@ class TestAutoReprice(unittest.TestCase):
     @patch("app.services.makro_scraper_service.MakroScraperService.resolve_piggyback_product")
     def test_batch_collect_with_rich_items(self, mock_resolve):
         """测试从搜索页或变体矩阵批量采集富文本数据"""
+        self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.makro_product_id == "FSN_RICH_001").delete()
+        self.db.commit()
+
         mock_resolve.return_value = {
             "makro_product_id": "FSN_RICH_001",
             "item_id": "itm_rich_001",

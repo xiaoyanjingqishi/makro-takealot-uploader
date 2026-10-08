@@ -1443,5 +1443,28 @@ def sync_credentials(req: SyncCredentialsRequest, db: Session = Depends(get_db))
         else:
             db.add(SystemSetting(key=k, value=v))
 
+    # 联动同步更新 stores 表中的店铺实体 (优先按 seller_id 匹配，兜底按默认/首个活跃店)
+    from ..models.store import Store
+    matched_stores = []
+    if req.seller_id:
+        matched_stores = db.query(Store).filter(Store.seller_id == req.seller_id).all()
+    if not matched_stores:
+        matched_stores = db.query(Store).filter(Store.is_default == True, Store.is_active == True).all()
+    if not matched_stores:
+        matched_stores = db.query(Store).filter(Store.is_active == True).all()
+
+    for s in matched_stores:
+        if req.fk_csrf_token:
+            s.fk_csrf_token = req.fk_csrf_token
+        if req.cookie:
+            s.cookie = req.cookie
+        s.updated_at = datetime.now()
+
     db.commit()
-    return {"message": "凭据同步成功", "synced_keys": list(updates.keys())}
+
+    store_names = [s.name for s in matched_stores]
+    return {
+        "message": f"凭据同步成功 (已同步至系统配置及 {len(matched_stores)} 个店铺: {', '.join(store_names)})",
+        "synced_keys": list(updates.keys()),
+        "updated_stores": store_names
+    }
