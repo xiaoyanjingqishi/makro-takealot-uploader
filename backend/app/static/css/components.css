@@ -1,0 +1,22 @@
+/* 输入控件聚焦环规范 */
+input:focus-visible, 
+select:focus-visible, 
+textarea:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 1px;
+}
+
+/* 模态弹窗与遮罩动画 */
+.modal-backdrop-enter {
+  opacity: 0;
+}
+.modal-backdrop-enter-active {
+  transition: opacity 0.2s ease-out;
+}
+.modal-panel-enter {
+  opacity: 0;
+  transform: scale(0.95);
+}
+.modal-panel-enter-active {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}

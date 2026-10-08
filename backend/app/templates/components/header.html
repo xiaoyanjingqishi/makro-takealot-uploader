@@ -1,0 +1,112 @@
+          <header class="h-12 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 flex items-center justify-between shrink-0 z-20 shadow-xs">
+            
+            <!-- 左侧：面包屑导航与当前视图说明 -->
+            <div class="flex items-center space-x-2.5 overflow-hidden">
+              <span class="text-xs font-semibold text-slate-400">工作台</span>
+              <span class="text-xs text-slate-300">/</span>
+              <div class="flex items-center space-x-2">
+                <span class="text-sm font-bold text-slate-900 tracking-tight flex items-center space-x-1.5">
+                  <span>{{ currentTabMeta.icon }}</span>
+                  <span>{{ currentTabMeta.name }}</span>
+                </span>
+                <span class="text-[11px] text-slate-400 hidden lg:inline border-l border-slate-200 pl-2">
+                  {{ currentTabMeta.desc }}
+                </span>
+              </div>
+            </div>
+
+            <!-- 右侧：全局上下文 (后台任务胶囊 + 店铺切换器 + 局域网 IP) -->
+            <div class="flex items-center space-x-2.5 shrink-0">
+              
+              <!-- 选品与全链路精准定价小工具 (新窗口直达) -->
+              <a 
+                href="/calculator" 
+                target="_blank" 
+                class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs hover:from-blue-700 hover:to-indigo-700 transition select-none cursor-pointer"
+                title="打开 Makro 选品与 1688 全链路成本定价精准测算工具 (新窗口打开)"
+              >
+                <span>🧮</span>
+                <span>选品定价测算</span>
+              </a>
+
+              <!-- 员工个人今日战报胶囊 (实时统计与正向激励) -->
+              <button 
+                v-if="currentUser"
+                @click="showMyDailySummaryModal = true; loadMyDailySummary()" 
+                class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300/80 shadow-xs transition select-none cursor-pointer active:scale-95"
+                title="点击查看今日个人作业量统计与团队排名战报"
+              >
+                <span>🏆</span>
+                <span class="hidden sm:inline">今日战报</span>
+                <span class="font-mono text-[10.5px] bg-emerald-600 text-white px-1.5 py-0.2 rounded font-bold">
+                  {{ myDailySummary.today_actions || 0 }}
+                </span>
+              </button>
+
+              
+              <!-- 后台异步任务轻量指示胶囊 (当有任务时灵动呈现，点击展开/收起详情或跳至日志) -->
+              <div v-if="activeBgTasks.length > 0" class="flex items-center space-x-1">
+                <button 
+                  @click="showFullTasksBanner = !showFullTasksBanner"
+                  class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border shadow-xs transition select-none cursor-pointer"
+                  :class="runningTask ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/70'"
+                  :title="showFullTasksBanner ? '点击收起任务卡片' : '点击展开查看任务进度详情'"
+                >
+                  <span class="flex h-2 w-2 relative" v-if="runningTask">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-600"></span>
+                  </span>
+                  <span v-else class="text-xs">📋</span>
+                  <span class="font-semibold text-[11px]">
+                    {{ runningTask ? (runningTask.name || '后台任务') : ('任务通知 (' + activeBgTasks.length + ')') }}
+                  </span>
+                  <span v-if="runningTask" class="font-mono text-[10px] bg-indigo-200/80 text-indigo-900 px-1.5 py-0.2 rounded font-bold">
+                    {{ runningTask.progress }}%
+                  </span>
+                  <span class="text-[9px] text-slate-400">{{ showFullTasksBanner ? '▲' : '▼' }}</span>
+                </button>
+              </div>
+
+              <!-- 授权店铺切换器 (专属突出展示，拒绝截断) -->
+              <div v-if="authorizedStores && authorizedStores.length > 0" class="flex items-center space-x-1 bg-slate-100 hover:bg-slate-200/70 px-2.5 py-1 rounded-lg border border-slate-200 shadow-xs transition">
+                <span class="text-xs text-indigo-600 shrink-0">🏪</span>
+                <select 
+                  v-model="selectedStoreId" 
+                  @change="onStoreChange" 
+                  class="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer max-w-[140px] truncate"
+                  title="切换当前操作的授权店铺"
+                >
+                  <option v-for="s in authorizedStores" :key="s.id" :value="s.id">
+                    {{ s.name }}
+                  </option>
+                </select>
+              </div>
+
+              <!-- 局域网访问 IP 快速胶囊 -->
+              <div v-if="networkInfo && networkInfo.lan_url" class="relative group">
+                <button 
+                  @click="copyLanUrl" 
+                  class="inline-flex items-center px-2 py-1 rounded-lg text-xs font-medium bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 border border-slate-200 hover:border-indigo-200 transition-all shadow-xs cursor-pointer active:scale-95 font-mono text-[11px]"
+                  :title="'点击复制局域网访问地址: ' + networkInfo.lan_url"
+                >
+                  <span class="mr-1 text-indigo-500 text-xs">🌐</span>
+                  <span>{{ networkInfo.primary_ip }}</span>
+                  <span class="ml-0.5 text-[10px] text-slate-400" v-if="networkInfo.proxy_port !== 80">:{{ networkInfo.proxy_port }}</span>
+                </button>
+                <div v-if="copiedLan" class="absolute -bottom-8 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-slate-900 text-white text-[10px] font-medium rounded-md shadow-lg whitespace-nowrap z-50 animate-bounce">
+                  已复制！
+                </div>
+              </div>
+
+              <!-- 浏览器插件下载按钮 (炫彩微光胶囊) -->
+              <button 
+                @click="showExtensionModal = true"
+                class="inline-flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 text-white shadow-xs hover:shadow hover:opacity-95 transition-all cursor-pointer select-none active:scale-95 shrink-0"
+                title="点击下载 Chrome 搬品采集插件及查看安装指南"
+              >
+                <span class="text-xs">🧩</span>
+                <span>采集插件</span>
+              </button>
+
+            </div>
+          </header>

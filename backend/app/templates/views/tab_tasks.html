@@ -1,0 +1,157 @@
+      <div v-if="currentTab === 'tasks'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-3.5 custom-scrollbar">
+        <!-- 头部标题与统计 -->
+        <div class="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex-wrap gap-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
+              <span>📋 系统全量操作与任务日志审计</span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/60 font-mono tabular-nums">共 {{ tasks.length }} 条记录</span>
+            </h2>
+            <p class="text-xs text-slate-500 mt-0.5">记录商品采集、AI 清洗、合规排查、批量改价、删除、上品刊登及系统配置等全流程操作历史与执行时间戳</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button @click="loadTasks" class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg shadow-2xs transition flex items-center space-x-1.5 cursor-pointer active:scale-95">
+              <span>🔄 刷新日志</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 筛选与搜索控制栏 -->
+        <div class="bg-white p-3 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between flex-wrap gap-2.5">
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <!-- 类型过滤 -->
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs text-slate-500 font-medium">操作类型:</span>
+              <select 
+                v-model="logFilterType" 
+                @change="loadTasks"
+                class="text-xs bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:ring-2 focus:ring-indigo-500/15 focus:outline-none"
+              >
+                <option value="">全部类型 (All Actions)</option>
+                <option value="COLLECT">📥 商品采集 (COLLECT)</option>
+                <option value="BATCH_CLEAN">⚡ 批量AI清洗 (BATCH_CLEAN)</option>
+                <option value="CLEAN">⚡ 单品清洗 (CLEAN)</option>
+                <option value="BATCH_COMPLIANCE">🛡️ 批量合规排查 (BATCH_COMPLIANCE)</option>
+                <option value="COMPLIANCE">🛡️ 单品合规检测 (COMPLIANCE)</option>
+                <option value="BATCH_PRICE">💰 批量改价 (BATCH_PRICE)</option>
+                <option value="BATCH_PUBLISH">🚀 批量上品提交 (BATCH_PUBLISH)</option>
+                <option value="SUBMIT_LISTING">🚀 单品上品 (SUBMIT_LISTING)</option>
+                <option value="BATCH_DELETE">🗑️ 批量删除 (BATCH_DELETE)</option>
+                <option value="DELETE">🗑️ 单品删除 (DELETE)</option>
+                <option value="UPDATE">✏️ 商品属性更新 (UPDATE)</option>
+                <option value="SETTINGS_UPDATE">⚙️ 全局配置修改 (SETTINGS_UPDATE)</option>
+              </select>
+            </div>
+
+            <!-- 状态过滤 -->
+            <div class="flex items-center space-x-1.5">
+              <span class="text-xs text-slate-500 font-medium">状态:</span>
+              <select 
+                v-model="logFilterStatus" 
+                @change="loadTasks"
+                class="text-xs bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:ring-2 focus:ring-indigo-500/15 focus:outline-none"
+              >
+                <option value="">全部状态</option>
+                <option value="SUCCESS">✓ 成功 (SUCCESS)</option>
+                <option value="FAILED">✕ 失败 (FAILED)</option>
+                <option value="RUNNING">⏳ 执行中 (RUNNING)</option>
+                <option value="CANCELLED">⏹ 已取消 (CANCELLED)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 关键词搜索 -->
+          <div class="flex items-center space-x-2">
+            <input 
+              type="text" 
+              v-model="logSearchInput" 
+              @keyup.enter="loadTasks" 
+              placeholder="搜索描述、RequestId或类型..." 
+              class="text-xs px-3 py-1.5 border border-slate-200 rounded-lg w-56 focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-500 focus:outline-none shadow-2xs"
+            />
+            <button 
+              @click="loadTasks" 
+              class="px-3 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition shadow-2xs cursor-pointer active:scale-95"
+            >
+              搜索
+            </button>
+            <button 
+              v-if="logFilterType || logFilterStatus || logSearchInput" 
+              @click="logFilterType = ''; logFilterStatus = ''; logSearchInput = ''; loadTasks();" 
+              class="px-2 py-1 text-xs text-slate-500 hover:text-slate-700 underline cursor-pointer"
+            >
+              重置
+            </button>
+          </div>
+        </div>
+
+        <!-- 日志表格 -->
+        <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-slate-50/90 border-b border-slate-200/80 text-slate-500 font-semibold text-[11px] uppercase tracking-wider">
+                <th class="py-2.5 px-3.5 w-16">编号</th>
+                <th class="py-2.5 px-3.5 w-32">操作类型</th>
+                <th class="py-2.5 px-3.5 w-24">执行状态</th>
+                <th class="py-2.5 px-3.5">操作描述与回执摘要</th>
+                <th class="py-2.5 px-3.5 w-36">关联商品 / 凭据</th>
+                <th class="py-2.5 px-3.5 w-36">操作时间</th>
+                <th class="py-2.5 px-3.5 w-24 text-right">详细数据</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-if="tasks.length === 0">
+                <td colspan="7" class="text-center py-12 text-slate-400 font-medium">暂无符合条件的操作日志</td>
+              </tr>
+              <tr v-for="t in tasks" :key="t.id" class="hover:bg-slate-50/70 transition-colors">
+                <td class="py-2.5 px-3.5 font-mono text-slate-400 text-[11px]">#{{ t.id }}</td>
+                <td class="py-2.5 px-3.5">
+                  <span 
+                    :class="(t._typeInfo || getTaskTypeInfo(t.task_type)).bg" 
+                    class="px-2 py-0.5 rounded-md text-[11px] font-semibold border inline-block whitespace-nowrap"
+                  >
+                    {{ (t._typeInfo || getTaskTypeInfo(t.task_type)).text }}
+                  </span>
+                </td>
+                <td class="py-2.5 px-3.5">
+                  <span :class="t._statusBadgeClass || getStatusBadgeClass(t.status)" class="px-2 py-0.5 rounded-full text-[11px] font-semibold inline-block">
+                    {{ t.status === 'SUCCESS' ? '✓ 成功' : (t.status === 'FAILED' ? '✕ 失败' : (t.status === 'CANCELLED' ? '⏹ 已取消' : '⏳ 进行中')) }}
+                  </span>
+                </td>
+                <td class="py-2.5 px-3.5 text-slate-700">
+                  <div class="font-medium text-slate-900 line-clamp-1 leading-snug">{{ t.message }}</div>
+                  <div v-if="t.detail_logs" class="text-[10px] text-slate-400 font-mono mt-0.5 line-clamp-1">
+                    {{ t.detail_logs }}
+                  </div>
+                </td>
+                <td class="py-2.5 px-3.5 font-mono text-[11px]">
+                  <span v-if="t.product_id" class="text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/60">
+                    商品 #{{ t.product_id }}
+                  </span>
+                  <span v-else-if="t.request_id" class="text-indigo-600 font-semibold truncate block max-w-[130px]" :title="t.request_id">
+                    {{ t.request_id }}
+                  </span>
+                  <span v-else class="text-slate-300">-</span>
+                </td>
+                <td class="py-2.5 px-3.5 text-slate-500 font-mono text-[11px] tabular-nums whitespace-nowrap">
+                  <div>{{ t._createdTime || formatDateTime(t.created_at) }}</div>
+                  <div v-if="t.finished_at && t.finished_at !== t.created_at" class="text-[10px] text-slate-400">
+                    完成: {{ t._finishedTime || formatDateTime(t.finished_at) }}
+                  </div>
+                </td>
+                <td class="py-2.5 px-3.5 text-right">
+                  <button 
+                    v-if="t.detail_logs" 
+                    @click="openLogDetail(t)" 
+                    class="px-2 py-0.8 text-[11px] text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-indigo-200/80 rounded-md font-medium transition cursor-pointer shadow-2xs"
+                  >
+                    查看数据
+                  </button>
+                  <span v-else class="text-slate-300 text-[11px]">-</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ================= Tab 4: 系统设置 ================= -->

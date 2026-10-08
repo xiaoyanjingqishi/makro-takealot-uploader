@@ -65,6 +65,8 @@ scratch/
 scratch_*.py
 scratch_*.js
 *.bak*
+*.local_bak_*
+backup_makro_app.*
 .tempmediaStorage/
 .image_cache/
 backend/.image_cache/

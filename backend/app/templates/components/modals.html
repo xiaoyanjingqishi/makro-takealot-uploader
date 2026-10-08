@@ -1,0 +1,1094 @@
+    <!-- ================= 弹窗: 单个跟品采集录入 ================= -->
+    <div v-if="showCollectPiggybackModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <span>🎯</span>
+            <span>单品采集录入 (Makro 跟品)</span>
+          </h3>
+          <button @click="showCollectPiggybackModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+        </div>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Makro 商品链接或 FSN 编号 <span class="text-rose-500">*</span></label>
+            <input 
+              type="text" 
+              v-model="collectPiggybackForm.url_or_fsn"
+              placeholder="例如: GSPHPVTNMFHDAWV4 或 https://www.makro.co.za/.../p/GSPHPVTNMFHDAWV4"
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+            <p class="text-[11px] text-slate-400 mt-1">系统将自动从官方网关解析商品标题、原在售价、高清主图与类目规范</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">目标跟卖店铺</label>
+              <select v-model="collectPiggybackForm.store_id" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
+                <option :value="null">默认当前店铺</option>
+                <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">比价跟卖策略</label>
+              <select v-model="collectPiggybackForm.price_strategy" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
+                <option value="MINUS_15">🔥 比原价低 15 兰特 (-R15.00 推荐抢流)</option>
+                <option value="MINUS_1">⚡ 比原价低 1 兰特 (-R1.00 微降夺车)</option>
+                <option value="PERCENT_2">📊 比原价低 2% (按比例低价)</option>
+                <option value="MANUAL">🤝 保持原售价平卖</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="font-semibold text-slate-700">保本安全底价 (兰特)</label>
+              <span class="text-[10px] text-slate-400">留空则自动按系统默认（原价 70%）保护</span>
+            </div>
+            <input 
+              type="number" 
+              v-model.number="collectPiggybackForm.min_price_floor"
+              placeholder="留空自动按系统设置(70%)保护"
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            />
+          </div>
+        </div>
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+          <button @click="showCollectPiggybackModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer">取消</button>
+          <button 
+            @click="handleCollectPiggyback" 
+            :disabled="collectingPiggyback || !collectPiggybackForm.url_or_fsn"
+            class="px-4 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+          >
+            <span v-if="collectingPiggyback" class="inline-block animate-spin">⏳</span>
+            <span>{{ collectingPiggyback ? '正在解析...' : '立即采集入库' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 批量导入跟品 ================= -->
+    <div v-if="showBatchCollectPiggybackModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-xl w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <span>📑</span>
+            <span>批量导入跟品商品</span>
+          </h3>
+          <button @click="showBatchCollectPiggybackModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+        </div>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">粘贴 Makro 链接或 FSN (每行一条) <span class="text-rose-500">*</span></label>
+            <textarea 
+              v-model="batchCollectPiggybackForm.raw_text"
+              rows="6"
+              placeholder="GSPHPVTNMFHDAWV4&#10;https://www.makro.co.za/.../p/PMPHAF9GAFSFWMHM&#10;..."
+              class="w-full p-2.5 border border-slate-200 rounded-lg font-mono text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
+            ></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">统一指定跟卖店铺</label>
+              <select v-model="batchCollectPiggybackForm.store_id" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
+                <option :value="null">默认店铺</option>
+                <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">统一比价策略</label>
+              <select v-model="batchCollectPiggybackForm.price_strategy" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
+                <option value="MINUS_15">🔥 比原价低 15 兰特 (-R15 推荐抢流)</option>
+                <option value="MINUS_1">⚡ 比原价低 1 兰特 (-R1.00 微降夺车)</option>
+                <option value="PERCENT_2">📊 比原价低 2% (按比例)</option>
+                <option value="MANUAL">🤝 保持原价平卖</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+          <button @click="showBatchCollectPiggybackModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer">取消</button>
+          <button 
+            @click="handleBatchCollectPiggyback" 
+            :disabled="batchCollectingPiggyback || !batchCollectPiggybackForm.raw_text.trim()"
+            class="px-4 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+          >
+            <span v-if="batchCollectingPiggyback" class="inline-block animate-spin">⏳</span>
+            <span>{{ batchCollectingPiggyback ? '正在批量解析...' : '开始批量导入' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 批量挂靠跟品上架 (支持选定目标店铺) ================= -->
+    <div v-if="showBatchPublishPiggybackModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden">
+        <div class="p-4 bg-gradient-to-r from-sky-600 to-blue-600 text-white flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="text-xl">🚀</span>
+            <div>
+              <h3 class="font-bold text-sm">批量挂靠跟品上架 (Makro 官方通道)</h3>
+              <p class="text-[11px] text-sky-100">已选择 {{ piggyback.selectedIds.length }} 件跟品商品，直接激活库存挂靠在售</p>
+            </div>
+          </div>
+          <button @click="showBatchPublishPiggybackModal = false" class="text-white/80 hover:text-white text-base cursor-pointer">✕</button>
+        </div>
+
+        <div class="p-5 space-y-4 text-xs">
+          <!-- 目标店铺选择 -->
+          <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+            <label class="font-bold text-slate-800 flex items-center space-x-1.5">
+              <span>🏪</span>
+              <span>选择挂靠目标店铺:</span>
+            </label>
+
+            <!-- 模式 1: 统一发布至指定店铺 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition select-none"
+              :class="batchPublishPiggybackStoreMode === 'target' ? 'border-sky-500 bg-sky-50/70 shadow-2xs' : 'border-slate-200 hover:bg-white'">
+              <input type="radio" value="target" v-model="batchPublishPiggybackStoreMode" class="mt-0.5 text-sky-600 focus:ring-sky-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">统一发布至指定店铺 (推荐)</span>
+                <p class="text-slate-500 text-[11px]">将选中的所有商品统一挂靠跟卖到该店铺下（自动更新商品所属店铺）</p>
+                <div v-if="batchPublishPiggybackStoreMode === 'target'" class="mt-2">
+                  <select v-model="batchPublishPiggybackTargetStoreId" class="w-full px-2.5 py-1.5 border border-sky-300 rounded font-semibold text-slate-800 bg-white text-xs">
+                    <option v-for="s in activeStores" :key="s.id" :value="s.id">
+                      🏪 {{ s.name }} ({{ s.default_brand || '默认品牌' }}) {{ s.is_default ? '★默认店' : '' }}
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </label>
+
+            <!-- 模式 2: 按商品各自绑定的店铺发布 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-lg border cursor-pointer transition select-none"
+              :class="batchPublishPiggybackStoreMode === 'original' ? 'border-sky-500 bg-sky-50/70 shadow-2xs' : 'border-slate-200 hover:bg-white'">
+              <input type="radio" value="original" v-model="batchPublishPiggybackStoreMode" class="mt-0.5 text-sky-600 focus:ring-sky-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">按各商品原本所属店铺发布</span>
+                <p class="text-slate-500 text-[11px]">保持列表中各商品现有的归属店铺，多店铺并行分别挂靠</p>
+              </div>
+            </label>
+          </div>
+
+          <!-- 合规前置排查提示 -->
+          <div class="p-3 rounded-xl border space-y-1.5"
+            :class="selectedPiggybackProhibitedCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-emerald-50 border-emerald-200 text-emerald-900'">
+            <div class="font-bold flex items-center justify-between text-xs">
+              <span class="flex items-center space-x-1">
+                <span>🛡️</span>
+                <span>AI合规风控诊断摘要:</span>
+              </span>
+              <span class="font-mono font-normal text-[11px]">
+                合规安全: <strong class="text-emerald-700">{{ selectedPiggybackSafeCount }}</strong> / 
+                待质检: <strong class="text-slate-700">{{ selectedPiggybackPendingCount }}</strong>
+              </span>
+            </div>
+            <div v-if="selectedPiggybackProhibitedCount > 0" class="text-[11px] text-rose-700 font-semibold pt-1 flex items-start space-x-1">
+              <span>⛔</span>
+              <span>已检测到 {{ selectedPiggybackProhibitedCount }} 件红线侵权禁售品！系统已自动为您剔除拦截，绝不会挂靠至官方，保护店铺安全！</span>
+            </div>
+            <div v-else class="text-[11px] text-emerald-700 pt-0.5">
+              ✅ 选中商品无红线禁售风险，可放心挂靠跟卖！
+            </div>
+          </div>
+
+          <div class="text-[11px] text-slate-500 leading-relaxed">
+            💡 挂靠提交后，系统将通过官方网关直接激活库存与定价，并将自动纳入每小时自动跟价与防破发底价监控引擎中。
+          </div>
+        </div>
+
+        <div class="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-2">
+          <button @click="showBatchPublishPiggybackModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 cursor-pointer">取消</button>
+          <button 
+            @click="executeBatchPublishPiggyback" 
+            :disabled="isBatchPublishingPiggyback || selectedPiggybackValidCount === 0"
+            class="px-4 py-1.5 bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1"
+          >
+            <span v-if="isBatchPublishingPiggyback" class="inline-block animate-spin">⏳</span>
+            <span>{{ isBatchPublishingPiggyback ? '正在启动挂靠...' : `🚀 立即挂靠 (${selectedPiggybackValidCount} 件)` }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 批量修改所属店铺 ================= -->
+    <div v-if="showBatchSetStoreModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <span>🏪</span>
+            <span>批量转移所属店铺</span>
+          </h3>
+          <button @click="showBatchSetStoreModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <p class="text-slate-600">已选择 <strong class="text-sky-600 font-bold font-mono">{{ piggyback.selectedIds.length }}</strong> 件跟品商品，请选择要转移到的目标店铺：</p>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">目标店铺</label>
+            <select v-model="batchSetStoreTargetId" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-medium text-slate-800">
+              <option v-for="s in activeStores" :key="s.id" :value="s.id">
+                🏪 {{ s.name }} ({{ s.default_brand || '默认品牌' }}) {{ s.is_default ? '★默认店' : '' }}
+              </option>
+            </select>
+          </div>
+          <p class="text-[11px] text-slate-400">转移店铺后，商品将自动绑定至该店铺凭据，挂靠与跟价均按该店铺执行。</p>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+          <button @click="showBatchSetStoreModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer">取消</button>
+          <button 
+            @click="executeBatchSetStore" 
+            :disabled="isBatchSettingStore || !batchSetStoreTargetId"
+            class="px-4 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+          >
+            <span v-if="isBatchSettingStore" class="inline-block animate-spin">⏳</span>
+            <span>{{ isBatchSettingStore ? '正在转移...' : '确认转移' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 批量保本底价计算器 ================= -->
+    <div v-if="showBatchFloorModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
+        <div class="p-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="text-xl">🛡️</span>
+            <div>
+              <h3 class="font-bold text-sm">批量公式计算保本底价</h3>
+              <p class="text-[11px] text-amber-100">已选择 {{ piggyback.selectedIds.length }} 件商品，防止恶性内卷与穿仓</p>
+            </div>
+          </div>
+          <button @click="showBatchFloorModal = false" class="text-white/80 hover:text-white text-base cursor-pointer">✕</button>
+        </div>
+
+        <div class="p-5 space-y-3.5 text-xs">
+          <!-- 模式选择 -->
+          <div class="space-y-2">
+            <label class="font-bold text-slate-700 block">计算公式模式:</label>
+            
+            <!-- 模式 A: 原价百分比 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-xl border cursor-pointer transition select-none"
+              :class="batchFloorForm.mode === 'PERCENT' ? 'border-amber-500 bg-amber-50/60 shadow-2xs' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="radio" value="PERCENT" v-model="batchFloorForm.mode" class="mt-0.5 text-amber-600 focus:ring-amber-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">原价比例折算 (最常用)</span>
+                <p class="text-slate-500 text-[11px]">保本底价 = 原网在售价 × [ X% ]</p>
+                <div v-if="batchFloorForm.mode === 'PERCENT'" class="mt-2 flex items-center space-x-2">
+                  <span class="text-slate-600">按原价的:</span>
+                  <input type="number" v-model.number="batchFloorForm.value" min="1" max="150" class="w-20 px-2 py-1 border border-slate-300 rounded font-mono font-bold text-amber-700 text-xs" />
+                  <span class="font-bold text-slate-700">% 设为保本底线</span>
+                </div>
+              </div>
+            </label>
+
+            <!-- 模式 B: 原价减固定金额 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-xl border cursor-pointer transition select-none"
+              :class="batchFloorForm.mode === 'OFFSET' ? 'border-amber-500 bg-amber-50/60 shadow-2xs' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="radio" value="OFFSET" v-model="batchFloorForm.mode" class="mt-0.5 text-amber-600 focus:ring-amber-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">固定差额下浮</span>
+                <p class="text-slate-500 text-[11px]">保本底价 = 原网在售价 - [ 固定兰特 ]</p>
+                <div v-if="batchFloorForm.mode === 'OFFSET'" class="mt-2 flex items-center space-x-2">
+                  <span class="text-slate-600">原价下浮: R</span>
+                  <input type="number" v-model.number="batchFloorForm.value" min="0" class="w-20 px-2 py-1 border border-slate-300 rounded font-mono font-bold text-amber-700 text-xs" />
+                </div>
+              </div>
+            </label>
+
+            <!-- 模式 C: 统一保本底价 -->
+            <label class="flex items-start space-x-2.5 p-2.5 rounded-xl border cursor-pointer transition select-none"
+              :class="batchFloorForm.mode === 'FIXED' ? 'border-amber-500 bg-amber-50/60 shadow-2xs' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="radio" value="FIXED" v-model="batchFloorForm.mode" class="mt-0.5 text-amber-600 focus:ring-amber-500 cursor-pointer" />
+              <div class="flex-1">
+                <span class="font-bold text-slate-800">统一固定保本底价</span>
+                <p class="text-slate-500 text-[11px]">所选商品强制设为固定的保本底价</p>
+                <div v-if="batchFloorForm.mode === 'FIXED'" class="mt-2 flex items-center space-x-2">
+                  <span class="text-slate-600">固定底价: R</span>
+                  <input type="number" v-model.number="batchFloorForm.value" min="1" class="w-20 px-2 py-1 border border-slate-300 rounded font-mono font-bold text-amber-700 text-xs" />
+                </div>
+              </div>
+            </label>
+          </div>
+
+          <!-- 自动开启跟价联动 -->
+          <label class="flex items-center space-x-2 p-2.5 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-200 cursor-pointer select-none">
+            <input type="checkbox" v-model="batchFloorForm.auto_enable_reprice" class="text-amber-600 focus:ring-amber-500 rounded cursor-pointer" />
+            <span class="text-slate-700 font-medium">配置底价后，自动开启选中商品的自动跟价</span>
+          </label>
+
+          <!-- 实时效果预览 -->
+          <div v-if="samplePreviewFloor" class="p-2.5 bg-amber-50/70 rounded-xl border border-amber-200 text-amber-900 text-[11px] space-y-1">
+            <div class="font-bold flex items-center justify-between">
+              <span>💡 效果预览 (以首件已选商品为例):</span>
+              <span class="font-mono text-slate-500 font-normal">原价 R {{ samplePreviewFloor.orig.toFixed(2) }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs pt-0.5">
+              <span>计算后的保本底价:</span>
+              <span class="font-bold font-mono text-amber-700 text-sm">R {{ samplePreviewFloor.newFloor.toFixed(2) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end space-x-2">
+          <button @click="showBatchFloorModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800 cursor-pointer">取消</button>
+          <button 
+            @click="handleBatchSetFloor" 
+            :disabled="submittingBatchFloor"
+            class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50"
+          >
+            <span>{{ submittingBatchFloor ? '正在批量应用...' : '确定应用' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 批量智能比价策略 ================= -->
+    <div v-if="showBatchPricingPiggybackModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <span>⚡</span>
+            <span>批量智能比价调价 (已选 {{ piggyback.selectedIds.length }} 件)</span>
+          </h3>
+          <button @click="showBatchPricingPiggybackModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+        </div>
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">选择跟价计算公式</label>
+            <select v-model="batchPricingForm.price_strategy" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white">
+              <option value="MINUS_15">🔥 比竞对低 15.00 兰特 (-R15.00 推荐强力抢流)</option>
+              <option value="MINUS_1">⚡ 比竞对低 1.00 兰特 (-R1.00 微降夺车)</option>
+              <option value="MINUS_0.5">⚡ 比竞对低 0.50 兰特 (-R0.50 精细微降保利)</option>
+              <option value="MINUS_2">🚀 比竞对低 2.00 兰特 (-R2.00 强力夺车)</option>
+              <option value="PERCENT_2">📊 比竞对下浮 2% (-2% 比例让利)</option>
+              <option value="PERCENT_5">📊 比竞对下浮 5% (-5% 比例让利)</option>
+              <option value="MANUAL">🤝 保持平价跟卖 (与竞对价格一致)</option>
+              <option value="CUSTOM">✏️ 自定义加减金额 (兰特)</option>
+            </select>
+          </div>
+          <div v-if="batchPricingForm.price_strategy === 'CUSTOM'">
+            <label class="block font-semibold text-slate-700 mb-1">自定义差价 (如 -1.5 代表降1.5兰特，+2 代表涨2兰特)</label>
+            <input 
+              type="number" 
+              step="0.1" 
+              v-model.number="batchPricingForm.custom_delta" 
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+            />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">保本底线保护 (低于此金额不再下调，留空保持原底价)</label>
+            <input 
+              type="number" 
+              v-model.number="batchPricingForm.min_price_floor" 
+              placeholder="0 (留空不修改)"
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-xs"
+            />
+          </div>
+          <div class="flex items-center space-x-2 pt-1 border-t border-slate-100">
+            <input type="checkbox" id="sync_to_makro_chk" v-model="batchPricingForm.sync_to_makro" class="rounded text-sky-600 focus:ring-sky-500 cursor-pointer" />
+            <label for="sync_to_makro_chk" class="text-xs font-medium text-slate-700 cursor-pointer">立即按新公式重算并在在售商品上同步更新至 Makro 官方</label>
+          </div>
+        </div>
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+          <button @click="showBatchPricingPiggybackModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer">取消</button>
+          <button 
+            @click="handleBatchApplyPricing" 
+            :disabled="applyingBatchPricing"
+            class="px-4 py-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 cursor-pointer"
+          >
+            <span>确定批量应用</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 编辑跟品单品参数 ================= -->
+    <div v-if="showEditPiggybackModal && editingPiggybackItem" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+            <span>✏️</span>
+            <span>修改跟品刊登参数</span>
+          </h3>
+          <button @click="showEditPiggybackModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+        </div>
+        <div class="space-y-3 text-xs max-h-[70vh] overflow-y-auto pr-1">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">商品标题</label>
+            <p class="p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium">{{ editingPiggybackItem.title }}</p>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">卖家自定义 SKU</label>
+              <input type="text" v-model="editingPiggybackItem.seller_sku" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">所属店铺</label>
+              <select v-model="editingPiggybackItem.store_id" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs bg-white">
+                <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">本店售价 (R)</label>
+              <input type="number" step="0.5" v-model.number="editingPiggybackItem.target_price" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">划线价 MRP (R)</label>
+              <input type="number" step="0.5" v-model.number="editingPiggybackItem.target_mrp" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">保本底价 (R)</label>
+              <input type="number" step="0.5" v-model.number="editingPiggybackItem.min_price_floor" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">跟品上架库存</label>
+              <input type="number" v-model.number="editingPiggybackItem.inventory" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">发货时效 (SLA 天数)</label>
+              <input type="number" v-model.number="editingPiggybackItem.lead_time_days" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">自动跟价开关</label>
+              <select v-model="editingPiggybackItem.auto_reprice" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs bg-white">
+                <option :value="true">🤖 开启自动跟价</option>
+                <option :value="false">⚪ 关闭自动跟价</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">跟价计算公式</label>
+              <select v-model="editingPiggybackItem.price_strategy" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs bg-white">
+                <option value="MINUS_1">🔥 比竞对低 R1.00 (推荐抢流)</option>
+                <option value="MINUS_0.5">⚡ 比竞对低 R0.50 (微降保利)</option>
+                <option value="MINUS_2">🚀 比竞对低 R2.00 (强力夺车)</option>
+                <option value="PERCENT_2">📊 比竞对低 2% (按比例)</option>
+                <option value="PERCENT_5">📊 比竞对低 5% (按比例)</option>
+                <option value="MANUAL">🤝 平价跟卖 (与竞对一致)</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">变体规格说明 (如 Pack of 10)</label>
+            <input type="text" v-model="editingPiggybackItem.variant_name" placeholder="无变体可留空" class="w-full px-3 py-1.5 border border-slate-200 rounded text-xs" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">最高保护售价 (R，无竞对时保护)</label>
+            <input type="number" step="1" v-model.number="editingPiggybackItem.max_price_ceiling" placeholder="0 (不限)" class="w-full px-3 py-1.5 border border-slate-200 rounded font-mono text-xs" />
+          </div>
+          <div class="grid grid-cols-4 gap-2">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 mb-1">长 (cm)</label>
+              <input type="number" v-model.number="editingPiggybackItem.length" class="w-full px-2 py-1 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 mb-1">宽 (cm)</label>
+              <input type="number" v-model.number="editingPiggybackItem.breadth" class="w-full px-2 py-1 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 mb-1">高 (cm)</label>
+              <input type="number" v-model.number="editingPiggybackItem.height" class="w-full px-2 py-1 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-600 mb-1">重 (kg)</label>
+              <input type="number" step="0.1" v-model.number="editingPiggybackItem.weight" class="w-full px-2 py-1 border border-slate-200 rounded font-mono text-xs" />
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+          <button @click="showEditPiggybackModal = false" class="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer">取消</button>
+          <button @click="saveEditPiggyback" class="px-4 py-1.5 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-lg font-semibold transition-all cursor-pointer">保存修改</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: AI 侵权与合规检测详情报告 (双轮多模态 + 白牌豁免 + 人工终审) ================= -->
+    <div v-if="showComplianceDetailModal && currentComplianceItem" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] flex flex-col">
+        <!-- 弹窗标题栏 -->
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+          <div class="flex items-center space-x-2">
+            <span class="text-lg">🛡️</span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Makro 跟品双轮 AI 侵权与合规质检报告</h3>
+              <p class="text-[10px] text-slate-400">第一轮文本风控 + 第二轮主图视觉看图 + 白牌规则自动豁免</p>
+            </div>
+          </div>
+          <button @click="showComplianceDetailModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer p-1">✕</button>
+        </div>
+
+        <div class="space-y-4 text-xs overflow-y-auto pr-1 flex-1">
+          <!-- 头部结论 Banner -->
+          <div 
+            class="p-4 rounded-xl border flex items-center justify-between shadow-2xs"
+            :class="{
+              'bg-emerald-50 text-emerald-950 border-emerald-200': currentComplianceItem.compliance_status === 'SAFE',
+              'bg-amber-50 text-amber-950 border-amber-200': currentComplianceItem.compliance_status === 'RISK',
+              'bg-rose-50 text-rose-950 border-rose-200': currentComplianceItem.compliance_status === 'PROHIBITED',
+              'bg-purple-50 text-purple-950 border-purple-200': currentComplianceItem.compliance_status === 'DISPUTED',
+              'bg-slate-50 text-slate-900 border-slate-200': !currentComplianceItem.compliance_status || currentComplianceItem.compliance_status === 'PENDING_CHECK'
+            }"
+          >
+            <div class="flex items-center space-x-3">
+              <span class="text-3xl shrink-0">
+                <template v-if="currentComplianceItem.compliance_status === 'SAFE'">🟢</template>
+                <template v-else-if="currentComplianceItem.compliance_status === 'RISK'">🟡</template>
+                <template v-else-if="currentComplianceItem.compliance_status === 'PROHIBITED'">🔴</template>
+                <template v-else-if="currentComplianceItem.compliance_status === 'DISPUTED'">⚖️</template>
+                <template v-else>⚪</template>
+              </span>
+              <div>
+                <p class="font-bold text-sm flex items-center space-x-2">
+                  <span>
+                    <template v-if="currentComplianceItem.compliance_status === 'SAFE'">
+                      <template v-if="currentComplianceItem.compliance_details?.is_white_label">合规安全 · 卖家自造白牌 (准予挂靠跟品)</template>
+                      <template v-else>合规安全 (准予跟卖)</template>
+                    </template>
+                    <template v-else-if="currentComplianceItem.compliance_status === 'RISK'">中度风险预警 (建议人工核查)</template>
+                    <template v-else-if="currentComplianceItem.compliance_status === 'PROHIBITED'">红线侵权/平台违禁 (系统强制禁止跟品)</template>
+                    <template v-else-if="currentComplianceItem.compliance_status === 'DISPUTED'">会审分歧待仲裁 (需人工审阅)</template>
+                    <template v-else>待执行 AI 会审检测</template>
+                  </span>
+                </p>
+                <p class="text-[11px] opacity-85 mt-1 leading-relaxed">
+                  {{ currentComplianceItem.compliance_details?.reconciliation_summary || currentComplianceItem.compliance_details?.summary || '暂无诊断摘要' }}
+                </p>
+              </div>
+            </div>
+            <!-- 右侧重新检测按钮 -->
+            <button 
+              @click="handleCheckCompliance(currentComplianceItem)" 
+              class="shrink-0 ml-3 px-3 py-1.5 bg-white/90 hover:bg-white text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition active:scale-95 cursor-pointer flex items-center space-x-1"
+            >
+              <span>🔄</span>
+              <span>重新质检 (双AI)</span>
+            </button>
+          </div>
+
+          <!-- ★★★ 卖家自造白牌豁免通行证 (White-Label Piggyback Clearance) ★★★ -->
+          <div v-if="currentComplianceItem.compliance_details?.white_label_notice || currentComplianceItem.compliance_details?.is_white_label" class="p-3.5 bg-sky-50/90 border border-sky-200 rounded-xl space-y-1.5 text-sky-950">
+            <div class="flex items-center space-x-2 font-bold text-xs text-sky-900">
+              <span class="text-sm">🏷️</span>
+              <span>Makro 白牌跟品规则豁免通行说明</span>
+              <span class="px-2 py-0.2 rounded-full text-[10px] bg-sky-200 text-sky-800 font-normal">官方规则允许跟卖</span>
+            </div>
+            <p class="text-[11px] leading-relaxed">
+              {{ currentComplianceItem.compliance_details?.white_label_notice || ('Listing 前缀品牌「' + (currentComplianceItem.brand || '无') + '」经查证属于卖家自造白牌/杂牌，未设立商标保护壁垒。依照 Makro 官方跟卖规则，该商品完全支持自由挂靠。') }}
+            </p>
+          </div>
+
+          <!-- 商品基础信息卡片 -->
+          <div class="p-3 bg-slate-50 rounded-xl space-y-1.5 border border-slate-200/70">
+            <div class="flex items-start justify-between">
+              <p class="font-semibold text-slate-800 flex-1 pr-2 leading-snug">{{ currentComplianceItem.title }}</p>
+              <a :href="currentComplianceItem.makro_url" target="_blank" class="text-indigo-600 hover:text-indigo-800 text-[11px] underline shrink-0 font-medium">查看 Makro 前台 ↗</a>
+            </div>
+            <div class="flex items-center space-x-3 text-slate-500 font-mono text-[11px] flex-wrap gap-y-1">
+              <span>FSN: <strong class="text-slate-700">{{ currentComplianceItem.makro_product_id }}</strong></span>
+              <span>前缀品牌: <strong class="text-indigo-700">{{ currentComplianceItem.brand || 'Generic' }}</strong></span>
+              <span>类目: <strong class="text-slate-700">{{ currentComplianceItem.vertical }}</strong></span>
+              <span v-if="currentComplianceItem.original_seller">在售竞对: <strong class="text-amber-700">{{ currentComplianceItem.original_seller }}</strong></span>
+            </div>
+          </div>
+
+          <!-- 运营防守与避坑建议 -->
+          <div v-if="currentComplianceItem.compliance_details?.suggestions?.length" class="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-amber-900 space-y-1">
+            <div class="font-bold text-[11px] flex items-center space-x-1">
+              <span>💡</span>
+              <span>跟品运营防守与履约建议:</span>
+            </div>
+            <ul class="list-disc list-inside space-y-0.5 text-[11px] opacity-90 pl-1 leading-relaxed">
+              <li v-for="(sug, sIdx) in currentComplianceItem.compliance_details.suggestions" :key="sIdx">{{ sug }}</li>
+            </ul>
+          </div>
+
+          <!-- ★★★ 第一轮：标题与品牌独立文本风控 (Round 1: Title & Brand IP Text Audit) ★★★ -->
+          <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+            <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span class="text-sm">📝</span>
+                <span class="font-bold text-xs text-slate-800">第一轮：标题与品牌独立文本风控 (Round 1 多模型会审)</span>
+              </div>
+              <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-2xs" :class="{
+                'bg-emerald-100 text-emerald-800 border border-emerald-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'SAFE',
+                'bg-purple-100 text-purple-800 border border-purple-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'DISPUTED',
+                'bg-amber-100 text-amber-800 border border-amber-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'RISK',
+                'bg-rose-100 text-rose-800 border border-rose-300': currentComplianceItem.compliance_details?.round_1_status?.status === 'PROHIBITED'
+              }">
+                {{ currentComplianceItem.compliance_details?.round_1_status?.summary || (currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.risk_level === 'SAFE' && currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '文本审查完成') }}
+              </span>
+            </div>
+
+            <div class="p-3.5 grid grid-cols-2 gap-3.5">
+              <!-- 左列: 通义千问文本 -->
+              <div class="bg-blue-50/40 p-3.5 rounded-xl border border-blue-200/80 space-y-2">
+                <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                  <span class="font-bold text-blue-900 text-xs flex items-center">
+                    <span class="mr-1">🤖</span>通义千问 (Qwen-Plus)
+                  </span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.risk_level)">
+                    {{ currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.risk_level || '未执行' }}
+                  </span>
+                </div>
+                <div class="text-[11px] space-y-1.5">
+                  <div class="flex items-center space-x-1 flex-wrap">
+                    <span class="text-slate-500 font-medium">品牌检出:</span>
+                    <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-blue-900 bg-blue-100 px-1.5 py-0.5 rounded">
+                      {{ currentComplianceItem.compliance_details.qwen_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                    </span>
+                    <span v-else class="text-emerald-700 font-semibold">✓ 未检出受限品牌</span>
+                  </div>
+                  <div>
+                    <span class="text-slate-500 font-medium">违规类型:</span>
+                    <span class="font-mono text-slate-700 ml-1 font-semibold">{{ currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                  </div>
+                  <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
+                    <div class="text-slate-400 font-semibold text-[10px]">审查理由:</div>
+                    <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.summary || (currentComplianceItem.compliance_details?.qwen_verdict?.title_audit?.reasons ? currentComplianceItem.compliance_details.qwen_verdict.title_audit.reasons.join('；') : '无异常') }}</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 右列: DeepSeek 文本 -->
+              <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
+                <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                  <span class="font-bold text-indigo-900 text-xs flex items-center">
+                    <span class="mr-1">🐬</span>DeepSeek (Flash)
+                  </span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.risk_level)">
+                    {{ currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.risk_level || '未执行' }}
+                  </span>
+                </div>
+                <div class="text-[11px] space-y-1.5">
+                  <div class="flex items-center space-x-1 flex-wrap">
+                    <span class="text-slate-500 font-medium">品牌检出:</span>
+                    <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded">
+                      {{ currentComplianceItem.compliance_details.deepseek_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                    </span>
+                    <span v-else class="text-emerald-700 font-semibold">✓ 未检出受限品牌</span>
+                  </div>
+                  <div>
+                    <span class="text-slate-500 font-medium">违规类型:</span>
+                    <span class="font-mono text-slate-700 ml-1 font-semibold">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                  </div>
+                  <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
+                    <div class="text-slate-400 font-semibold text-[10px]">审查理由:</div>
+                    <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.summary || (currentComplianceItem.compliance_details?.deepseek_verdict?.title_audit?.reasons ? currentComplianceItem.compliance_details.deepseek_verdict.title_audit.reasons.join('；') : '无异常') }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ★★★ 第二轮：首图视觉与运输合规 (Round 2: Vision & Multimodal Image Audit) ★★★ -->
+          <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+            <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span class="text-sm">🖼️</span>
+                <span class="font-bold text-xs text-slate-800">第二轮：首图视觉与运输合规 (Round 2 多模态看图)</span>
+              </div>
+              <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-2xs" :class="{
+                'bg-emerald-100 text-emerald-800 border border-emerald-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'SAFE',
+                'bg-purple-100 text-purple-800 border border-purple-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'DISPUTED',
+                'bg-amber-100 text-amber-800 border border-amber-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'RISK',
+                'bg-rose-100 text-rose-800 border border-rose-300': currentComplianceItem.compliance_details?.round_2_status?.status === 'PROHIBITED'
+              }">
+                {{ currentComplianceItem.compliance_details?.round_2_status?.summary || (currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.risk_level === 'SAFE' && currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '视觉审查完成') }}
+              </span>
+            </div>
+
+            <div class="p-3.5 space-y-3.5">
+              <!-- 首图预览 -->
+              <div v-if="currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url" class="flex items-center space-x-3 p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                <img 
+                  :src="cleanImageUrl(currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url)" 
+                  @error="handleImageError($event, currentComplianceItem.image_url)"
+                  @click="openImagePreview(currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url)"
+                  class="w-14 h-14 rounded-lg object-cover border border-slate-200 cursor-pointer hover:opacity-80 transition shadow-2xs shrink-0" 
+                  title="点击放大预览首图"
+                />
+                <div class="text-[11px] text-slate-600 flex-1 min-w-0">
+                  <div class="font-semibold text-slate-800">首图图片审查对象:</div>
+                  <div class="font-mono text-[10px] text-slate-400 truncate max-w-lg mt-0.5">{{ currentComplianceItem.image_url || currentComplianceItem.compliance_details?.image_inspection?.image_url }}</div>
+                  <div class="text-[10px] text-indigo-600 font-medium mt-1">点击缩略图查看大图 · 已通过防盗链 Referer 鉴权下载验证</div>
+                </div>
+              </div>
+
+              <!-- 视觉两列对比 -->
+              <div class="grid grid-cols-2 gap-3.5">
+                <!-- 左列: Qwen-VL -->
+                <div class="bg-blue-50/40 p-3.5 rounded-xl border border-blue-200/80 space-y-2">
+                  <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                    <span class="font-bold text-blue-900 text-xs flex items-center">
+                      <span class="mr-1">🤖</span>通义千问视觉 (Qwen-VL)
+                    </span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.risk_level)">
+                      {{ currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.risk_level || 'SAFE' }}
+                    </span>
+                  </div>
+                  <div class="text-[11px] space-y-1.5">
+                    <div>
+                      <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.logo_names?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.qwen_verdict.image_audit.logo_names.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                    </div>
+                    <div>
+                      <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.qwen_verdict.image_audit.prohibited_types.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                    </div>
+                    <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
+                      <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
+                      <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.summary || '无异常' }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 右列: DeepSeek-Vision -->
+                <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
+                  <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                    <span class="font-bold text-indigo-900 text-xs flex items-center">
+                      <span class="mr-1">🐬</span>DeepSeek 视觉 (Flash-Vision)
+                    </span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level)">
+                      {{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level || 'SAFE' }}
+                    </span>
+                  </div>
+                  <div class="text-[11px] space-y-1.5">
+                    <div>
+                      <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.logo_names?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.deepseek_verdict.image_audit.logo_names.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                    </div>
+                    <div>
+                      <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                        {{ currentComplianceItem.compliance_details.deepseek_verdict.image_audit.prohibited_types.join(', ') }}
+                      </span>
+                      <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                    </div>
+                    <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
+                      <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
+                      <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.summary || '无异常' }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 违禁品一票拦截警报 -->
+          <div v-if="currentComplianceItem.compliance_details?.prohibited_items?.length" class="p-3.5 bg-rose-50/80 border border-rose-200 rounded-xl text-[11px] text-rose-900 space-y-1">
+            <div class="flex items-center justify-between font-bold">
+              <span>🚫 AI 识别平台受限/违禁特征:</span>
+              <span class="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px]">不可上架</span>
+            </div>
+            <div>检出项: <strong class="underline decoration-rose-400">{{ currentComplianceItem.compliance_details.prohibited_items.join('、') }}</strong></div>
+            <div class="text-slate-500 text-[10px] leading-relaxed">说明：商品包含受限或禁售特征（如蓝牙/WiFi无线通讯、未授权影视IP、航空禁运液体或假冒品牌），系统禁止挂靠跟品。</div>
+          </div>
+
+          <!-- ★★★ 人工终审裁定控制台 (Human Arbitration Console) ★★★ -->
+          <div class="p-4 bg-purple-50/80 rounded-xl border border-purple-200/90 space-y-3 shadow-xs">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-xs text-purple-950 flex items-center">
+                <span class="mr-1.5 text-sm">⚖️</span> 人工终审裁定控制台
+              </span>
+              <span v-if="currentComplianceItem.compliance_details?.human_arbitration" class="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-bold border border-purple-200">
+                ✓ 已终审: {{ currentComplianceItem.compliance_details.human_arbitration.human_verdict }} (操作人: {{ currentComplianceItem.compliance_details.human_arbitration.operator || 'admin' }})
+              </span>
+              <span v-else class="text-[10px] text-purple-700 font-medium">
+                若 AI 发生分歧或误判白牌，人工可一键终审纠正并沉淀日志
+              </span>
+            </div>
+
+            <!-- 备注输入框 -->
+            <input 
+              v-model="piggybackArbitrationNotes" 
+              type="text" 
+              placeholder="填写裁定理由或说明（例如：HYinjin是卖家自造白牌，规则允许跟品；或配件合理使用判为SAFE）..." 
+              class="w-full text-xs px-3.5 py-2.5 bg-white border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:outline-none placeholder:text-slate-400 transition"
+            />
+
+            <!-- 一键裁定按钮组 -->
+            <div class="flex items-center space-x-2 pt-0.5">
+              <button 
+                @click="submitPiggybackArbitration(currentComplianceItem, 'SAFE')" 
+                :disabled="isArbitratingPiggyback"
+                class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <span>🛡️</span>
+                <span>裁定为【SAFE 安全白牌/合规】</span>
+              </button>
+              <button 
+                @click="submitPiggybackArbitration(currentComplianceItem, 'RISK')" 
+                :disabled="isArbitratingPiggyback"
+                class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <span>⚠️</span>
+                <span>裁定为【RISK 风险预警】</span>
+              </button>
+              <button 
+                @click="submitPiggybackArbitration(currentComplianceItem, 'PROHIBITED')" 
+                :disabled="isArbitratingPiggyback"
+                class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+              >
+                <span>🚫</span>
+                <span>裁定为【PROHIBITED 违禁红线】</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 弹窗底部操作栏 -->
+        <div class="flex items-center justify-end space-x-2 pt-3 border-t border-slate-100 shrink-0">
+          <button @click="showComplianceDetailModal = false" class="px-5 py-2 text-xs bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-medium cursor-pointer transition">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 弹窗: 智能跟价审计日志 ================= -->
+    <div v-if="showRepriceLogsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div class="bg-white rounded-2xl max-w-4xl w-full p-5 shadow-2xl border border-slate-200 space-y-4 flex flex-col max-h-[85vh]">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center space-x-2">
+            <span class="text-base">📜</span>
+            <h3 class="text-sm font-bold text-slate-900">Makro 智能跟价审计日志 (共 {{ repriceLogs.total }} 条记录)</h3>
+          </div>
+          <div class="flex items-center space-x-3">
+            <button @click="loadRepriceLogs(repriceLogs.page)" :disabled="loadingRepriceLogs" class="p-1 text-slate-500 hover:text-slate-800 rounded border border-slate-200 text-xs cursor-pointer">
+              <span :class="{'inline-block animate-spin': loadingRepriceLogs}">🔄</span>
+            </button>
+            <button @click="showRepriceLogsModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+          </div>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-auto border border-slate-100 rounded-xl">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 sticky top-0 border-b border-slate-200/80">
+              <tr class="text-slate-600 font-semibold">
+                <th class="py-2 px-3 w-36">时间</th>
+                <th class="py-2 px-3 w-32">货号 SKU / FSN</th>
+                <th class="py-2 px-3 w-32">占位竞对</th>
+                <th class="py-2 px-3 w-24">竞对原价</th>
+                <th class="py-2 px-3 w-32">调前 ➔ 调后</th>
+                <th class="py-2 px-3 w-28 text-center">操作类型</th>
+                <th class="py-2 px-3 min-w-[200px]">调价原因与说明</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 font-mono">
+              <tr v-if="loadingRepriceLogs">
+                <td colspan="7" class="py-12 text-center text-slate-400">⏳ 正在加载调价日志...</td>
+              </tr>
+              <tr v-else-if="repriceLogs.items.length === 0">
+                <td colspan="7" class="py-12 text-center text-slate-400">暂无调价记录，点击商品行「⚡跟价」或开启后台自动巡检即可生成</td>
+              </tr>
+              <tr v-else v-for="log in repriceLogs.items" :key="log.id" class="hover:bg-slate-50/80">
+                <td class="py-2 px-3 text-slate-500 text-[11px]">{{ log.created_at }}</td>
+                <td class="py-2 px-3">
+                  <div class="font-bold text-slate-800">{{ log.seller_sku }}</div>
+                  <div class="text-[10px] text-slate-400">{{ log.makro_product_id }}</div>
+                </td>
+                <td class="py-2 px-3 text-slate-700 font-sans truncate max-w-[120px]" :title="log.competitor_seller">{{ log.competitor_seller || '无/自营' }}</td>
+                <td class="py-2 px-3 text-slate-600">R {{ log.competitor_price.toFixed(2) }}</td>
+                <td class="py-2 px-3">
+                  <span class="text-slate-400 line-through">R {{ log.old_price.toFixed(2) }}</span>
+                  <span class="text-emerald-600 font-bold ml-1">R {{ log.new_price.toFixed(2) }}</span>
+                </td>
+                <td class="py-2 px-3 text-center font-sans">
+                  <span 
+                    class="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                    :class="{
+                      'bg-emerald-100 text-emerald-800': log.action === 'UNDER_CUT',
+                      'bg-sky-100 text-sky-800': log.action === 'WINNING_HOLD',
+                      'bg-amber-100 text-amber-800': log.action === 'REACHED_FLOOR',
+                      'bg-slate-100 text-slate-600': log.action === 'NO_CHANGE',
+                      'bg-rose-100 text-rose-800': log.action === 'FAILED'
+                    }"
+                  >
+                    <template v-if="log.action === 'UNDER_CUT'">📉 降价抢流</template>
+                    <template v-else-if="log.action === 'WINNING_HOLD'">🏆 胜出维持</template>
+                    <template v-else-if="log.action === 'REACHED_FLOOR'">🛡️ 触底保本</template>
+                    <template v-else-if="log.action === 'NO_CHANGE'">⚪ 维持现价</template>
+                    <template v-else>❌ 执行异常</template>
+                  </span>
+                </td>
+                <td class="py-2 px-3 text-slate-600 font-sans text-[11px] leading-tight">{{ log.reason }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 日志分页控制 -->
+        <div class="flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <span>共 {{ repriceLogs.total }} 条调价记录，第 {{ repriceLogs.page }} / {{ Math.ceil(repriceLogs.total / repriceLogs.pageSize) || 1 }} 页</span>
+          <div class="flex items-center space-x-1">
+            <button 
+              @click="loadRepriceLogs(repriceLogs.page - 1)" 
+              :disabled="repriceLogs.page <= 1"
+              class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              上一页
+            </button>
+            <button 
+              @click="loadRepriceLogs(repriceLogs.page + 1)" 
+              :disabled="repriceLogs.page >= Math.ceil(repriceLogs.total / repriceLogs.pageSize)"
+              class="px-2.5 py-1 border border-slate-200 rounded hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 员工个人今日战报模态框 ================= -->
+    <div 
+      v-if="showMyDailySummaryModal" 
+      class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      @click.self="showMyDailySummaryModal = false"
+    >
+      <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col">
+        <!-- 顶部装饰色条与标题 -->
+        <div class="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 px-6 py-5 text-white relative overflow-hidden">
+          <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-white/10 rounded-full blur-xl pointer-events-none"></div>
+          <div class="flex items-center justify-between relative z-10">
+            <div class="flex items-center space-x-3">
+              <span class="text-3xl">🏆</span>
+              <div>
+                <h3 class="text-base font-bold tracking-tight">今日个人战报</h3>
+                <p class="text-xs text-emerald-100 font-medium opacity-90 mt-0.5">
+                  {{ currentUser?.nickname || currentUser?.username }} · 今日高效作业成果
+                </p>
+              </div>
+            </div>
+            <button 
+              @click="showMyDailySummaryModal = false" 
+              class="w-7 h-7 rounded-lg flex items-center justify-center text-white/80 hover:text-white hover:bg-white/20 transition-colors text-sm cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- 战报主体内容 -->
+        <div class="p-6 space-y-4">
+          <!-- 激励文案横幅 -->
+          <div class="p-3.5 bg-gradient-to-br from-amber-50 to-orange-50/60 border border-amber-200/80 rounded-xl flex items-center space-x-3 shadow-2xs">
+            <span class="text-2xl shrink-0">✨</span>
+            <div class="text-xs text-amber-900 font-semibold leading-relaxed">
+              {{ myDailySummary.encouragement || '新的一天开始了，加油冲榜！' }}
+            </div>
+          </div>
+
+          <!-- 团队今日排名勋章卡片 -->
+          <div class="p-4 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-10 h-10 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center font-bold text-amber-800 text-sm shadow-xs">
+                <template v-if="myDailySummary.team_rank === 1">🥇</template>
+                <template v-else-if="myDailySummary.team_rank === 2">🥈</template>
+                <template v-else-if="myDailySummary.team_rank === 3">🥉</template>
+                <template v-else>#{{ myDailySummary.team_rank }}</template>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-slate-800">团队今日产出榜</div>
+                <div class="text-[11px] text-slate-500 mt-0.5">
+                  全队共 {{ myDailySummary.total_operators }} 位小伙伴参与作业
+                </div>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-xs text-slate-500 block">今日位列</span>
+              <span class="text-base font-extrabold text-amber-600 font-mono">
+                第 {{ myDailySummary.team_rank }} 名
+              </span>
+            </div>
+          </div>
+
+          <!-- 四大业务核心产出矩阵 -->
+          <div class="grid grid-cols-2 gap-3">
+            <!-- 1. 采集录入 -->
+            <div class="p-3 rounded-xl bg-blue-50/60 border border-blue-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-blue-700">
+                <span class="text-[11px] font-semibold">📥 采集录入</span>
+                <span class="text-xs">Takealot</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-blue-900">
+                {{ myDailySummary.today_sourcing }}
+                <span class="text-[10px] text-blue-600 font-normal ml-0.5">件</span>
+              </div>
+            </div>
+
+            <!-- 2. AI清洗合规 -->
+            <div class="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-indigo-700">
+                <span class="text-[11px] font-semibold">⚡ 清洗合规</span>
+                <span class="text-xs">AI审核</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-indigo-900">
+                {{ myDailySummary.today_cleaning }}
+                <span class="text-[10px] text-indigo-600 font-normal ml-0.5">次</span>
+              </div>
+            </div>
+
+            <!-- 3. Makro 铺货上架 -->
+            <div class="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-emerald-700">
+                <span class="text-[11px] font-semibold">🚀 铺货刊登</span>
+                <span class="text-xs">上架发品</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-emerald-900">
+                {{ myDailySummary.today_publishing }}
+                <span class="text-[10px] text-emerald-600 font-normal ml-0.5">条</span>
+              </div>
+            </div>
+
+            <!-- 4. Makro 跟品管理 -->
+            <div class="p-3 rounded-xl bg-sky-50/60 border border-sky-100 flex flex-col justify-between">
+              <div class="flex items-center justify-between text-sky-700">
+                <span class="text-[11px] font-semibold">🎯 爆款跟品</span>
+                <span class="text-xs">跟品截流</span>
+              </div>
+              <div class="mt-2 text-2xl font-bold font-mono text-sky-900">
+                {{ myDailySummary.today_piggyback }}
+                <span class="text-[10px] text-sky-600 font-normal ml-0.5">件</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 综合业务总动销动作 -->
+          <div class="p-3 rounded-xl bg-slate-900 text-white flex items-center justify-between shadow-xs">
+            <div class="flex items-center space-x-2.5">
+              <span class="text-lg">🔥</span>
+              <div>
+                <div class="text-xs font-semibold">今日综合业务操作总次数</div>
+                <div class="text-[10px] text-slate-400">涵盖采集、清洗、合规裁定、刊登、跟品跟价</div>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-lg font-mono font-bold text-emerald-400">{{ myDailySummary.today_actions }}</span>
+              <span class="text-[11px] text-slate-300 ml-1">次</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部按钮区 -->
+        <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+          <button 
+            @click="loadMyDailySummary()" 
+            class="text-xs text-slate-600 hover:text-slate-900 flex items-center space-x-1 cursor-pointer"
+          >
+            <span>🔄</span>
+            <span>刷新战报</span>
+          </button>
+          <button 
+            @click="showMyDailySummaryModal = false" 

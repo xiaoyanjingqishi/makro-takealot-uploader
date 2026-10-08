@@ -1,0 +1,555 @@
+      <div v-if="currentTab === 'inspector' && activeItem" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-3.5 custom-scrollbar">
+        <!-- 审品工作台顶部控制栏 -->
+        <div class="flex items-center justify-between bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex-wrap gap-2.5">
+          <div class="flex items-center space-x-3">
+            <button 
+              @click="returnToProducts" 
+              class="text-xs font-medium text-slate-700 hover:text-indigo-700 bg-white hover:bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200/80 flex items-center space-x-1.5 cursor-pointer transition shadow-2xs active:scale-95"
+            >
+              <span>&larr; 返回选品箱</span>
+            </button>
+            <div class="flex items-center space-x-2">
+              <h2 class="text-sm font-bold text-slate-900 tracking-tight">商品审品与规则微调 <span class="font-mono text-slate-400 font-normal text-xs">(ID: #{{ activeItem.id }})</span></h2>
+              <span v-if="activeItem.clean_mode === 'vision'" class="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-purple-50 text-purple-700 border border-purple-200/80">🖼️ 图文多模态深度校准</span>
+              <span v-else-if="activeItem.status === 'CLEANED' || activeItem.clean_mode === 'text'" class="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80">📝 纯文本快速清洗</span>
+            </div>
+          </div>
+          
+          <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
+            <!-- 双模式对比清洗按钮组 -->
+            <div class="inline-flex items-center rounded-lg border border-slate-200/80 overflow-hidden shadow-2xs bg-white">
+              <button 
+                @click="reCleanActiveItem('text')" 
+                :disabled="isCleaning"
+                class="px-2.5 py-1.5 text-xs font-medium transition flex items-center space-x-1 border-r border-slate-200/80 cursor-pointer"
+                :class="activeItem.clean_mode === 'text' ? 'bg-indigo-50 text-indigo-800 font-semibold' : 'bg-white text-slate-700 hover:bg-slate-50'"
+                title="以纯文本方式极速清洗 (耗时约 1.5s)"
+              >
+                <span>📝 纯文本清洗</span>
+              </button>
+              <button 
+                @click="reCleanActiveItem('vision')" 
+                :disabled="isCleaning"
+                class="px-2.5 py-1.5 text-xs font-medium transition flex items-center space-x-1 cursor-pointer"
+                :class="activeItem.clean_mode === 'vision' ? 'bg-purple-50 text-purple-800 font-semibold' : 'bg-white text-purple-700 hover:bg-purple-50/50'"
+                title="携带首图实物 + 文本多模态深度校准 (推荐对比)"
+              >
+                <span>🖼️ 图文多模态</span>
+              </button>
+            </div>
+            <button 
+              @click="saveActiveItem" 
+              class="px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg shadow-2xs transition cursor-pointer active:scale-95"
+            >
+              💾 保存修改
+            </button>
+            <button 
+              @click="triggerProductPublish(activeItem)" 
+              :disabled="publishingId === activeItem.id"
+              class="px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg shadow-xs flex items-center space-x-1 transition cursor-pointer active:scale-95"
+            >
+              <span>{{ publishingId === activeItem.id ? '上品中...' : (activeItem.variants && activeItem.variants.length > 0 ? `🚀 立即上品到 Makro (${activeItem.variants.length} 变体)` : '🚀 立即独立上品到 Makro') }}</span>
+            </button>
+            <template v-if="activeItem.status === 'ABANDONED'">
+              <button 
+                @click="restoreItem(activeItem)" 
+                class="px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 cursor-pointer transition"
+              >
+                ♻️ 恢复至选品箱
+              </button>
+              <button 
+                @click="deleteItem(activeItem)" 
+                class="px-3 py-1.5 text-xs font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-lg border border-rose-200 cursor-pointer transition"
+              >
+                💥 彻底删除
+              </button>
+            </template>
+            <template v-else>
+              <button 
+                @click="deleteItem(activeItem)" 
+                class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-rose-600 bg-white hover:bg-rose-50/70 rounded-lg border border-slate-200/80 cursor-pointer transition"
+                title="移入弃用箱"
+              >
+                🗑️ 弃用
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- 左右分栏对比视图 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          
+          <!-- 左栏: Takealot 原始数据 -->
+          <div class="bg-white p-4 sm:p-5 rounded-xl border border-slate-200/80 shadow-xs space-y-4">
+            <div class="flex items-center justify-between border-b pb-2.5 border-slate-100">
+              <span class="text-xs font-bold text-slate-500 uppercase tracking-wider">Takealot 原始采集物料</span>
+              <a :href="activeItem.takealot_url" target="_blank" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium hover:underline">前台页面 &rarr;</a>
+            </div>
+
+            <!-- 图片预览 (支持点击放大预览) -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1.5">原始图片列表 ({{ (activeItem.raw_images || []).length }} 张，点击放大)</label>
+              <div class="flex space-x-2 overflow-x-auto py-1.5 custom-scrollbar">
+                <div 
+                  v-for="(img, idx) in (activeItem.raw_images || [])" 
+                  :key="idx" 
+                  class="relative group cursor-pointer shrink-0"
+                  @click="openImagePreview(img)"
+                  title="点击放大预览"
+                >
+                  <img 
+                    :src="cleanImageUrl(img)" 
+                    @error="handleImageError($event, img)"
+                    loading="lazy"
+                    decoding="async"
+                    class="w-18 h-18 object-cover rounded-lg border border-slate-200/80 shrink-0 bg-white shadow-2xs group-hover:opacity-85 transition"
+                  />
+                  <div class="absolute inset-0 bg-slate-950/30 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center text-white text-xs transition font-bold pointer-events-none">
+                    🔍
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">原始标题</label>
+              <div class="text-xs text-slate-800 bg-slate-50/80 p-2.5 rounded-lg border border-slate-200/70 leading-relaxed">
+                {{ activeItem.takealot_title }}
+              </div>
+              <!-- Takealot 中文翻译对照 -->
+              <div v-if="activeItem.takealot_title_zh" class="mt-1.5 text-xs text-slate-600 bg-slate-100/90 p-2 rounded-lg border border-slate-200/70 leading-relaxed flex items-start space-x-1.5">
+                <span class="text-[9.5px] px-1 py-0 bg-slate-200 text-slate-700 rounded font-medium shrink-0 mt-0.5">中文对照</span>
+                <span>{{ activeItem.takealot_title_zh }}</span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">原始售价</label>
+                <div class="text-sm font-bold text-slate-900 bg-slate-50/80 p-2 rounded-lg border border-slate-200/70 font-mono tabular-nums">
+                  R {{ activeItem.takealot_price }}
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">原始品牌</label>
+                <div class="text-xs text-slate-700 bg-slate-50/80 p-2.5 rounded-lg border border-slate-200/70">
+                  {{ activeItem.takealot_brand || '无' }}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">原始规格参数 (Specs)</label>
+              <div class="max-h-48 overflow-y-auto bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/70 text-[11px] space-y-1 custom-scrollbar">
+                <div v-for="(v, k) in activeItem.takealot_specs" :key="k" class="flex justify-between border-b border-slate-200/40 pb-1">
+                  <span class="text-slate-500 font-medium">{{ k }}</span>
+                  <span class="text-slate-800 text-right font-medium">{{ v }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">原始商品描述</label>
+              <div class="max-h-40 overflow-y-auto bg-slate-50/80 rounded-lg p-2.5 border border-slate-200/70 text-[11px] text-slate-600 leading-relaxed whitespace-pre-wrap custom-scrollbar">
+                {{ activeItem.takealot_description || '无原始描述' }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 右栏: Makro 规范化数据与编辑表单 -->
+          <div class="bg-white p-4 sm:p-5 rounded-xl border border-indigo-200/80 ring-1 ring-indigo-500/10 shadow-xs space-y-4">
+            <div class="flex items-center justify-between border-b pb-2.5 border-indigo-100">
+              <span class="text-xs font-bold text-indigo-900 uppercase tracking-wider">Makro (Flipkart SaaS) 刊登草稿</span>
+              <span class="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200/80 font-semibold rounded-md">100% 协议对齐</span>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-semibold text-slate-800">Makro SEO 标准标题 (已融入高权重搜索词)</label>
+                <span v-if="activeItem.makro_title" :class="[
+                  'text-[10px] font-mono px-1.5 py-0.2 rounded font-bold tabular-nums',
+                  activeItem.makro_title.length >= 80 && activeItem.makro_title.length <= (settings.seo_title_max_len || 120) ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                ]" :title="'标题字符数: ' + activeItem.makro_title.length">
+                  {{ activeItem.makro_title.length }}/{{ settings.seo_title_max_len || 120 }} 字符
+                </span>
+              </div>
+              <textarea 
+                v-model="activeItem.makro_title" 
+                rows="2"
+                class="w-full text-xs p-2.5 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-500 focus:outline-none transition shadow-2xs"
+              ></textarea>
+              <!-- 【位置 3】：Makro SEO 标题中文对照参考卡片 -->
+              <div class="mt-2 p-2.5 bg-indigo-50/70 rounded-lg border border-indigo-100/90 text-xs space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="font-semibold text-indigo-900 flex items-center space-x-1 text-[11px]">
+                    <span>🇨🇳</span>
+                    <span>中文翻译参考 (保留品牌与具体型号)</span>
+                  </span>
+                  <button 
+                    type="button" 
+                    @click="translateActiveItemTitles" 
+                    :disabled="translatingTitles"
+                    class="text-[10.5px] text-indigo-600 hover:text-indigo-800 font-medium flex items-center space-x-0.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <span>{{ translatingTitles ? '⏳ 翻译中...' : '🔄 重新翻译' }}</span>
+                  </button>
+                </div>
+                <div class="text-indigo-950 font-normal leading-relaxed text-xs">
+                  {{ activeItem.makro_title_zh || '暂无翻译对照 (点击右上角“重新翻译”即可生成)' }}
+                </div>
+              </div>
+              <div v-if="activeItem.seo_keywords && activeItem.seo_keywords.length" class="flex flex-wrap gap-1 mt-1.5 items-center">
+                <span class="text-[10px] text-slate-400 font-medium">搜索词:</span>
+                <span v-for="kw in activeItem.seo_keywords" :key="kw" class="text-[10px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded font-medium">
+                  🔍 {{ kw }}
+                </span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-xs font-semibold text-slate-800">垂直类目 (Vertical)</label>
+                  <select 
+                    @change="onSelectVertical($event.target.value)" 
+                    class="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200/80 rounded px-1.5 py-0.5 cursor-pointer outline-none"
+                  >
+                    <option value="">快捷选择常用类目...</option>
+                    <option value="cases_covers">cases_covers (手机壳/保护套)</option>
+                    <option value="costume_wear">costume_wear (内衣/文胸/服饰)</option>
+                    <option value="card_holder">card_holder (钱包/卡包)</option>
+                    <option value="usb_flash_drive">usb_flash_drive (U盘/闪存)</option>
+                    <option value="bath_towel">bath_towel (毛巾/浴巾)</option>
+                    <option value="plier">plier (五金工具/钳子)</option>
+                    <option value="data_cable">data_cable (数据线)</option>
+                    <option value="headphone">headphone (耳机/耳麦)</option>
+                    <option value="backpack">backpack (背包/书包)</option>
+                    <option value="smart_switch_plug">smart_switch_plug (智能开关/插座)</option>
+                    <option value="bedsheet">bedsheet (床单/床品)</option>
+                  </select>
+                </div>
+                <input 
+                  v-model="activeItem.makro_vertical" 
+                  type="text" 
+                  class="w-full text-xs p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-500 focus:outline-none font-mono shadow-2xs"
+                />
+                <!-- 【位置 4】：垂直类目动态中文展示 -->
+                <div class="mt-1 flex items-center space-x-1 text-[11px] text-indigo-700 bg-indigo-50/70 px-2 py-1 rounded border border-indigo-100/80">
+                  <span class="font-medium">🏷️ 类目中文:</span>
+                  <span class="font-semibold">{{ getVerticalZh(activeItem.makro_vertical, activeItem) || (activeItem.makro_vertical ? activeItem.makro_vertical.replace(/_/g, ' ') : '—') }}</span>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-800 mb-1">报备品牌 (Brand)</label>
+                <input 
+                  v-model="activeItem.makro_brand" 
+                  type="text" 
+                  class="w-full text-xs p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/15 focus:border-indigo-500 focus:outline-none shadow-2xs"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 bg-indigo-50/40 p-3 rounded-xl border border-indigo-100/80">
+              <div>
+                <label class="block text-xs font-bold text-indigo-950 mb-1">Makro 最终售价 (R)</label>
+                <input 
+                  v-model.number="activeItem.makro_selling_price" 
+                  @input="onInspectorSellingPriceInput"
+                  type="number" 
+                  class="w-full text-sm font-bold p-2 border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 text-indigo-900 bg-white font-mono tabular-nums shadow-2xs"
+                />
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-xs font-bold text-slate-700">划线原价 MRP (R)</label>
+                  <span class="text-[10px] text-indigo-600 font-normal">按系统系数 (x{{ settings.mrp_ratio || 1.5 }}) 自动计算</span>
+                </div>
+                <input 
+                  v-model.number="activeItem.makro_mrp" 
+                  type="number" 
+                  class="w-full text-sm font-bold p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 text-slate-700 bg-white font-mono tabular-nums shadow-2xs"
+                />
+              </div>
+            </div>
+
+            <!-- 变体专属标识与异构参数 -->
+            <div class="bg-slate-50/80 p-3 rounded-xl border border-slate-200/80 space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="block text-xs font-bold text-slate-800">变体标识与异构参数</label>
+                <span class="text-[10px] text-slate-600 font-semibold bg-white px-1.5 py-0.5 rounded border border-slate-200">独立变体实体</span>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">SKU ID</span>
+                  <input v-model="activeItem.sku_id" type="text" class="w-full p-1.5 text-xs font-mono border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">颜色 (Colour)</span>
+                  <input v-model="activeItem.colour" type="text" class="w-full p-1.5 text-xs border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">尺码 (Size)</span>
+                  <input v-model="activeItem.size" type="text" class="w-full p-1.5 text-xs border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white" />
+                </div>
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">包装件数 (Pack of)</span>
+                  <input v-model="activeItem.pack_of" type="text" class="w-full p-1.5 text-xs border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">条形码 (Barcode)</span>
+                  <input v-model="activeItem.barcode" type="text" class="w-full p-1.5 text-xs font-mono border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white" />
+                </div>
+                <div>
+                  <span class="text-[10.5px] text-slate-500 font-medium">母体代码 (Group Code)</span>
+                  <input v-model="activeItem.group_code" type="text" class="w-full p-1.5 text-xs font-mono border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Model Number 专区 (直接映射 Makro 前台标题生成) -->
+            <div class="bg-amber-50/60 p-3.5 rounded-xl border border-amber-200/80 shadow-2xs">
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-xs font-bold text-amber-950">
+                  Model Number (Makro 前台展示标题提取参数)
+                </label>
+                <span class="text-[10px] text-amber-800 font-semibold bg-amber-100/80 px-1.5 py-0.5 rounded border border-amber-200/60">
+                  ★ Makro 前台标题由此字段完整提取
+                </span>
+              </div>
+              <input 
+                v-if="activeItem.makro_catalog_attributes && activeItem.makro_catalog_attributes.model_number && activeItem.makro_catalog_attributes.model_number[0]"
+                v-model="activeItem.makro_catalog_attributes.model_number[0].value" 
+                type="text" 
+                class="w-full text-xs font-semibold p-2.5 border border-amber-300/80 rounded-lg focus:ring-2 focus:ring-amber-500/20 bg-white shadow-2xs"
+                placeholder="包含品牌、核心词与第三方兼容说明的规范标题"
+              />
+              <input 
+                v-else
+                v-model="activeItem.makro_title"
+                type="text" 
+                class="w-full text-xs font-semibold p-2.5 border border-amber-300/80 rounded-lg focus:ring-2 focus:ring-amber-500/20 bg-white shadow-2xs"
+                placeholder="包含品牌、核心词与第三方兼容说明的规范标题"
+              />
+              <p class="text-[10.5px] text-amber-800 mt-1.5 leading-relaxed">
+                平台规则说明：Makro 前台商品详情页标题是由属性参数拼接而成，通常都会带上完整的 <strong class="text-amber-950">Model Number</strong>。系统已自动将优化规范的标题填入此参数，您可在此直接微调前台最终展示标题！
+              </p>
+            </div>
+
+            <!-- AI 侵权与合规检测卡片 -->
+            <div class="p-3.5 rounded-xl border transition-all" :class="{
+              'bg-purple-50/80 border-purple-300': activeItem.compliance_status === 'DISPUTED',
+              'bg-rose-50/80 border-rose-200': activeItem.compliance_status === 'PROHIBITED',
+              'bg-amber-50/80 border-amber-200': activeItem.compliance_status === 'RISK',
+              'bg-emerald-50/80 border-emerald-200': activeItem.compliance_status === 'SAFE',
+              'bg-slate-50 border-slate-200': !activeItem.compliance_status || activeItem.compliance_status === 'PENDING_CHECK'
+            }">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <span class="text-xs font-bold" :class="{
+                    'text-purple-900': activeItem.compliance_status === 'DISPUTED',
+                    'text-rose-900': activeItem.compliance_status === 'PROHIBITED',
+                    'text-amber-900': activeItem.compliance_status === 'RISK',
+                    'text-emerald-900': activeItem.compliance_status === 'SAFE',
+                    'text-slate-700': !activeItem.compliance_status || activeItem.compliance_status === 'PENDING_CHECK'
+                  }">
+                    AI 侵权与合规排查:
+                  </span>
+                  <span v-if="activeItem.compliance_status === 'DISPUTED'" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-purple-100 text-purple-900 border border-purple-200 animate-pulse">
+                    ⚖️ 双 AI 分歧待仲裁
+                  </span>
+                  <span v-else-if="activeItem.compliance_status === 'PROHIBITED'" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                    🚫 违禁拦截 ({{ getProhibitedSummary(activeItem) }})
+                  </span>
+                  <span v-else-if="activeItem.compliance_status === 'RISK'" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                    ⚠️ 侵权风险 / 配件需合规
+                  </span>
+                  <span v-else-if="activeItem.compliance_status === 'SAFE'" class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    🛡️ 合规安全
+                  </span>
+                  <span v-else class="px-2 py-0.5 rounded-md text-[11px] bg-slate-200 text-slate-700">
+                    未检测
+                  </span>
+                </div>
+                <button 
+                  @click="checkCompliance(activeItem)" 
+                  :disabled="checkingComplianceId === activeItem.id"
+                  class="px-2.5 py-1 text-xs font-medium bg-white border border-slate-200/80 hover:bg-slate-50 rounded-lg shadow-2xs transition cursor-pointer"
+                >
+                  {{ checkingComplianceId === activeItem.id ? '正在检测(含首图)...' : '重新检测合规' }}
+                </button>
+              </div>
+
+              <!-- Jev 品牌形态识别 -->
+              <div v-if="activeItem.brand_nature || activeItem.compliance_details?.brand_nature" class="mt-2 flex items-center space-x-1.5 flex-wrap">
+                <span class="text-[11px] text-slate-500 font-medium">品牌形态:</span>
+                <span v-if="(activeItem.brand_nature || activeItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY'" 
+                      class="px-2 py-0.5 rounded text-[10.5px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                  🔌 兼容配件 ({{ activeItem.target_compatible_brand || activeItem.compliance_details?.target_compatible_brand || '生态' }})
+                </span>
+                <span v-else-if="(activeItem.brand_nature || activeItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND'" 
+                      class="px-2 py-0.5 rounded text-[10.5px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                  🏷️ 知名原装品牌 ({{ activeItem.takealot_brand || '大牌' }})
+                </span>
+                <span v-else 
+                      class="px-2 py-0.5 rounded text-[10.5px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                  ⚪ 纯中性白牌 (贴牌 Beishi)
+                </span>
+              </div>
+
+              <!-- 详细风险与建议 -->
+              <div v-if="activeItem.compliance_details" class="mt-2.5 text-xs space-y-2">
+                <div v-if="activeItem.compliance_details.risk_reasons && activeItem.compliance_details.risk_reasons.length > 0" class="text-rose-700 bg-white/90 p-2.5 rounded-lg border border-rose-100 shadow-2xs">
+                  <div class="font-bold mb-1">风险诊断项:</div>
+                  <ul class="list-disc list-inside space-y-1 text-[11px]">
+                    <li v-for="(r, i) in activeItem.compliance_details.risk_reasons" :key="i">{{ r }}</li>
+                  </ul>
+                </div>
+                <div v-if="activeItem.compliance_details.image_inspection && activeItem.compliance_details.image_inspection.tested" class="text-slate-700 bg-white/90 p-2.5 rounded-lg border border-slate-200/80 text-[11px] shadow-2xs">
+                  <span class="font-bold text-slate-900">首图 AI 视觉多模态大模型分析:</span>
+                  <div class="mt-0.5">{{ activeItem.compliance_details.image_inspection.summary }}</div>
+                  <div v-if="activeItem.compliance_details.image_inspection.has_brand_logo" class="mt-1 text-amber-700 font-semibold">
+                    发现知名品牌/受限商标 Logo: {{ activeItem.compliance_details.image_inspection.logo_names?.join(', ') }}
+                  </div>
+                </div>
+                <div v-if="activeItem.compliance_details.brand_info && activeItem.compliance_details.brand_info.recommended_title" class="text-indigo-900 bg-indigo-50/90 p-2.5 rounded-lg border border-indigo-200/80 text-[11px] shadow-2xs">
+                  <span class="font-bold">建议第三方配件合规标题:</span>
+                  <div class="font-mono mt-1 p-1 bg-white border border-indigo-100 rounded text-[11px] select-all">{{ activeItem.compliance_details.brand_info.recommended_title }}</div>
+                  <button @click="adoptRecommendedTitle(activeItem)" class="mt-1.5 px-2.5 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-medium transition cursor-pointer">
+                    一键采纳此合规标题并同步更新 Model Number
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 核心类目必填属性配置 -->
+            <div>
+              <label class="block text-xs font-bold text-slate-800 mb-1.5">Makro 核心类目必填属性提取结果</label>
+              <div class="grid grid-cols-2 gap-2 bg-slate-50/70 p-3 rounded-xl border border-slate-200/80 text-xs">
+                <div v-for="(arr, key) in activeItem.makro_catalog_attributes" :key="key" class="flex flex-col">
+                  <span class="text-[11px] text-slate-500 font-medium truncate">{{ key }}</span>
+                  <input 
+                    v-if="arr && arr[0]" 
+                    v-model="arr[0].value" 
+                    type="text" 
+                    class="p-1.5 text-xs border border-slate-200 rounded focus:ring-1 focus:ring-indigo-500 bg-white mt-0.5"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- 变体矩阵与多参数展示 -->
+            <div v-if="activeItem.variants && activeItem.variants.length > 0">
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-xs font-bold text-slate-800">变体矩阵与独立专属图组 (共 {{ activeItem.variants.length }} 个变体)</label>
+                <span class="text-[10.5px] text-indigo-700 font-medium bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200/60">
+                  ✨ 支持容量、尺码、颜色异构参数独立上架
+                </span>
+              </div>
+              <div class="space-y-2 text-xs">
+                <div 
+                  v-for="(v, idx) in activeItem.variants" 
+                  :key="v.id" 
+                  class="p-3 bg-slate-50/60 rounded-xl border border-slate-200/80 hover:border-indigo-300 transition-colors space-y-2"
+                >
+                  <div class="flex items-start justify-between">
+                    <div class="flex items-start space-x-2.5">
+                      <img 
+                        v-if="v.images && v.images.length > 0" 
+                        :src="cleanImageUrl(v.images[0])" 
+                        @error="handleImageError($event, v.images[0])"
+                        @click="openImagePreview(v.images[0])"
+                        class="w-12 h-12 object-cover rounded-lg border border-slate-200/80 shrink-0 bg-white cursor-pointer hover:opacity-85 transition shadow-2xs"
+                        :title="'变体首图 (点击放大): ' + (v.colour || '默认')"
+                      />
+                      <div v-else class="w-12 h-12 rounded-lg border border-dashed border-slate-200 flex items-center justify-center text-[10px] text-slate-400">
+                        无图
+                      </div>
+                      <div>
+                        <!-- 核心异构参数标签 (容量 1TB/2TB, 尺寸, 颜色, 包装) -->
+                        <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+                          <span v-if="v.variant_attributes && v.variant_attributes.capacity" class="px-1.5 py-0.5 text-[10.5px] bg-purple-50 text-purple-700 font-bold rounded border border-purple-200/80">
+                            💾 {{ v.variant_attributes.capacity }}
+                          </span>
+                          <span v-if="v.colour && v.colour !== '多色'" class="px-1.5 py-0.5 text-[10.5px] bg-indigo-50 text-indigo-700 font-medium rounded border border-indigo-200/70">
+                            🎨 {{ v.colour }}
+                          </span>
+                          <span v-if="v.size && v.size !== '均码'" class="px-1.5 py-0.5 text-[10.5px] bg-slate-200 text-slate-800 font-medium rounded">
+                            📏 {{ v.size }}
+                          </span>
+                          <span v-if="v.pack_of && v.pack_of !== '1'" class="px-1.5 py-0.5 text-[10.5px] bg-amber-50 text-amber-700 font-medium rounded border border-amber-200/70">
+                            📦 {{ v.pack_of }}件装
+                          </span>
+                          <span class="font-mono text-[11px] text-slate-400">({{ v.sku_id }})</span>
+                        </div>
+
+                        <!-- 变体专属标题 (如包含 1TB / 2TB / 颜色信息) -->
+                        <div v-if="v.variant_title" class="text-[11px] text-slate-600 mt-1 line-clamp-1 font-medium">
+                          {{ v.variant_title }}
+                        </div>
+
+                        <div class="mt-1 flex items-center space-x-2 flex-wrap text-[11px]">
+                          <span class="px-1.5 py-0.2 text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-200/70 rounded font-medium">
+                            📷 {{ v.images ? v.images.length : 0 }} 张专属原图
+                          </span>
+                          <span class="text-slate-400 font-mono tabular-nums">原售价: R{{ v.takealot_price || 0 }}</span>
+                          <span v-if="v.barcode" class="text-slate-400 font-mono">条码: {{ v.barcode }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 价格与单独上架操作 -->
+                    <div class="text-right shrink-0 flex flex-col items-end space-y-1">
+                      <div class="text-xs font-bold text-slate-900 font-mono tabular-nums">Makro 售价: R{{ v.makro_selling_price }}</div>
+                      <div class="text-[10px] text-slate-400 font-mono tabular-nums">MRP: R{{ v.makro_mrp }}</div>
+                      <div class="flex items-center space-x-1.5 pt-1">
+                        <span v-if="v.status === 'SUBMITTED'" class="px-2 py-0.5 text-[10px] bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200/80 rounded-md">
+                          ✅ 已提交审核
+                        </span>
+                        <span v-else-if="v.status === 'FAILED'" class="px-2 py-0.5 text-[10px] bg-rose-50 text-rose-700 font-semibold border border-rose-200/80 rounded-md cursor-pointer" :title="v.makro_submit_error">
+                          ❌ 上品失败
+                        </span>
+                        <span v-else class="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-600 rounded-md">
+                          待上品
+                        </span>
+                        <button 
+                          @click="publishSingleVariant(v)" 
+                          :disabled="publishingVariantId === v.id"
+                          class="px-2 py-1 text-[10.5px] font-semibold text-white bg-slate-900 hover:bg-slate-800 border border-slate-900 rounded-md shadow-2xs disabled:opacity-50 transition cursor-pointer"
+                        >
+                          {{ publishingVariantId === v.id ? '上架中...' : '🚀 上传此变体' }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 错误/预检信息提示 -->
+                  <div v-if="v.makro_submit_error" :class="v.makro_submit_error.startsWith('⚠️') ? 'text-amber-700 bg-amber-50/80 border-amber-200' : 'text-rose-600 bg-rose-50/70 border-rose-100'" class="text-[10.5px] p-1.5 rounded-lg border line-clamp-2" :title="v.makro_submit_error">
+                    {{ v.makro_submit_error.startsWith('⚠️') ? v.makro_submit_error : ('失败原因: ' + v.makro_submit_error) }}
+                  </div>
+
+                  <!-- 横向平铺变体专属图片小预览 -->
+                  <div v-if="v.images && v.images.length > 1" class="flex space-x-1.5 pt-1.5 border-t border-slate-200/60 overflow-x-auto custom-scrollbar">
+                    <img 
+                      v-for="(imgUrl, imgIdx) in v.images.slice(0, 6)" 
+                      :key="imgIdx" 
+                      :src="cleanImageUrl(imgUrl)" 
+                      @error="handleImageError($event, imgUrl)"
+                      @click="openImagePreview(imgUrl)"
+                      class="w-8 h-8 object-cover rounded border border-slate-200 shrink-0 cursor-pointer hover:opacity-85 transition shadow-2xs" 
+                      :title="'变体图 ' + (imgIdx + 1) + ' (点击放大预览)'"
+                    />
+                    <span v-if="v.images.length > 6" class="text-[10px] text-slate-400 self-center px-1 font-mono">
+                      +{{ v.images.length - 6 }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      
+      <!-- ================= Tab: Makro 智能跟品管理中心 ================= -->

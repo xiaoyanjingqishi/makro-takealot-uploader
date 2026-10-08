@@ -1,0 +1,218 @@
+      <div v-if="currentTab === 'store_audits'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <!-- 顶部固定控制区 (状态筛选 Tab、类目过滤、搜索与立即同步) -->
+        <div class="shrink-0 space-y-2 pb-2">
+          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-3 flex items-center justify-between flex-wrap gap-2">
+            <!-- 左侧：4 个核心状态 Tab -->
+            <div class="flex items-center space-x-1.5 flex-wrap gap-y-1">
+              <button 
+                v-for="st in [
+                  { key: 'ALL', label: '📋 全部审核' },
+                  { key: 'QC_IN_PROGRESS', label: '⏳ 质检审核中' },
+                  { key: 'QC_PASSED', label: '🟢 审核通过' },
+                  { key: 'DRAFT', label: '🚨 驳回/待修改' }
+                ]"
+                :key="st.key"
+                @click="changeStoreAuditStatus(st.key)"
+                :class="storeAudits.status === st.key ? (st.key === 'DRAFT' ? 'bg-rose-600 text-white shadow-xs font-semibold' : 'bg-slate-900 text-white shadow-xs font-semibold') : (st.key === 'DRAFT' && storeAudits.counts && storeAudits.counts.DRAFT > 0 ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 font-bold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium')"
+                class="px-3 py-1.5 text-xs rounded-lg transition-all flex items-center space-x-1.5 cursor-pointer select-none"
+              >
+                <span>{{ st.label }}</span>
+                <span 
+                  v-if="storeAudits.counts && storeAudits.counts[st.key] !== undefined"
+                  :class="storeAudits.status === st.key ? 'bg-white/20 text-white' : (st.key === 'DRAFT' && storeAudits.counts.DRAFT > 0 ? 'bg-rose-200/80 text-rose-900' : 'bg-slate-100 text-slate-600 border border-slate-200/60')"
+                  class="px-1.5 py-0.2 text-[10px] rounded-md font-mono tabular-nums font-bold"
+                >
+                  {{ storeAudits.counts[st.key] }}
+                </span>
+              </button>
+            </div>
+
+            <!-- 右侧：类目选择、搜索框、一键同步按钮 -->
+            <div class="flex items-center space-x-2 flex-wrap">
+              <!-- 类目过滤下拉 -->
+              <select 
+                v-model="storeAudits.vertical" 
+                @change="loadStoreAudits(1)" 
+                class="text-xs py-1.5 px-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 max-w-[140px] truncate"
+              >
+                <option value="">全部类目 ({{ (storeAudits.verticals || []).length }})</option>
+                <option v-for="v in storeAudits.verticals" :key="v" :value="v">{{ v }}</option>
+              </select>
+
+              <!-- 搜索框 -->
+              <div class="relative">
+                <input 
+                  type="text" 
+                  v-model="storeAudits.search" 
+                  @keyup.enter="loadStoreAudits(1)"
+                  placeholder="搜索 SKU、标题、RequestId..." 
+                  class="text-xs pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg w-52 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-2xs"
+                />
+                <span class="absolute left-2.5 top-2 text-slate-400 text-xs">🔍</span>
+              </div>
+              <button 
+                @click="loadStoreAudits(1)" 
+                class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 text-xs font-semibold rounded-lg transition shadow-2xs cursor-pointer"
+              >
+                搜索
+              </button>
+              <button 
+                @click="syncStoreAudits" 
+                :disabled="syncingStoreAudits"
+                class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50 active:scale-95"
+              >
+                <span :class="{'animate-spin': syncingStoreAudits}">🔄</span>
+                <span>{{ syncingStoreAudits ? '拉取同步中...' : '同步最新审核流转' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列表表格 -->
+        <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
+          <div class="flex-1 overflow-y-auto custom-scrollbar">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="sticky top-0 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200/80 text-slate-500 font-semibold text-[11px] uppercase tracking-wider z-10">
+                <tr>
+                  <th class="py-3 px-3.5 w-16">主图</th>
+                  <th class="py-3 px-3.5">商品名称 / 品牌 / 类目</th>
+                  <th class="py-3 px-3.5 w-48">审核流水 (SKU / RequestId)</th>
+                  <th class="py-3 px-3.5 w-24 text-right">申报售价</th>
+                  <th class="py-3 px-3.5 w-32 text-center">审核状态</th>
+                  <th class="py-3 px-3.5">错误诊断 / 驳回原因</th>
+                  <th class="py-3 px-3.5 w-28 text-right">最后流转时间</th>
+                  <th class="py-3 px-3.5 w-32 text-center">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-if="storeAudits.loading">
+                  <td colspan="8" class="text-center py-16 text-slate-400">
+                    <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                    <div>正在加载审核流转列表...</div>
+                  </td>
+                </tr>
+                <tr v-else-if="!storeAudits.items || storeAudits.items.length === 0">
+                  <td colspan="8" class="text-center py-16 text-slate-400">
+                    <div class="text-3xl mb-2">📋</div>
+                    <div class="font-medium">当前无此状态的审核流转记录</div>
+                    <p class="text-xs text-slate-400 mt-1">可点击右上角【同步最新审核流转】从 Makro 网关抓取最新审核记录</p>
+                  </td>
+                </tr>
+                <tr v-for="it in storeAudits.items" :key="it.id" class="hover:bg-slate-50/70 transition-colors" :class="{'bg-rose-50/30': it.state === 'DRAFT'}">
+                  <!-- 主图 -->
+                  <td class="py-2.5 px-3.5">
+                    <img 
+                      :src="cleanImageUrl(it.image_url) || placeholderImg" 
+                      @click="openImagePreview(cleanImageUrl(it.image_url))"
+                      class="w-11 h-11 object-cover rounded-lg border border-slate-200 shadow-2xs cursor-pointer hover:opacity-85 transition" 
+                    />
+                  </td>
+                  <!-- 商品名称 -->
+                  <td class="py-2.5 px-3.5">
+                    <div class="font-medium text-slate-900 line-clamp-2 leading-snug" :title="it.title">{{ it.title }}</div>
+                    <div class="flex items-center space-x-2 mt-1 text-[11px] text-slate-400">
+                      <span v-if="it.brand" class="text-indigo-700 bg-indigo-50 border border-indigo-200/60 px-1.5 py-0.2 rounded font-semibold">{{ it.brand }}</span>
+                      <span v-if="it.vertical" class="text-slate-500 font-medium">类目: {{ it.vertical }}</span>
+                    </div>
+                  </td>
+                  <!-- SKU / RequestId -->
+                  <td class="py-2.5 px-3.5 font-mono text-[11px]">
+                    <div class="text-slate-800 font-semibold truncate" :title="it.sku_id">SKU: {{ it.sku_id || '未生成' }}</div>
+                    <div class="text-indigo-600 text-[10.5px] truncate font-bold" :title="it.request_id">REQ: {{ it.request_id }}</div>
+                  </td>
+                  <!-- 价格 -->
+                  <td class="py-2.5 px-3.5 text-right font-mono tabular-nums">
+                    <div class="font-bold text-slate-900 text-xs">R{{ it.fsp || 0 }}</div>
+                    <div class="text-[10.5px] text-slate-400 line-through">R{{ it.mrp || 0 }}</div>
+                  </td>
+                  <!-- 审核状态 -->
+                  <td class="py-2.5 px-3.5 text-center">
+                    <span 
+                      :class="{
+                        'bg-amber-50 text-amber-800 border-amber-300 font-bold': it.state === 'QC_IN_PROGRESS',
+                        'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold': it.state === 'QC_PASSED',
+                        'bg-rose-50 text-rose-700 border-rose-300 font-bold ring-1 ring-rose-200': it.state === 'DRAFT' || it.state === 'QC_FAILED'
+                      }"
+                      class="px-2.5 py-1 rounded-md text-[11px] border inline-block whitespace-nowrap shadow-2xs"
+                    >
+                      <template v-if="it.state === 'QC_IN_PROGRESS'">⏳ 质检审核中</template>
+                      <template v-else-if="it.state === 'QC_PASSED'">🟢 审核通过(已上线)</template>
+                      <template v-else-if="it.state === 'QC_FAILED'">❌ 质检驳回</template>
+                      <template v-else>🚨 驳回/待修改</template>
+                    </span>
+                  </td>
+                  <!-- 错误诊断 / 驳回标签 -->
+                  <td class="py-2.5 px-3.5">
+                    <div v-if="it.error_summary && it.error_summary.length > 0" class="flex flex-wrap gap-1">
+                      <span 
+                        v-for="(err, eIdx) in it.error_summary" 
+                        :key="eIdx" 
+                        class="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-100/90 text-rose-700 border border-rose-200/80 inline-flex items-center space-x-1"
+                        :title="err"
+                      >
+                        <span>⚠️</span>
+                        <span>{{ err }}</span>
+                      </span>
+                    </div>
+                    <span v-else-if="it.state === 'QC_IN_PROGRESS'" class="text-amber-700 text-[11px] font-medium flex items-center space-x-1">
+                      <span>⏳</span>
+                      <span>平台质检审核中 (已建FSN)</span>
+                    </span>
+                    <span v-else-if="it.state === 'QC_PASSED'" class="text-emerald-600 text-[11px] font-medium flex items-center space-x-1">
+                      <span>✓</span>
+                      <span>审核通过已正式上线</span>
+                    </span>
+                    <span v-else class="text-slate-300">-</span>
+                  </td>
+                  <!-- 时间 -->
+                  <td class="py-2.5 px-3.5 text-right font-mono text-[10.5px] text-slate-400 whitespace-nowrap">
+                    {{ it.last_modified_time || '-' }}
+                  </td>
+                  <!-- 操作 -->
+                  <td class="py-2.5 px-3.5 text-center whitespace-nowrap space-x-1.5">
+                    <button 
+                      @click="openAuditDetail(it)" 
+                      class="px-2 py-1 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 rounded-lg text-[11px] font-semibold transition cursor-pointer"
+                    >
+                      🔍 诊断详情
+                    </button>
+                    <button 
+                      v-if="it.local_product || it.sku_id"
+                      @click="jumpToLocalProduct(it)"
+                      class="px-2 py-1 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-[11px] font-semibold transition cursor-pointer"
+                      title="立即在选品箱中搜索定位该商品"
+                    >
+                      🔗 选品箱
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 分页栏 -->
+          <div class="shrink-0 px-4 py-2.5 bg-slate-50/90 border-t border-slate-200/80 flex items-center justify-between text-xs">
+            <div class="text-slate-500">
+              共 <strong class="font-mono font-bold text-slate-800">{{ storeAudits.total }}</strong> 条审核流转 · 第 {{ storeAudits.page }} / {{ Math.max(1, Math.ceil(storeAudits.total / storeAudits.pageSize)) }} 页
+            </div>
+            <div class="flex items-center space-x-1">
+              <button 
+                @click="loadStoreAudits(storeAudits.page - 1)" 
+                :disabled="storeAudits.page <= 1"
+                class="px-2.5 py-1 rounded bg-white border border-slate-200 disabled:opacity-40 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                上一页
+              </button>
+              <button 
+                @click="loadStoreAudits(storeAudits.page + 1)" 
+                :disabled="storeAudits.page >= Math.ceil(storeAudits.total / storeAudits.pageSize)"
+                class="px-2.5 py-1 rounded bg-white border border-slate-200 disabled:opacity-40 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Tab: 订单管理板块 (Makro 订单履约与 SLA 预警) ================= -->

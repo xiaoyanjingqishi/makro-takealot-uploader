@@ -1,0 +1,394 @@
+      <div v-if="currentTab === 'settings' && currentUser && currentUser.role === 'ADMIN'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 max-w-4xl space-y-4 custom-scrollbar">
+        <div class="bg-white p-5 sm:p-6 rounded-xl border border-slate-200/80 shadow-xs space-y-6">
+          <div class="border-b border-slate-100 pb-3 flex items-center justify-between">
+            <div>
+              <h2 class="text-base font-bold text-slate-900 tracking-tight">⚙️ 系统自动化与全局参数配置</h2>
+              <p class="text-xs text-slate-500 mt-0.5">配置定价倍率、大模型 API 凭据、Makro 卖家接口与并发上架策略</p>
+            </div>
+            <button @click="saveSettings" class="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer transition active:scale-95">
+              保存当前全部配置
+            </button>
+          </div>
+
+          <!-- 1. 定价策略 -->
+          <div>
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">1. 动态定价与利润策略</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">加价比例系数</label>
+                <input v-model.number="settings.markup_ratio" type="number" step="0.05" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono tabular-nums focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                <span class="text-[10px] text-slate-400 mt-1 block">例: 1.35 即加价 35%</span>
+              </div>
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">固定加价金额 (ZAR)</label>
+                <input v-model.number="settings.fixed_markup" type="number" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono tabular-nums focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                <span class="text-[10px] text-slate-400 mt-1 block">附加固定运费/包装 (R)</span>
+              </div>
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">划线原价 MRP 倍率</label>
+                <input v-model.number="settings.mrp_ratio" type="number" step="0.1" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono tabular-nums focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                <span class="text-[10px] text-slate-400 mt-1 block">例: 1.5 即 MRP = 售价 * 1.5</span>
+              </div>
+            </div>
+            <div class="mt-2.5 p-3 bg-indigo-50/60 text-indigo-900 rounded-xl text-xs font-medium border border-indigo-100 flex items-center space-x-2">
+              <span>💡</span>
+              <span>实时公式模拟：Takealot 采购价 R100 &rarr; Makro 刊登售价为 <strong class="font-mono tabular-nums">R{{ Math.round(100 * settings.markup_ratio + settings.fixed_markup) }}</strong>，MRP 划线标价为 <strong class="font-mono tabular-nums">R{{ Math.round((100 * settings.markup_ratio + settings.fixed_markup) * settings.mrp_ratio) }}</strong></span>
+            </div>
+          </div>
+
+          <!-- 2. AI 配置 -->
+          <div class="border-t border-slate-100 pt-4">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">2. AI 智能清洗与多模态模型配置</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1.5">当前使用文本模型商</label>
+                <div class="flex space-x-3">
+                  <label class="flex items-center space-x-2 text-xs font-medium cursor-pointer p-2 rounded-lg border transition"
+                    :class="settings.ai_provider === 'qwen' ? 'bg-indigo-50/60 border-indigo-300 text-indigo-900 font-semibold' : 'bg-slate-50 border-slate-200 text-slate-700'">
+                    <input type="radio" v-model="settings.ai_provider" value="qwen" class="text-indigo-600">
+                    <span>通义千问 (Qwen)</span>
+                  </label>
+                  <label class="flex items-center space-x-2 text-xs font-medium cursor-pointer p-2 rounded-lg border transition"
+                    :class="settings.ai_provider === 'deepseek' ? 'bg-indigo-50/60 border-indigo-300 text-indigo-900 font-semibold' : 'bg-slate-50 border-slate-200 text-slate-700'">
+                    <input type="radio" v-model="settings.ai_provider" value="deepseek" class="text-indigo-600">
+                    <span>DeepSeek (深度求索)</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Qwen 字段 -->
+              <div v-if="settings.ai_provider === 'qwen'" class="space-y-2.5 p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/80">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-700 mb-1">通义千问 API Key (DashScope)</label>
+                  <input v-model="settings.qwen_api_key" type="password" placeholder="sk-..." class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="text-xs font-semibold text-slate-700">模型代码</label>
+                    <span class="text-[10px] text-indigo-600 font-medium">推荐使用 qwen-plus (响应极速且规范化质量高)</span>
+                  </div>
+                  <input v-model="settings.qwen_model" list="qwen-models-list" type="text" placeholder="qwen-plus" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                  <datalist id="qwen-models-list">
+                    <option value="qwen-plus">qwen-plus (官方推荐，平均响应5-8秒)</option>
+                    <option value="qwen-max">qwen-max (高精度大模型)</option>
+                    <option value="qwen-turbo">qwen-turbo (极速轻量模型)</option>
+                  </datalist>
+                </div>
+              </div>
+
+              <!-- DeepSeek 字段 -->
+              <div v-if="settings.ai_provider === 'deepseek'" class="space-y-2.5 p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/80">
+                <div>
+                  <label class="block text-xs font-semibold text-slate-700 mb-1">DeepSeek API Key</label>
+                  <input v-model="settings.deepseek_api_key" type="password" placeholder="sk-..." class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="text-xs font-semibold text-slate-700">模型代码</label>
+                    <span class="text-[10px] text-indigo-600 font-medium">推荐使用 deepseek-chat (DeepSeek-V3 官方模型)</span>
+                  </div>
+                  <input v-model="settings.deepseek_model" type="text" placeholder="deepseek-chat" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                </div>
+              </div>
+
+              <!-- Jev (TypeSafe AI) 决策模型配置 -->
+              <div class="p-3.5 bg-gradient-to-r from-amber-50/60 via-white to-amber-50/40 rounded-xl border border-amber-200/80 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
+                      <span>⚡</span>
+                      <span>Jev (TypeSafe AI) 决策模型 (3-AI 并发会审 & 毫秒级类目/品牌决策)</span>
+                      <span class="text-[10px] px-1.5 py-0.2 bg-amber-100 text-amber-800 font-bold rounded">快决策推荐</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">接入 Jev 极速推理模型，用于合规风控第三票打破平局、1639个官方类目共识判定、知名配件与白牌形态识别。</p>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="settings.jev_enabled" class="sr-only peer">
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                  </label>
+                </div>
+
+                <div v-if="settings.jev_enabled" class="space-y-2.5 pt-2 border-t border-amber-100">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-700 mb-1">Jev API Key</label>
+                      <input v-model="settings.jev_api_key" type="password" placeholder="apikey_..." class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-amber-500/20 focus:outline-none">
+                    </div>
+                    <div>
+                      <label class="block text-xs font-semibold text-slate-700 mb-1">模型代码</label>
+                      <input v-model="settings.jev_model" type="text" placeholder="jev-latest" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-amber-500/20 focus:outline-none">
+                    </div>
+                    <div class="sm:col-span-2">
+                      <div class="flex items-center justify-between mb-1">
+                        <label class="text-xs font-semibold text-slate-700">Jev API 端点 (Base URL)</label>
+                        <span class="text-[10px] text-slate-400">默认: https://api.typesafe.ai</span>
+                      </div>
+                      <input v-model="settings.jev_base_url" type="text" placeholder="https://api.typesafe.ai" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono focus:ring-2 focus:ring-amber-500/20 focus:outline-none">
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-between pt-1">
+                    <button 
+                      type="button"
+                      @click="testJevConnectivity"
+                      :disabled="testingJev"
+                      class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-2xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5 transition active:scale-95"
+                    >
+                      <span>{{ testingJev ? '⏳' : '🔌' }}</span>
+                      <span>{{ testingJev ? '正在测试连通性...' : '测试 Jev 连通性' }}</span>
+                    </button>
+
+                    <div v-if="jevTestResult" class="text-xs">
+                      <span v-if="jevTestResult.success" class="text-emerald-700 font-semibold flex items-center space-x-1 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                        <span>🟢 连通正常</span>
+                        <span class="font-mono text-[11px] text-emerald-800">({{ jevTestResult.model }}, {{ jevTestResult.latency_ms }}ms)</span>
+                      </span>
+                      <span v-else class="text-rose-700 font-semibold flex items-center space-x-1 bg-rose-50 px-2.5 py-1 rounded-md border border-rose-200">
+                        <span>🔴 连通失败:</span>
+                        <span class="text-[11px] text-rose-800">{{ jevTestResult.error || '通信异常' }}</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 标题 SEO 关键词拓展增强配置 -->
+              <div class="p-3.5 bg-gradient-to-r from-indigo-50/60 via-white to-indigo-50/40 rounded-xl border border-indigo-200/80 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
+                      <span>🎯</span>
+                      <span>商品标题 SEO 搜索意图拓展 (高权重搜索词挖掘)</span>
+                      <span class="text-[10px] px-1.5 py-0.2 bg-indigo-100 text-indigo-700 font-bold rounded">推荐开启</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">AI 清洗时自动挖掘买家搜索长尾词与场景同义词，构建高曝光电商标题。</p>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="settings.seo_title_enabled" class="sr-only peer">
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-slate-900"></div>
+                  </label>
+                </div>
+
+                <div v-if="settings.seo_title_enabled" class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-indigo-100">
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">标题最大字符数上限 (建议 80~120)</label>
+                    <input v-model.number="settings.seo_title_max_len" type="number" min="60" max="180" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono tabular-nums">
+                  </div>
+                  <div class="text-[11px] text-slate-500 flex items-center">
+                    <span>💡 结构范式：<code class="text-indigo-700 font-bold font-mono text-[10px]">[品牌] + [核心品名] + [长尾词] + [场景] + [规格]</code></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- AI 清洗工作模式双选 (纯文本 vs 图文多模态) -->
+              <div class="p-3.5 bg-gradient-to-r from-purple-50/60 via-white to-purple-50/40 rounded-xl border border-purple-200/80 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
+                      <span>🎨</span>
+                      <span>AI 清洗工作模式 (纯文本标准 vs 图文多模态对比)</span>
+                    </div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">选择默认清洗方式。图文多模态将把 Takealot 首图与规格一同送入大模型，深度校准实物颜色与款式。</p>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-purple-100">
+                  <label class="flex items-start p-2.5 rounded-lg border cursor-pointer transition-all"
+                    :class="settings.cleaner_mode === 'text' ? 'bg-white border-indigo-400 shadow-xs ring-1 ring-indigo-500/20' : 'bg-slate-50/60 border-slate-200 hover:bg-white'">
+                    <input type="radio" v-model="settings.cleaner_mode" value="text" class="mt-0.5 mr-2 text-indigo-600">
+                    <div>
+                      <div class="text-xs font-bold text-slate-800">📝 纯文本清洗 (标准版)</div>
+                      <div class="text-[10px] text-slate-500 mt-0.5">单件 ~0.003元，耗时 ~1.8秒，适合大批量标品与成熟参数商品快速搬运。</div>
+                    </div>
+                  </label>
+
+                  <label class="flex items-start p-2.5 rounded-lg border cursor-pointer transition-all"
+                    :class="settings.cleaner_mode === 'vision' ? 'bg-white border-purple-400 shadow-xs ring-1 ring-purple-500/20' : 'bg-slate-50/60 border-slate-200 hover:bg-white'">
+                    <input type="radio" v-model="settings.cleaner_mode" value="vision" class="mt-0.5 mr-2 text-purple-600">
+                    <div>
+                      <div class="text-xs font-bold text-purple-900 flex items-center space-x-1">
+                        <span>🖼️ 图文多模态 (推荐对比)</span>
+                      </div>
+                      <div class="text-[10px] text-slate-500 mt-0.5">单件 ~0.0038元，结合首图实物校准颜色与外观，彻底防止类目错挂。</div>
+                    </div>
+                  </label>
+                </div>
+
+                <!-- 视觉模型选择 (仅在图文多模态模式下展示) -->
+                <div v-if="settings.cleaner_mode === 'vision'" class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-purple-100">
+                  <div>
+                    <label class="block text-xs font-semibold text-purple-900 mb-1">视觉大模型 (通义千问 Qwen-VL)</label>
+                    <select v-model="settings.qwen_vision_model" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono">
+                      <option value="qwen-vl-plus">⚡ qwen-vl-plus (极速高性价比，推荐)</option>
+                      <option value="qwen-vl-max">👑 qwen-vl-max (旗舰高精度视觉)</option>
+                    </select>
+                  </div>
+                  <div class="text-[11px] text-slate-500 flex items-center">
+                    <span>💡 首图经过本地压缩控制在 1024px，每千件仅增加约 0.8 元费用。</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 批量上品与并发调度策略 -->
+          <div class="border-t border-slate-100 pt-4">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">3. 批量上品受控并发与店铺调度</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">批量上品并发线程数</label>
+                <div class="flex items-center space-x-2">
+                  <select v-model.number="settings.publish_concurrency" class="w-full text-xs p-2.5 border border-slate-200 rounded-lg bg-white font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500/15 cursor-pointer shadow-2xs">
+                    <option :value="1">1 线程 (严格串行 · 稳定性最高)</option>
+                    <option :value="2">2 线程 (轻度受控并发 · 推荐，速度提升2倍)</option>
+                    <option :value="3">3 线程 (推荐上限 · 店铺间并发与安全均衡)</option>
+                    <option :value="4">4 线程 (高速并发 · 店铺较多时可选)</option>
+                    <option :value="5">5 线程 (最高并发 · 请确保网络与店铺状态良好)</option>
+                  </select>
+                </div>
+                <span class="text-[10px] text-slate-400 mt-1 block">推荐设置 2~3 线程。开启后批量上品将启用受控并发，不同店铺之间并行发布，大幅缩短上架耗时。</span>
+              </div>
+              <div class="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl text-[11px] text-indigo-900 flex items-start space-x-2">
+                <span class="text-sm">💡</span>
+                <div class="leading-relaxed">
+                  <strong>受控并发与店铺隔离机制</strong>：
+                  系统采用店铺间交替并行调度，同一时刻不同店铺并行发布，同店铺内部保持平稳节流，既成倍提速又避免触发 Makro 平台并发风控 (HTTP 429 限流)。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. 店铺全自动登录保活与定时刷新 (每21小时) -->
+          <div class="border-t border-slate-100 pt-4">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center space-x-2">
+                  <span>🔄 4. 店铺全自动登录保活与定时刷新</span>
+                  <span class="px-2 py-0.5 text-[10px] font-bold rounded-full" :class="settings.auto_login_check_enabled ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'">
+                    {{ settings.auto_login_check_enabled ? '后台定时引擎已启用' : '已停用' }}
+                  </span>
+                </h3>
+                <p class="text-[11px] text-slate-500 mt-0.5">每隔指定周期在后台静默为已配置账密的店铺自动登录并刷新 Cookie / CSRF 凭据，确保持久在线不掉线。</p>
+              </div>
+              <button 
+                type="button"
+                @click="triggerAutoLoginAllStores" 
+                :disabled="triggeringAutoLoginAll"
+                class="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 transition active:scale-95 disabled:opacity-50"
+                title="立即检测并对全部配置了账密的店铺执行自动登录"
+              >
+                <span>{{ triggeringAutoLoginAll ? '⏳ 正在检测刷新中...' : '⚡ 立即触发全店铺自动保活' }}</span>
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-3.5 bg-slate-50/70 border border-slate-200/70 rounded-xl">
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label class="text-xs font-semibold text-slate-700 block">自动保活总开关</label>
+                    <span class="text-[10.5px] text-slate-400">开启后守护线程将按周期静默自动登录</span>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="settings.auto_login_check_enabled" class="sr-only peer">
+                    <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-slate-700 mb-1">自动检测与刷新周期 (小时)</label>
+                  <div class="flex items-center space-x-2">
+                    <input v-model.number="settings.auto_login_check_interval_hours" type="number" step="1" min="1" max="168" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white font-mono font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500/15 focus:outline-none">
+                    <span class="text-xs text-slate-500 shrink-0 font-medium">小时 / 次</span>
+                  </div>
+                  <div class="flex items-center space-x-1.5 mt-2">
+                    <span class="text-[10px] text-slate-400">快捷预设:</span>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 12" class="px-2 py-0.5 text-[10px] font-medium bg-white hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer text-slate-600">12小时</button>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 18" class="px-2 py-0.5 text-[10px] font-medium bg-white hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer text-slate-600">18小时</button>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 21" class="px-2 py-0.5 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-md cursor-pointer">21小时 (推荐)</button>
+                    <button type="button" @click="settings.auto_login_check_interval_hours = 24" class="px-2 py-0.5 text-[10px] font-medium bg-white hover:bg-slate-100 border border-slate-200 rounded-md cursor-pointer text-slate-600">24小时</button>
+                  </div>
+                </div>
+              </div>
+              <div class="p-3 bg-white border border-slate-200/80 rounded-lg text-[11px] text-slate-600 flex flex-col justify-between">
+                <div>
+                  <div class="font-bold text-slate-800 mb-1 flex items-center space-x-1">
+                    <span>🛡️</span>
+                    <span>全自动保活工作机制</span>
+                  </div>
+                  <p class="leading-relaxed text-slate-500">
+                    Makro 登录会话通常在 24 小时左右失效。系统后台定时守护引擎每隔 <strong>{{ settings.auto_login_check_interval_hours || 21 }} 小时</strong> 将自动检索启用的店铺，使用已缓存的 Makro 账密与邮箱授权码自动收发 OTP，全程静默续签凭据，彻底消除 Cookie 过期导致的商品上架或订单同步中断。
+                  </p>
+                </div>
+                <div class="mt-2 text-[10px] text-slate-400 font-mono">
+                  店铺之间自动加入 15 秒安全延迟，避免频繁发信风控。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 自定义类目同义词拓展 (动态倒排索引热更新) -->
+          <div class="border-t border-slate-100 pt-4">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>5. 运营自定义类目同义词拓展 (热重载)</span>
+              <span class="text-[10px] text-indigo-600 font-medium">支持将生僻词/同义词映射至 Makro 官方类目</span>
+            </h3>
+            <div>
+              <textarea 
+                v-model="settings.custom_category_synonyms" 
+                rows="3" 
+                placeholder='示例: {"pet_leash_chain": ["dog chest harness", "puppy lead"], "water_bottle": ["gym tumbler", "shaker cup"]}'
+                class="w-full text-xs p-2.5 border border-slate-200 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500/15 focus:outline-none bg-slate-50/50"
+              ></textarea>
+              <span class="text-[10px] text-slate-400 mt-1 block">JSON 格式：键为 Makro 官方类目代码（如 garden_sprayer），值为匹配词数组。保存后即刻热生效并合并到语义倒排索引中。</span>
+            </div>
+          </div>
+
+          <!-- 6. Makro 跟品全局策略与底价设置 -->
+          <div class="border-t border-slate-100 pt-4">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>6. Makro 跟品全局跟价与底价设置</span>
+              <span class="text-[10px] text-emerald-600 font-medium">全链路统一默认跟价规则与防亏损保本底价</span>
+            </h3>
+            <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">默认跟价公式</label>
+                <select v-model="settings.piggyback_default_strategy" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white">
+                  <option value="MINUS_15">🔥 比竞对低 15 兰特 (-R15 推荐抢流)</option>
+                  <option value="MINUS_1">⚡ 比竞对低 1 兰特 (-R1.00 微降夺车)</option>
+                  <option value="MINUS_0.5">⚡ 比竞对低 0.5 兰特 (-R0.50 保利)</option>
+                  <option value="MINUS_2">🚀 比竞对低 2 兰特 (-R2.00 夺车)</option>
+                  <option value="PERCENT_2">📊 比竞对低 2% (按比例)</option>
+                  <option value="MANUAL">🤝 平价跟卖 (持平)</option>
+                </select>
+                <span class="text-[10px] text-slate-400 mt-1 block">采集入库及调价默认选中的公式</span>
+              </div>
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">默认底价计算模式</label>
+                <select v-model="settings.piggyback_default_floor_mode" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white">
+                  <option value="PERCENT">原价百分比 (如 70% 原价)</option>
+                  <option value="FIXED_MINUS">原价直降固定额 (如原价减 30 兰特)</option>
+                  <option value="FIXED">统一固定底价 (如一律 R99)</option>
+                </select>
+                <span class="text-[10px] text-slate-400 mt-1 block">采集时自动生成底价的计算公式</span>
+              </div>
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">默认底价数值</label>
+                <input type="number" step="0.1" v-model.number="settings.piggyback_default_floor_value" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white">
+                <span class="text-[10px] text-slate-400 mt-1 block">百分比模式填 70 即为 70%；直降模式填 30 即减 30 兰特</span>
+              </div>
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/70">
+                <label class="block text-xs font-semibold text-slate-700 mb-1">默认上架库存</label>
+                <input type="number" v-model.number="settings.piggyback_default_inventory" class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-white">
+                <span class="text-[10px] text-slate-400 mt-1 block">新采集商品默认库存 (系统推荐 500 件)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-slate-100 pt-4 flex justify-end">
+            <button @click="saveSettings" class="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl shadow-xs cursor-pointer transition active:scale-95">
+              保存当前全部配置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Tab: 店铺商品板块 (Makro 真实在线 Listing) ================= -->

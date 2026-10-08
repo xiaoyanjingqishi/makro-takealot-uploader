@@ -1,0 +1,113 @@
+            <!-- ================= 全局后台异步任务详细卡片 (可由顶栏胶囊或此处快捷折叠展开) ================= -->
+            <div v-if="activeBgTasks.length > 0 && showFullTasksBanner" class="shrink-0 mb-2 space-y-2 animate-in slide-in-from-top-2 duration-150">
+        <div 
+          v-for="task in activeBgTasks" 
+          :key="task.id"
+          class="p-3.5 rounded-xl border shadow-sm transition-all bg-white"
+          :class="[
+            task.status === 'RUNNING' 
+              ? ((task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') 
+                  ? 'border-purple-200/90 bg-gradient-to-r from-purple-50/60 via-white to-purple-50/40 ring-1 ring-purple-500/10' 
+                  : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') 
+                      ? 'border-emerald-200/90 bg-gradient-to-r from-emerald-50/60 via-white to-emerald-50/40 ring-1 ring-emerald-500/10' 
+                      : 'border-indigo-200/90 bg-gradient-to-r from-indigo-50/60 via-white to-indigo-50/40 ring-1 ring-indigo-500/10'))
+              : (task.status === 'SUCCESS' 
+                  ? 'bg-emerald-50/50 border-emerald-200' 
+                  : (task.status === 'CANCELLED' 
+                      ? 'bg-amber-50/50 border-amber-200' 
+                      : 'bg-rose-50/50 border-rose-200'))
+          ]"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center space-x-2.5">
+              <span v-if="task.status === 'RUNNING'" class="flex h-2.5 w-2.5 relative">
+                <span 
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                  :class="(task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') ? 'bg-purple-400' : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') ? 'bg-emerald-400' : 'bg-indigo-400')"
+                ></span>
+                <span 
+                  class="relative inline-flex rounded-full h-2.5 w-2.5"
+                  :class="(task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') ? 'bg-purple-600' : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') ? 'bg-emerald-600' : 'bg-indigo-600')"
+                ></span>
+              </span>
+              <span v-else-if="task.status === 'SUCCESS'" class="text-emerald-600 text-xs font-bold bg-emerald-100 rounded-full w-4 h-4 flex items-center justify-center">✓</span>
+              <span v-else-if="task.status === 'CANCELLED'" class="text-amber-600 text-xs font-bold bg-amber-100 rounded-full w-4 h-4 flex items-center justify-center">⏹</span>
+              <span v-else class="text-rose-600 text-xs font-bold bg-rose-100 rounded-full w-4 h-4 flex items-center justify-center">✕</span>
+
+              <span class="text-xs font-semibold text-slate-900 tracking-tight">
+                {{ task.name || '后台处理任务' }}
+              </span>
+              <span 
+                class="text-[10px] px-2 py-0.5 rounded-full font-semibold border"
+                :class="[
+                  task.status === 'RUNNING' 
+                    ? ((task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') ? 'bg-purple-50 text-purple-700 border-purple-200/80' : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' : 'bg-indigo-50 text-indigo-700 border-indigo-200/80')) :
+                  task.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' :
+                  task.status === 'CANCELLED' ? 'bg-amber-50 text-amber-700 border-amber-200/80' : 'bg-rose-50 text-rose-700 border-rose-200/80'
+                ]"
+              >
+                {{ task.status === 'RUNNING' ? '正在执行' : (task.status === 'SUCCESS' ? '已完成' : (task.status === 'CANCELLED' ? '已终止' : '执行异常')) }}
+              </span>
+              <span class="text-[11px] text-slate-400 font-mono tracking-tight">#{{ task.id }}</span>
+            </div>
+
+            <div class="flex items-center space-x-3 text-xs">
+              <span class="font-semibold font-mono text-slate-800 tabular-nums">
+                <template v-if="task.is_single || (task.id && (task.id.startsWith('single_') || task.id.startsWith('var_')))">
+                  {{ task.progress }}%
+                </template>
+                <template v-else>
+                  {{ task.current }} / {{ task.total }} 件 ({{ task.progress }}%)
+                </template>
+              </span>
+              <button 
+                v-if="task.status === 'RUNNING'"
+                @click="cancelBgTask(task)" 
+                class="px-2 py-0.8 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200/80 rounded-md text-[11px] font-medium transition-colors cursor-pointer shadow-2xs active:scale-95"
+              >
+                ⏹ 终止任务
+              </button>
+              <button 
+                v-else 
+                @click="dismissBgTask(task.id)" 
+                class="text-slate-400 hover:text-slate-700 font-bold px-1.5 py-0.5 rounded-md hover:bg-slate-100 transition cursor-pointer"
+                title="关闭此任务通知"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <!-- 进度条轨道 (现代细腻药丸圆角) -->
+          <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200/60 shadow-inner">
+            <div 
+              class="h-full rounded-full transition-all duration-300 ease-out"
+              :class="[
+                task.status === 'RUNNING' 
+                  ? ((task.task_type === 'BATCH_PUBLISH' || task.task_type === 'MAKRO_PIGGYBACK') 
+                      ? 'bg-gradient-to-r from-purple-500 to-indigo-600' 
+                      : ((task.task_type === 'BATCH_COMPLIANCE' || task.task_type === 'PIGGYBACK_COMPLIANCE') 
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-600' 
+                          : 'bg-gradient-to-r from-indigo-500 to-blue-600'))
+                  : (task.status === 'SUCCESS' 
+                      ? 'bg-emerald-500' 
+                      : (task.status === 'CANCELLED' ? 'bg-amber-500' : 'bg-rose-500'))
+              ]"
+              :style="{ width: task.progress + '%' }"
+            ></div>
+          </div>
+
+          <!-- 实时详情描述 -->
+          <div class="mt-2 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-1">
+            <div class="flex items-center space-x-1.5 truncate max-w-2xl text-[11px]">
+              <span class="text-slate-400">正在处理:</span>
+              <span class="text-slate-700 font-medium truncate">{{ task.current_title || '等待调度中...' }}</span>
+            </div>
+            <div class="flex items-center space-x-3 text-[11px] tabular-nums">
+              <span class="text-emerald-600 font-medium">✓ 成功: {{ task.success_count || 0 }}</span>
+              <span v-if="task.fail_count" class="text-rose-600 font-medium">✕ 失败: {{ task.fail_count }}</span>
+              <span class="text-slate-400 font-mono">{{ task.message }}</span>
+            </div>
+          </div>
+        </div>
+      </div>

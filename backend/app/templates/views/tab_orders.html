@@ -1,0 +1,235 @@
+      <div v-if="currentTab === 'orders'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <!-- 顶部指标卡片 (汇总与 SLA 预警) -->
+        <div class="shrink-0 space-y-2 pb-2">
+          <!-- 核心指标 5 卡片 -->
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <div 
+              @click="changeOrderStatus('all')"
+              :class="orders.status === 'all' ? 'ring-2 ring-slate-900 bg-white' : 'bg-white hover:bg-slate-50'"
+              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
+            >
+              <div class="text-[11px] font-semibold text-slate-500">📑 全部订单</div>
+              <div class="text-xl font-bold font-mono text-slate-900 mt-1">{{ orders.counts.all || 0 }}</div>
+            </div>
+            <div 
+              @click="changeOrderStatus('pending_rtd')"
+              :class="orders.status === 'pending_rtd' ? 'ring-2 ring-amber-500 bg-amber-50/40' : 'bg-white hover:bg-slate-50'"
+              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
+            >
+              <div class="text-[11px] font-semibold text-amber-700 flex items-center justify-between">
+                <span>📦 待发货</span>
+                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+              </div>
+              <div class="text-xl font-bold font-mono text-amber-800 mt-1">{{ orders.counts.pending_rtd || 0 }}</div>
+            </div>
+            <div 
+              @click="changeOrderStatus('in_transit')"
+              :class="orders.status === 'in_transit' ? 'ring-2 ring-blue-500 bg-blue-50/40' : 'bg-white hover:bg-slate-50'"
+              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
+            >
+              <div class="text-[11px] font-semibold text-blue-700 flex items-center justify-between">
+                <span>🚚 运输中</span>
+                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              </div>
+              <div class="text-xl font-bold font-mono text-blue-800 mt-1">{{ orders.counts.in_transit || 0 }}</div>
+            </div>
+            <div 
+              @click="changeOrderStatus('completed')"
+              :class="orders.status === 'completed' ? 'ring-2 ring-emerald-500 bg-emerald-50/40' : 'bg-white hover:bg-slate-50'"
+              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
+            >
+              <div class="text-[11px] font-semibold text-emerald-700 flex items-center justify-between">
+                <span>✅ 已完成</span>
+                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+              </div>
+              <div class="text-xl font-bold font-mono text-emerald-800 mt-1">{{ orders.counts.completed || 0 }}</div>
+            </div>
+            <div 
+              @click="changeOrderStatus('sla_breached')"
+              :class="orders.status === 'sla_breached' ? 'ring-2 ring-rose-600 bg-rose-50' : 'bg-white hover:bg-rose-50/40'"
+              class="p-3 rounded-xl border border-rose-200/80 shadow-xs cursor-pointer transition select-none"
+            >
+              <div class="text-[11px] font-bold text-rose-700 flex items-center justify-between">
+                <span>🚨 SLA 超期预警</span>
+                <span class="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span>
+              </div>
+              <div class="text-xl font-bold font-mono text-rose-700 mt-1">{{ orders.counts.sla_breached || 0 }}</div>
+            </div>
+          </div>
+
+          <!-- 筛选与同步工具栏 -->
+          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-2.5 flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center space-x-2">
+              <span class="text-xs text-slate-500 font-medium">当前视图:</span>
+              <span class="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
+                {{ formatOrderState(orders.status) }}
+              </span>
+            </div>
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <input 
+                  type="text" 
+                  v-model="orders.search" 
+                  @keyup.enter="loadStoreOrders(1)"
+                  placeholder="搜索订单号、运单号、买家..." 
+                  class="text-xs pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg w-52 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-2xs"
+                />
+                <span class="absolute left-2.5 top-2 text-slate-400 text-xs">🔍</span>
+              </div>
+              <button 
+                @click="loadStoreOrders(1)" 
+                class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 text-slate-700 text-xs font-semibold rounded-lg transition shadow-2xs cursor-pointer"
+              >
+                搜索
+              </button>
+              <button 
+                @click="syncStoreOrders" 
+                :disabled="syncingOrders"
+                class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50 active:scale-95"
+              >
+                <span :class="{'animate-spin': syncingOrders}">🔄</span>
+                <span>{{ syncingOrders ? '同步中...' : '一键同步官方订单' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 订单列表主体 -->
+        <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
+          <div class="flex-1 overflow-y-auto custom-scrollbar">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="sticky top-0 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200/80 text-slate-500 font-semibold text-[11px] uppercase tracking-wider z-10">
+                <tr>
+                  <th class="py-3 px-3.5 w-44">订单号 / 发货单</th>
+                  <th class="py-3 px-3.5">商品明细 (标题 / 数量 / 金额)</th>
+                  <th class="py-3 px-3.5 w-44">买家与送货地址</th>
+                  <th class="py-3 px-3.5 w-40 text-center">发货截止 SLA</th>
+                  <th class="py-3 px-3.5 w-36">物流承运与单号</th>
+                  <th class="py-3 px-3.5 w-24 text-center">订单状态</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-if="orders.loading">
+                  <td colspan="6" class="text-center py-16 text-slate-400">
+                    <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                    <div>正在查询订单...</div>
+                  </td>
+                </tr>
+                <tr v-else-if="!orders.items || orders.items.length === 0">
+                  <td colspan="6" class="text-center py-16 text-slate-400">
+                    <div class="text-3xl mb-2">📑</div>
+                    <div class="font-medium">当前无相关订单</div>
+                    <p class="text-xs text-slate-400 mt-1">系统已启动 30 分钟后台自动静默同步，也可点击右上角【一键同步官方订单】立即刷新</p>
+                  </td>
+                </tr>
+                <tr v-for="o in orders.items" :key="o.id" class="hover:bg-slate-50/70 transition-colors">
+                  <!-- 订单号 -->
+                  <td class="py-3 px-3.5 font-mono text-[11px]">
+                    <div class="font-bold text-slate-900 flex items-center space-x-1">
+                      <span>#{{ o.order_id }}</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400 mt-0.5 truncate" :title="o.shipment_id">单号: {{ o.shipment_id }}</div>
+                    <div class="text-[10px] text-slate-400 mt-0.5">{{ o.order_date }}</div>
+                  </td>
+                  <!-- 商品明细 -->
+                  <td class="py-3 px-3.5">
+                    <div v-if="o.order_items && o.order_items.length > 0" class="space-y-1.5">
+                      <div v-for="(oi, oiIdx) in o.order_items" :key="oiIdx" class="flex items-center space-x-2">
+                        <img 
+                          v-if="oi.image_url" 
+                          :src="cleanImageUrl(oi.image_url)" 
+                          @click="openImagePreview(cleanImageUrl(oi.image_url))"
+                          class="w-9 h-9 object-cover rounded border border-slate-200 cursor-pointer hover:opacity-85 shrink-0" 
+                        />
+                        <div class="min-w-0 flex-1">
+                          <div class="font-medium text-slate-900 text-xs line-clamp-1" :title="oi.title">{{ oi.title }}</div>
+                          <div class="text-[10.5px] text-slate-500 font-mono flex items-center space-x-2">
+                            <span>SKU: {{ oi.sku_id }}</span>
+                            <span class="text-indigo-600 font-bold">×{{ oi.quantity }}</span>
+                            <span class="text-slate-700 font-bold">R{{ oi.price || oi.selling_price || 0 }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-else class="text-slate-400">总计: R{{ o.total_amount }} {{ o.currency }}</div>
+                  </td>
+                  <!-- 买家与收货地 -->
+                  <td class="py-3 px-3.5 text-xs">
+                    <div class="font-semibold text-slate-800">{{ o.buyer_name || '买家' }}</div>
+                    <div class="text-[11px] text-slate-500 mt-0.5">{{ o.shipping_city }} {{ o.shipping_state }} {{ o.shipping_pincode }}</div>
+                    <div class="text-[10.5px] text-slate-400 truncate max-w-xs mt-0.5" :title="o.shipping_address_line1">{{ o.shipping_address_line1 }}</div>
+                  </td>
+                  <!-- SLA 截止时间 / 送达时间 -->
+                  <td class="py-3 px-3.5 text-center">
+                    <div v-if="['completed', 'delivered', 'shipments_delivered'].includes(o.status)" class="inline-flex flex-col items-center">
+                      <span class="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-semibold text-[10px]">
+                        已签收送达
+                      </span>
+                      <span v-if="o.delivered_date" class="font-mono text-[10px] text-slate-500 mt-0.5" title="买家签收时间">{{ o.delivered_date.slice(5, 16) }}</span>
+                    </div>
+                    <div v-else-if="o.is_sla_breached" class="inline-flex flex-col items-center">
+                      <span class="px-2 py-0.8 bg-rose-600 text-white rounded font-bold text-[10px] animate-pulse">
+                        🚨 SLA 已超期!
+                      </span>
+                      <span class="font-mono text-[10px] text-rose-600 font-semibold mt-0.5">{{ o.dispatch_by_date }}</span>
+                    </div>
+                    <div v-else-if="o.dispatch_by_date" class="inline-flex flex-col items-center">
+                      <span class="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded font-semibold text-[10px]">
+                        截止: {{ o.dispatch_by_date.slice(5, 16) }}
+                      </span>
+                    </div>
+                    <span v-else class="text-slate-300">-</span>
+                  </td>
+                  <!-- 物流 -->
+                  <td class="py-3 px-3.5 text-xs">
+                    <div class="font-medium text-slate-800">{{ o.courier_name || o.delivery_vendor || '官方物流' }}</div>
+                    <div v-if="o.tracking_id" class="font-mono text-[10.5px] text-indigo-600 font-bold mt-0.5 flex items-center space-x-1">
+                      <span>{{ o.tracking_id }}</span>
+                    </div>
+                    <span v-else class="text-[10px] text-slate-400">待揽收生成运单</span>
+                  </td>
+                  <!-- 状态徽章 -->
+                  <td class="py-3 px-3.5 text-center">
+                    <span 
+                      :class="{
+                        'bg-amber-50 text-amber-700 border-amber-200': ['pending_rtd', 'packed', 'upcoming', 'pending_labels', 'shipments_to_pack', 'pending_handover', 'shipments_to_handover'].includes(o.status),
+                        'bg-blue-50 text-blue-700 border-blue-200': ['in_transit', 'shipped', 'picked_up', 'shipments_in_transit'].includes(o.status),
+                        'bg-emerald-50 text-emerald-700 border-emerald-200': ['completed', 'delivered', 'shipments_delivered'].includes(o.status),
+                        'bg-rose-50 text-rose-700 border-rose-200': ['cancelled', 'breached'].includes(o.status)
+                      }"
+                      class="px-2 py-0.8 rounded-md text-[11px] font-semibold border inline-block whitespace-nowrap"
+                    >
+                      {{ formatOrderState(o.status) }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 分页控制栏 -->
+          <div class="shrink-0 px-4 py-2.5 bg-slate-50/90 border-t border-slate-200/80 flex items-center justify-between text-xs">
+            <div class="text-slate-500">
+              共 <strong class="font-mono font-bold text-slate-800">{{ orders.total }}</strong> 条订单 · 第 {{ orders.page }} / {{ Math.max(1, Math.ceil(orders.total / orders.pageSize)) }} 页
+            </div>
+            <div class="flex items-center space-x-1">
+              <button 
+                @click="loadStoreOrders(orders.page - 1)" 
+                :disabled="orders.page <= 1"
+                class="px-2.5 py-1 rounded bg-white border border-slate-200 disabled:opacity-40 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                上一页
+              </button>
+              <button 
+                @click="loadStoreOrders(orders.page + 1)" 
+                :disabled="orders.page >= Math.ceil(orders.total / orders.pageSize)"
+                class="px-2.5 py-1 rounded bg-white border border-slate-200 disabled:opacity-40 hover:bg-slate-100 font-medium cursor-pointer"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Tab: 用户与权限管理 (仅管理员可见) ================= -->

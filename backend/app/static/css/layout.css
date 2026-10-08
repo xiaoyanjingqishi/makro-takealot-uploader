@@ -1,0 +1,16 @@
+/* 现代玻璃拟态卡片 */
+.glass-card {
+  background-color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* 侧边栏过渡动效 */
+.sidebar-transition {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 页面工作台高度与溢出控制 */
+.workspace-container {
+  height: calc(100vh - 3rem);
+}

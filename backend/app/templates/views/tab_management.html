@@ -1,0 +1,3160 @@
+      <div v-if="currentTab === 'management' && currentUser && currentUser.role === 'ADMIN'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-4 custom-scrollbar">
+        
+        <!-- 1. 顶层全局多维控制台 (Toolbar) -->
+        <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between flex-wrap gap-3">
+          <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center text-lg shadow-xs">
+              📊
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+                <span>团队人效管理驾驶舱</span>
+                <span class="text-[11px] font-mono px-2 py-0.2 bg-purple-50 text-purple-700 border border-purple-200/70 rounded-full font-bold">
+                  管理端专属
+                </span>
+              </h2>
+              <p class="text-xs text-slate-500 mt-0.5">
+                全生命周期作业量 · 员工人效排行榜 · 24小时作息时段节律 · 员工操作流水穿透溯源
+              </p>
+            </div>
+          </div>
+
+          <!-- 右侧控制器：时间跨度快捷键 + 人员筛选 + 店铺筛选 + 导出与刷新 -->
+          <div class="flex items-center space-x-2 flex-wrap gap-y-2">
+            <!-- 时间跨度快捷切换器 -->
+            <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+              <button 
+                v-for="r in [
+                  { id: 'today', label: '今日' },
+                  { id: 'yesterday', label: '昨日' },
+                  { id: '7d', label: '近7天' },
+                  { id: '30d', label: '近30天' },
+                  { id: 'custom', label: '自定义' }
+                ]" 
+                :key="r.id"
+                @click="setManagementDateRange(r.id)"
+                :class="[
+                  'px-2.5 py-1 rounded-md font-medium transition cursor-pointer select-none',
+                  management.dateRange === r.id 
+                    ? 'bg-white text-indigo-600 font-bold shadow-2xs' 
+                    : 'text-slate-600 hover:text-slate-900'
+                ]"
+              >
+                {{ r.label }}
+              </button>
+            </div>
+
+            <!-- 自定义日期起止输入框 -->
+            <div v-if="management.dateRange === 'custom'" class="flex items-center space-x-1 text-xs">
+              <input 
+                type="date" 
+                v-model="management.customStart" 
+                class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <span class="text-slate-400">至</span>
+              <input 
+                type="date" 
+                v-model="management.customEnd" 
+                class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <button 
+                @click="loadManagementData" 
+                class="px-2.5 py-1 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition cursor-pointer"
+              >
+                确定
+              </button>
+            </div>
+
+            <!-- 员工筛选器 -->
+            <div class="flex items-center space-x-1 bg-white px-2 py-1 rounded-lg border border-slate-200 text-xs">
+              <span class="text-slate-400">👤</span>
+              <select 
+                v-model="management.filterUserId" 
+                @change="loadManagementData"
+                class="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+              >
+                <option :value="null">全体员工</option>
+                <option v-for="u in userList" :key="u.id" :value="u.id">
+                  {{ u.nickname || u.username }} ({{ u.role === 'ADMIN' ? '管理' : '员工' }})
+                </option>
+              </select>
+            </div>
+
+            <!-- 店铺筛选器 -->
+            <div class="flex items-center space-x-1 bg-white px-2 py-1 rounded-lg border border-slate-200 text-xs">
+              <span class="text-slate-400">🏪</span>
+              <select 
+                v-model="management.filterStoreId" 
+                @change="loadManagementData"
+                class="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+              >
+                <option :value="null">全部店铺</option>
+                <option v-for="s in stores" :key="s.id" :value="s.id">
+                  {{ s.name }}
+                </option>
+              </select>
+            </div>
+
+            <!-- 刷新 -->
+            <button 
+              @click="loadManagementData" 
+              class="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg text-xs font-medium text-slate-700 shadow-2xs cursor-pointer flex items-center space-x-1 transition active:scale-95"
+              title="刷新管理驾驶舱数据"
+            >
+              <span>{{ management.loading ? '⏳' : '🔄' }}</span>
+              <span>刷新</span>
+            </button>
+
+            <!-- 导出 CSV -->
+            <button 
+              @click="exportManagementWorkload" 
+              class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 transition active:scale-95"
+              title="导出当前时间段员工人效与工作量统计表格 (Excel 兼容 CSV 格式)"
+            >
+              <span>📥</span>
+              <span>导出考勤/人效报表</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 2. 核心 KPI 宏观指标卡 (5张现代科技感卡片) -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          
+          <!-- 卡片 1: 选品采集量 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">📦</span>
+                <span>选品采集总量</span>
+              </div>
+              <span 
+                v-if="management.overview?.sourcing?.growth_rate !== undefined"
+                :class="[
+                  'text-[10px] font-bold px-1.5 py-0.2 rounded font-mono',
+                  management.overview?.sourcing?.growth_rate >= 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-200/60' : 'bg-rose-50 text-rose-600 border border-rose-200/60'
+                ]"
+              >
+                {{ (management.overview?.sourcing?.growth_rate ?? 0) >= 0 ? '↑' : '↓' }} {{ Math.abs(management.overview?.sourcing?.growth_rate || 0) }}%
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.sourcing?.total || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">件录入</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>上周期: {{ management.overview?.sourcing?.prev_total || 0 }} 件</span>
+              <span class="text-indigo-600 font-medium">Takealot 商品池</span>
+            </div>
+          </div>
+
+          <!-- 卡片 2: AI 清洗与合规质检 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">🧹</span>
+                <span>AI清洗 / 质检</span>
+              </div>
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-600 border border-indigo-200/60 font-mono">
+                AI 自动化
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.cleaning?.total || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">次规范化</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>合规质检: {{ management.overview?.compliance?.total || 0 }} 次</span>
+              <span class="text-purple-600 font-medium">多模态双AI会审</span>
+            </div>
+          </div>
+
+          <!-- 卡片 3: 店铺刊登发布 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">🚀</span>
+                <span>店铺刊登发布</span>
+              </div>
+              <span 
+                :class="[
+                  'text-[10px] font-bold px-1.5 py-0.2 rounded font-mono',
+                  (management.overview?.publishing?.success_rate || 100) >= 90 ? 'bg-emerald-50 text-emerald-600 border border-emerald-200/60' : 'bg-amber-50 text-amber-600 border border-amber-200/60'
+                ]"
+              >
+                成功率 {{ management.overview?.publishing?.success_rate || 100 }}%
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.publishing?.total || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">次上品提交</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span class="text-emerald-600 font-semibold">成 {{ management.overview?.publishing?.success || 0 }}</span>
+              <span class="text-rose-500 font-semibold">败 {{ management.overview?.publishing?.failed || 0 }}</span>
+              <span class="text-slate-400">跨店铺分发</span>
+            </div>
+          </div>
+
+          <!-- 卡片 4: Makro 站内跟品 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">🎯</span>
+                <span>Makro 跟品作业</span>
+              </div>
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200/60 font-mono">
+                智能破价
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-slate-900 font-mono tracking-tight">
+                {{ management.overview?.piggyback?.collected || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">件采集</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>已上架: {{ management.overview?.piggyback?.published || 0 }}</span>
+              <span class="text-amber-600 font-bold">🏆 领跑 {{ management.overview?.piggyback?.winning || 0 }} 个</span>
+            </div>
+          </div>
+
+          <!-- 卡片 5: 团队综合人效 -->
+          <div class="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between col-span-2 sm:col-span-1">
+            <div class="flex items-center justify-between text-slate-500 text-xs font-medium">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-base">👥</span>
+                <span>团队人均产出</span>
+              </div>
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200/60 font-mono">
+                {{ management.overview?.team_metrics?.active_operators || 0 }}/{{ management.overview?.team_metrics?.total_operators || 0 }} 在岗
+              </span>
+            </div>
+            <div class="mt-2 flex items-baseline space-x-2">
+              <div class="text-2xl font-black text-indigo-600 font-mono tracking-tight">
+                {{ management.overview?.team_metrics?.per_capita_actions || 0 }}
+              </div>
+              <div class="text-[11px] text-slate-400">项/人均</div>
+            </div>
+            <div class="mt-1 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-100 pt-1.5">
+              <span>总流水: {{ management.overview?.team_metrics?.total_actions || 0 }} 笔</span>
+              <span class="text-emerald-600 font-medium">高效运转</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 3. 员工人效排行榜与工作量矩阵表 (Team Leaderboard Matrix) -->
+        <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
+          <!-- 表头栏：标题与排序切换器 -->
+          <div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center space-x-2">
+              <span class="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
+                <span>🏆 员工人效排行榜与工作量矩阵</span>
+              </span>
+              <span class="text-xs text-slate-400 hidden md:inline">
+                (支持点击员工一键穿透下钻至个人详细作息节律与操作流水)
+              </span>
+            </div>
+
+            <!-- 排序维度切换 -->
+            <div class="flex items-center space-x-1.5 text-xs text-slate-500">
+              <span class="font-medium">排序维度:</span>
+              <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <button 
+                  v-for="s in [
+                    { id: 'total_actions', label: '综合产出' },
+                    { id: 'sourcing', label: '选品采集' },
+                    { id: 'publishing', label: '刊登发布' },
+                    { id: 'piggyback', label: 'Makro跟品' }
+                  ]"
+                  :key="s.id"
+                  @click="management.sortBy = s.id; loadManagementLeaderboard()"
+                  :class="[
+                    'px-2 py-0.5 rounded text-[11px] font-semibold transition cursor-pointer',
+                    management.sortBy === s.id ? 'bg-white text-indigo-600 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  ]"
+                >
+                  {{ s.label }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 表格主体 -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead class="bg-slate-50/90 text-slate-500 font-semibold text-[11px] uppercase tracking-wider border-b border-slate-100">
+                <tr>
+                  <th class="py-2.5 px-3 w-16 text-center">排名</th>
+                  <th class="py-2.5 px-3 w-40">员工账号 / 姓名</th>
+                  <th class="py-2.5 px-3 w-24 text-center">系统角色</th>
+                  <th class="py-2.5 px-3 w-36">授权负责店铺</th>
+                  <th class="py-2.5 px-3 text-right">选品采集</th>
+                  <th class="py-2.5 px-3 text-right">AI清洗</th>
+                  <th class="py-2.5 px-3 text-right">合规质检</th>
+                  <th class="py-2.5 px-3 text-center w-36">刊登发布(成/总)</th>
+                  <th class="py-2.5 px-3 text-right">跟品采集/上架</th>
+                  <th class="py-2.5 px-3 text-right">改价调价</th>
+                  <th class="py-2.5 px-3 text-right font-bold text-slate-900">综合总产出</th>
+                  <th class="py-2.5 px-3 text-center w-32">活跃工时跨度</th>
+                  <th class="py-2.5 px-3 text-right w-24">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-if="management.leaderboard.length === 0">
+                  <td colspan="13" class="text-center py-10 text-slate-400">
+                    暂无所选时间段内的员工操作数据
+                  </td>
+                </tr>
+                <tr 
+                  v-for="item in management.leaderboard" 
+                  :key="item.user_id" 
+                  class="hover:bg-slate-50/80 transition-colors"
+                  :class="{ 'bg-indigo-50/30': management.filterUserId === item.user_id }"
+                >
+                  <!-- 排名 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <span 
+                      v-if="item.rank === 1" 
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-400/20 text-amber-600 font-black text-xs border border-amber-400/50"
+                      title="团队销冠 · 第 1 名"
+                    >
+                      🥇
+                    </span>
+                    <span 
+                      v-else-if="item.rank === 2" 
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-200 text-slate-600 font-black text-xs border border-slate-300"
+                      title="第 2 名"
+                    >
+                      🥈
+                    </span>
+                    <span 
+                      v-else-if="item.rank === 3" 
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-700/20 text-amber-800 font-black text-xs border border-amber-700/40"
+                      title="第 3 名"
+                    >
+                      🥉
+                    </span>
+                    <span v-else class="font-mono font-bold text-slate-400 text-xs">
+                      #{{ item.rank }}
+                    </span>
+                  </td>
+
+                  <!-- 员工姓名与账号 -->
+                  <td class="py-2.5 px-3">
+                    <div class="flex items-center space-x-2">
+                      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+                        {{ (item.nickname || item.username).slice(0, 1).toUpperCase() }}
+                      </div>
+                      <div class="min-w-0">
+                        <div class="font-bold text-slate-900 truncate">{{ item.nickname || item.username }}</div>
+                        <div class="text-[10px] text-slate-400 font-mono truncate">@{{ item.username }}</div>
+                      </div>
+                    </div>
+                  </td>
+
+                  <!-- 角色 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <span 
+                      :class="item.role === 'ADMIN' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-blue-50 text-blue-700 border-blue-200'"
+                      class="px-1.5 py-0.2 rounded text-[10px] font-bold border inline-block"
+                    >
+                      {{ item.role === 'ADMIN' ? '主管' : '员工' }}
+                    </span>
+                  </td>
+
+                  <!-- 负责店铺 -->
+                  <td class="py-2.5 px-3">
+                    <div class="flex items-center space-x-1 flex-wrap gap-y-0.5">
+                      <span 
+                        v-for="sname in (item.store_names || [])" 
+                        :key="sname" 
+                        class="px-1.5 py-0.2 rounded text-[9.5px] bg-slate-100 text-slate-600 border border-slate-200/80 font-medium"
+                      >
+                        {{ sname }}
+                      </span>
+                      <span v-if="!item.store_names || item.store_names.length === 0" class="text-slate-400 text-[10px]">
+                        全部授权
+                      </span>
+                    </div>
+                  </td>
+
+                  <!-- 选品采集数 -->
+                  <td class="py-2.5 px-3 text-right font-mono font-bold text-slate-800">
+                    {{ item.sourcing_count }}
+                  </td>
+
+                  <!-- AI清洗数 -->
+                  <td class="py-2.5 px-3 text-right font-mono text-slate-700">
+                    {{ item.cleaning_count }}
+                  </td>
+
+                  <!-- 合规质检数 -->
+                  <td class="py-2.5 px-3 text-right font-mono text-slate-700">
+                    {{ item.compliance_count }}
+                  </td>
+
+                  <!-- 刊登发布(成/总) -->
+                  <td class="py-2.5 px-3">
+                    <div class="flex flex-col items-center">
+                      <div class="flex items-center justify-between w-full text-[10.5px] font-mono">
+                        <span class="font-bold text-emerald-600">{{ item.publish_success }}成</span>
+                        <span class="text-slate-400">/ {{ item.publish_total }}次</span>
+                        <span class="text-slate-500 font-semibold">{{ item.publish_success_rate }}%</span>
+                      </div>
+                      <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mt-1">
+                        <div 
+                          class="bg-emerald-500 h-full rounded-full transition-all duration-300"
+                          :style="{ width: item.publish_success_rate + '%' }"
+                        ></div>
+                      </div>
+                    </div>
+                  </td>
+
+                  <!-- 跟品采集/上架 -->
+                  <td class="py-2.5 px-3 text-right font-mono">
+                    <span class="font-bold text-amber-700">{{ item.piggyback_published }}</span>
+                    <span class="text-slate-400 text-[10px]"> / {{ item.piggyback_count }}</span>
+                  </td>
+
+                  <!-- 改价调价 -->
+                  <td class="py-2.5 px-3 text-right font-mono text-slate-700">
+                    {{ item.reprice_count }}
+                  </td>
+
+                  <!-- 综合总产出 (重点高亮) -->
+                  <td class="py-2.5 px-3 text-right">
+                    <span class="font-mono text-sm font-black text-indigo-600 px-2 py-0.5 rounded-lg bg-indigo-50 border border-indigo-200/50">
+                      {{ item.total_actions }}
+                    </span>
+                  </td>
+
+                  <!-- 活跃工时跨度 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <div class="inline-flex items-center space-x-1 text-[10.5px] font-mono text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60">
+                      <span>⏰</span>
+                      <span>{{ item.work_span }}</span>
+                    </div>
+                  </td>
+
+                  <!-- 操作：穿透查看流水 -->
+                  <td class="py-2.5 px-3 text-right">
+                    <button 
+                      @click="drillDownUser(item.user_id)" 
+                      class="px-2 py-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded border border-indigo-200/80 cursor-pointer transition active:scale-95"
+                      title="穿透查看该员工详细操作流水与时段图"
+                    >
+                      🔍 穿透
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 4. 24小时作业时段节奏图 + 实时员工操作审计流水 (下半部分左右分栏) -->
+        <div id="management-stream-section" class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          
+          <!-- 左侧：24小时作业节奏波形图 (5 Cols) -->
+          <div class="lg:col-span-5 bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <div class="flex items-center space-x-2">
+                  <span class="text-base">⏱️</span>
+                  <div>
+                    <h3 class="text-xs font-bold text-slate-900">24小时作业节奏波形分布</h3>
+                    <p class="text-[10.5px] text-slate-400 mt-0.2">描绘员工出勤节奏与波峰波谷</p>
+                  </div>
+                </div>
+                <div v-if="management.filterUserId" class="flex items-center space-x-1.5">
+                  <span class="text-[10px] font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200">
+                    员工: {{ getUserDisplayName(management.filterUserId) }}
+                  </span>
+                  <button 
+                    @click="clearUserDrillDown" 
+                    class="text-[10px] text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title="清除员工筛选，查看全员"
+                  >
+                    ✕ 全员
+                  </button>
+                </div>
+              </div>
+
+              <!-- 统计概要胶囊 -->
+              <div class="grid grid-cols-2 gap-2 my-3">
+                <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/60">
+                  <div class="text-[10px] text-slate-400 font-medium">全天波峰时段</div>
+                  <div class="text-sm font-bold text-indigo-600 mt-0.5 font-mono">
+                    {{ management.hourly.peak_hour }}
+                  </div>
+                </div>
+                <div class="bg-slate-50 p-2.5 rounded-lg border border-slate-200/60">
+                  <div class="text-[10px] text-slate-400 font-medium">统计区间作业总笔数</div>
+                  <div class="text-sm font-bold text-slate-900 mt-0.5 font-mono">
+                    {{ management.hourly.total_actions }} 笔
+                  </div>
+                </div>
+              </div>
+
+              <!-- SVG 柱状图可视化 -->
+              <div class="mt-4 pt-2">
+                <div class="h-36 w-full flex items-end justify-between space-x-1 px-1 border-b border-slate-200">
+                  <div 
+                    v-for="(cnt, idx) in management.hourly.counts" 
+                    :key="idx"
+                    class="flex-1 flex flex-col items-center group relative h-full justify-end cursor-pointer"
+                  >
+                    <!-- 浮动提示 Tooltip -->
+                    <div class="absolute -top-8 bg-slate-900 text-white text-[9.5px] font-mono px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-20 pointer-events-none shadow-md">
+                      {{ management.hourly.hours[idx] }}:00 · {{ cnt }} 次
+                    </div>
+
+                    <!-- 柱子条 -->
+                    <div 
+                      class="w-full rounded-t transition-all duration-200 group-hover:opacity-80"
+                      :class="[
+                        cnt > 0 
+                          ? (management.hourly.peak_hour.startsWith(management.hourly.hours[idx]) ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-xs' : 'bg-indigo-400') 
+                          : 'bg-slate-100'
+                      ]"
+                      :style="{ 
+                        height: (management.hourly.max_hourly_count > 0 ? Math.max(4, Math.round((cnt / management.hourly.max_hourly_count) * 100)) : 4) + '%' 
+                      }"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- X 轴刻度标签 (00, 04, 08, 12, 16, 20, 23) -->
+                <div class="flex justify-between text-[9.5px] font-mono text-slate-400 mt-1.5 px-1">
+                  <span>00:00</span>
+                  <span>06:00</span>
+                  <span>12:00</span>
+                  <span>18:00</span>
+                  <span>23:00</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部工作节奏健康度提示 -->
+            <div class="mt-4 p-2.5 bg-indigo-50/50 rounded-lg border border-indigo-100 text-[10.5px] text-slate-600 leading-relaxed">
+              💡 <strong>作息洞察</strong>：通常电商团队核心作业高峰在 09:30~12:00 及 14:00~18:00。波峰高度直接体现当下运营工作密集度。
+            </div>
+          </div>
+
+          <!-- 右侧：实时员工操作审计日志流水 (7 Cols) -->
+          <div class="lg:col-span-7 bg-white rounded-xl border border-slate-200/80 shadow-xs flex flex-col justify-between overflow-hidden">
+            <div>
+              <!-- 顶部工具栏：筛选与搜索 -->
+              <div class="p-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center space-x-2">
+                  <span class="text-base">📋</span>
+                  <span class="text-xs font-bold text-slate-900">员工实时操作审计流水</span>
+                  <span class="text-[10px] font-mono px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                    共 {{ management.logs.total }} 笔记录
+                  </span>
+                </div>
+
+                <!-- 筛选控件集 -->
+                <div class="flex items-center space-x-2 text-xs flex-wrap gap-y-1">
+                  <!-- 任务类型筛选 -->
+                  <select 
+                    v-model="management.logs.taskType" 
+                    @change="loadManagementLogs(1)"
+                    class="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">全部任务类型</option>
+                    <option value="COLLECT">选品采集</option>
+                    <option value="CLEAN">AI清洗规范化</option>
+                    <option value="BATCH_CLEAN">批量AI清洗</option>
+                    <option value="COMPLIANCE">合规质检</option>
+                    <option value="BATCH_COMPLIANCE">批量合规质检</option>
+                    <option value="SUBMIT_LISTING">店铺刊登</option>
+                    <option value="BATCH_PUBLISH">批量刊登发布</option>
+                    <option value="PIGGYBACK_COLLECT">跟品采集</option>
+                    <option value="PIGGYBACK_PUBLISH">跟品挂靠上架</option>
+                    <option value="REPRICE_UPDATE">调价改价</option>
+                    <option value="PIGGYBACK_BATCH_FLOOR">批量底价维护</option>
+                  </select>
+
+                  <!-- 结果状态筛选 -->
+                  <select 
+                    v-model="management.logs.status" 
+                    @change="loadManagementLogs(1)"
+                    class="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">全部结果状态</option>
+                    <option value="SUCCESS">成功 (SUCCESS)</option>
+                    <option value="FAILED">失败 (FAILED)</option>
+                    <option value="RUNNING">运行中 (RUNNING)</option>
+                  </select>
+
+                  <!-- 搜索关键词 -->
+                  <div class="relative">
+                    <input 
+                      type="text" 
+                      v-model="management.logs.keyword" 
+                      @keyup.enter="loadManagementLogs(1)"
+                      placeholder="搜商品ID/消息/凭据..." 
+                      class="pl-6 pr-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 w-36 focus:w-44 transition-all focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <span class="absolute left-2 top-1.5 text-slate-400 text-xs">🔍</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 流水列表表格 -->
+              <div class="overflow-x-auto max-h-[380px] custom-scrollbar">
+                <table class="w-full text-left border-collapse text-xs">
+                  <thead class="sticky top-0 bg-slate-50/95 backdrop-blur-xs text-slate-500 font-semibold text-[10.5px] uppercase tracking-wider border-b border-slate-100 z-10">
+                    <tr>
+                      <th class="py-2 px-3 w-28">时间</th>
+                      <th class="py-2 px-3 w-24">操作人</th>
+                      <th class="py-2 px-3 w-24 text-center">类型</th>
+                      <th class="py-2 px-3">操作描述与回执概要</th>
+                      <th class="py-2 px-3 w-16 text-center">状态</th>
+                      <th class="py-2 px-3 w-16 text-right">回执</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    <tr v-if="management.logs.loading">
+                      <td colspan="6" class="text-center py-10 text-slate-400">
+                        <div class="inline-block w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-1"></div>
+                        <div>正在检索操作日志...</div>
+                      </td>
+                    </tr>
+                    <tr v-else-if="management.logs.items.length === 0">
+                      <td colspan="6" class="text-center py-8 text-slate-400">
+                        暂无符合条件的审计流水
+                      </td>
+                    </tr>
+                    <tr 
+                      v-for="log in management.logs.items" 
+                      :key="log.id"
+                      class="hover:bg-slate-50/80 transition-colors text-[11px]"
+                    >
+                      <!-- 时间 -->
+                      <td class="py-2 px-3 font-mono text-slate-400 text-[10px] whitespace-nowrap">
+                        {{ log.created_at ? log.created_at.slice(11, 19) : '--' }}
+                      </td>
+
+                      <!-- 操作人 -->
+                      <td class="py-2 px-3">
+                        <div class="flex items-center space-x-1 truncate max-w-[90px]">
+                          <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 inline-block"></span>
+                          <span class="font-semibold text-slate-800 truncate" :title="log.operator_name">
+                            {{ log.operator_name || '系统' }}
+                          </span>
+                        </div>
+                      </td>
+
+                      <!-- 任务类型徽标 -->
+                      <td class="py-2 px-3 text-center">
+                        <span 
+                          :class="[
+                            'px-1.5 py-0.2 rounded text-[9.5px] font-bold border inline-block whitespace-nowrap',
+                            log.task_type.includes('COLLECT') ? 'bg-sky-50 text-sky-700 border-sky-200' :
+                            (log.task_type.includes('CLEAN') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                            (log.task_type.includes('PUBLISH') || log.task_type.includes('LISTING') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            (log.task_type.includes('COMPLIANCE') ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-slate-50 text-slate-700 border-slate-200')))
+                          ]"
+                        >
+                          {{ log.task_type }}
+                        </span>
+                      </td>
+
+                      <!-- 消息描述 -->
+                      <td class="py-2 px-3 text-slate-700 leading-snug">
+                        <div class="line-clamp-2" :title="log.message">
+                          {{ log.message }}
+                        </div>
+                      </td>
+
+                      <!-- 状态 -->
+                      <td class="py-2 px-3 text-center">
+                        <span 
+                          :class="[
+                            'px-1.5 py-0.2 rounded text-[9.5px] font-bold',
+                            log.status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' :
+                            (log.status === 'FAILED' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')
+                          ]"
+                        >
+                          {{ log.status === 'SUCCESS' ? '成功' : (log.status === 'FAILED' ? '失败' : log.status) }}
+                        </span>
+                      </td>
+
+                      <!-- 查看回执 -->
+                      <td class="py-2 px-3 text-right">
+                        <button 
+                          v-if="log.detail_logs"
+                          @click="openLogDetail(log)"
+                          class="text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer underline text-[10px]"
+                        >
+                          明细
+                        </button>
+                        <span v-else class="text-slate-300 text-[10px]">-</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- 底部分页控制器 -->
+            <div class="p-2.5 border-t border-slate-100 flex items-center justify-between text-xs bg-slate-50/50">
+              <span class="text-slate-400 text-[11px]">
+                第 {{ management.logs.page }} 页 / 共 {{ Math.max(1, Math.ceil(management.logs.total / management.logs.pageSize)) }} 页
+              </span>
+              <div class="flex items-center space-x-1.5">
+                <button 
+                  @click="loadManagementLogs(management.logs.page - 1)" 
+                  :disabled="management.logs.page <= 1"
+                  class="px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  上一页
+                </button>
+                <button 
+                  @click="loadManagementLogs(management.logs.page + 1)" 
+                  :disabled="management.logs.page >= Math.ceil(management.logs.total / management.logs.pageSize)"
+                  class="px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <div v-if="complianceModalItem" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <div class="bg-white rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden border border-slate-200/90 flex flex-col max-h-[90vh] ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
+          <!-- 弹窗顶栏 -->
+          <div class="px-6 py-4.5 border-b flex items-center justify-between shrink-0 transition-colors" :class="{
+            'bg-purple-50/70 border-purple-200/80 text-purple-950': complianceModalItem.compliance_status === 'DISPUTED',
+            'bg-rose-50/70 border-rose-200/80 text-rose-950': complianceModalItem.compliance_status === 'PROHIBITED',
+            'bg-amber-50/70 border-amber-200/80 text-amber-950': complianceModalItem.compliance_status === 'RISK',
+            'bg-emerald-50/70 border-emerald-200/80 text-emerald-950': complianceModalItem.compliance_status === 'SAFE',
+            'bg-slate-50 border-slate-200/80 text-slate-900': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
+          }">
+            <div class="flex items-center space-x-3">
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xl shadow-xs border" :class="{
+                'bg-purple-100 text-purple-800 border-purple-200': complianceModalItem.compliance_status === 'DISPUTED',
+                'bg-rose-100 text-rose-800 border-rose-200': complianceModalItem.compliance_status === 'PROHIBITED',
+                'bg-amber-100 text-amber-800 border-amber-200': complianceModalItem.compliance_status === 'RISK',
+                'bg-emerald-100 text-emerald-800 border-emerald-200': complianceModalItem.compliance_status === 'SAFE',
+                'bg-slate-100 text-slate-700 border-slate-200': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
+              }">
+                {{ complianceModalItem.compliance_status === 'DISPUTED' ? '⚖️' : (complianceModalItem.compliance_status === 'PROHIBITED' ? '🚫' : (complianceModalItem.compliance_status === 'RISK' ? '⚠️' : '🛡️')) }}
+              </div>
+              <div>
+                <div class="flex items-center space-x-2">
+                  <h3 class="font-bold text-sm text-slate-900 tracking-tight">三 AI 并发交叉会审与知识产权诊断报告</h3>
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-bold bg-white/90 border border-slate-200 text-slate-700 shadow-2xs">
+                    {{ complianceModalItem.compliance_details?.three_ai_mode ? '千问 + DeepSeek + Jev 三方会审 (' + (complianceModalItem.compliance_details?.consensus_ratio || '3:0') + ')' : (complianceModalItem.compliance_details?.dual_ai_mode ? '千问 + DeepSeek 双模并行' : '单模型审查') }}
+                  </span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-0.5">通义千问 (Qwen-Plus / VL)、DeepSeek (Flash / Vision) 与 Jev-Latest (TypeSafe 决策模型) 3-AI 并发多维度审查</p>
+              </div>
+            </div>
+            <button @click="complianceModalItem = null" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer" title="关闭弹窗">✕</button>
+          </div>
+
+          <!-- 弹窗主体滚动区 -->
+          <div class="p-6 space-y-4.5 overflow-y-auto text-xs custom-scrollbar flex-1">
+            <!-- 1. 综合诊断结论横幅 -->
+            <div class="flex items-center justify-between p-4 rounded-xl border shadow-xs" :class="{
+              'bg-purple-50/80 border-purple-200 text-purple-950': complianceModalItem.compliance_status === 'DISPUTED',
+              'bg-rose-50/80 border-rose-200 text-rose-950': complianceModalItem.compliance_status === 'PROHIBITED',
+              'bg-amber-50/80 border-amber-200 text-amber-950': complianceModalItem.compliance_status === 'RISK',
+              'bg-emerald-50/80 border-emerald-200 text-emerald-950': complianceModalItem.compliance_status === 'SAFE',
+              'bg-slate-50 border-slate-200 text-slate-700': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
+            }">
+              <div>
+                <div class="flex items-center space-x-2.5">
+                  <span class="font-semibold text-xs text-slate-600">会审综合状态:</span>
+                  <span class="font-bold text-xs px-2.5 py-1 rounded-md shadow-2xs" :class="{
+                    'bg-purple-600 text-white': complianceModalItem.compliance_status === 'DISPUTED',
+                    'bg-rose-600 text-white': complianceModalItem.compliance_status === 'PROHIBITED',
+                    'bg-amber-600 text-white': complianceModalItem.compliance_status === 'RISK',
+                    'bg-emerald-600 text-white': complianceModalItem.compliance_status === 'SAFE',
+                    'bg-slate-600 text-white': !complianceModalItem.compliance_status || complianceModalItem.compliance_status === 'PENDING_CHECK'
+                  }">
+                    {{ complianceModalItem.compliance_status === 'DISPUTED' ? '⚖️ 会审分歧待仲裁 (需人工审阅)' : (complianceModalItem.compliance_status === 'PROHIBITED' ? '🚫 违禁品不可售 (平台严禁)' : (complianceModalItem.compliance_status === 'RISK' ? '⚠️ 存在侵权风险 / 配件未合规' : '🛡️ AI 一致合规安全')) }}
+                  </span>
+                </div>
+                <div v-if="complianceModalItem.compliance_details?.reconciliation_summary && complianceModalItem.compliance_status !== 'DISPUTED'" class="text-[11px] mt-1.5 opacity-90 leading-relaxed font-sans">
+                  {{ complianceModalItem.compliance_details.reconciliation_summary }}
+                </div>
+              </div>
+              <button 
+                @click="checkCompliance(complianceModalItem)" 
+                :disabled="checkingComplianceId === complianceModalItem.id"
+                class="px-3.5 py-2 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-semibold text-slate-800 shadow-2xs hover:bg-slate-50 cursor-pointer disabled:opacity-50 shrink-0 flex items-center space-x-1.5 transition active:scale-95"
+              >
+                <span>{{ checkingComplianceId === complianceModalItem.id ? '⏳' : '🔄' }}</span>
+                <span>{{ checkingComplianceId === complianceModalItem.id ? '交叉会审中...' : '重新检测 (3-AI)' }}</span>
+              </button>
+            </div>
+
+            <!-- 商品基本标题信息 -->
+            <div class="p-3.5 bg-slate-50/70 rounded-xl border border-slate-200/80 flex items-start space-x-2.5">
+              <span class="text-sm mt-0.5">📦</span>
+              <div class="flex-1 min-w-0">
+                <div class="text-[10px] text-slate-400 font-semibold tracking-wider uppercase">受审商品标题</div>
+                <div class="font-semibold text-slate-800 mt-0.5 select-all leading-relaxed">{{ complianceModalItem.makro_title || complianceModalItem.takealot_title }}</div>
+              </div>
+            </div>
+
+            <!-- Jev 品牌形态裁定卡片 -->
+            <div v-if="complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature" class="p-3.5 rounded-xl border flex items-center justify-between" :class="{
+              'bg-blue-50/70 border-blue-200/90 text-blue-950': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY',
+              'bg-amber-50/70 border-amber-200/90 text-amber-950': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND',
+              'bg-slate-50 border-slate-200/90 text-slate-800': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'GENERIC_WHITE_LABEL'
+            }">
+              <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center text-base" :class="{
+                  'bg-blue-100 text-blue-700': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY',
+                  'bg-amber-100 text-amber-800': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND',
+                  'bg-slate-100 text-slate-700': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'GENERIC_WHITE_LABEL'
+                }">
+                  {{ (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY' ? '🔌' : ((complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND' ? '🏷️' : '⚪') }}
+                </div>
+                <div>
+                  <div class="font-bold text-xs flex items-center space-x-1.5">
+                    <span>Jev 品牌形态裁定: </span>
+                    <span class="px-2 py-0.5 rounded text-[10.5px] font-bold" :class="{
+                      'bg-blue-200 text-blue-900': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY',
+                      'bg-amber-200 text-amber-950': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND',
+                      'bg-slate-200 text-slate-800': (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'GENERIC_WHITE_LABEL'
+                    }">
+                      {{ (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY' ? '知名品牌兼容配件 / 耗材' : ((complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND' ? '国际原装整机品牌' : '纯中性白牌日用品') }}
+                    </span>
+                    <span v-if="(complianceModalItem.target_compatible_brand || complianceModalItem.compliance_details?.target_compatible_brand) && (complianceModalItem.target_compatible_brand || complianceModalItem.compliance_details?.target_compatible_brand) !== 'NONE'" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono font-bold">
+                      适配生态: {{ complianceModalItem.target_compatible_brand || complianceModalItem.compliance_details?.target_compatible_brand }}
+                    </span>
+                  </div>
+                  <div class="text-[11px] mt-0.5 opacity-80">
+                    {{ (complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'COMPATIBLE_ACCESSORY' ? '已触发国际商标合理使用原则，标题与属性自动采用 Compatible with 兼容格式，安全贴牌 Beishi。' : ((complianceModalItem.brand_nature || complianceModalItem.compliance_details?.brand_nature) === 'ORIGINAL_BRAND' ? '提示：知名原装整机不可强行贴牌为自有品牌，避免平台仿牌假冒处罚。' : '中性白牌产品，安全使用授权自研品牌 Beishi 进行合规上品。') }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="complianceModalItem.compliance_details" class="space-y-4">
+              <!-- ★★★ 【置顶】会审分歧聚光灯卡片 (Dispute Spotlight) ★★★ -->
+              <div v-if="complianceModalItem.compliance_status === 'DISPUTED' || complianceModalItem.compliance_details.is_disputed" class="border-2 border-purple-300 bg-gradient-to-br from-purple-50/90 via-indigo-50/40 to-amber-50/40 rounded-xl p-4 shadow-xs space-y-2.5">
+                <div class="flex items-center justify-between pb-2 border-b border-purple-200/80">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="text-base">🚨</span>
+                    <span class="font-bold text-xs text-purple-950">
+                      {{ complianceModalItem.compliance_details.dispute_root_cause?.title || '【分歧焦点穿透与溯源】' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center space-x-1 text-[10px]">
+                    <span class="px-2 py-0.5 rounded font-bold" :class="complianceModalItem.compliance_details.round_1_status?.status === 'SAFE' ? 'bg-emerald-100 text-emerald-800' : (complianceModalItem.compliance_details.round_1_status?.status === 'DISPUTED' ? 'bg-purple-200 text-purple-900' : 'bg-amber-100 text-amber-800')">
+                      第一轮标题: {{ complianceModalItem.compliance_details.round_1_status?.status === 'SAFE' ? '✓ 一致SAFE' : (complianceModalItem.compliance_details.round_1_status?.status === 'DISPUTED' ? '⚠️ 分歧' : '风险') }}
+                    </span>
+                    <span class="px-2 py-0.5 rounded font-bold" :class="complianceModalItem.compliance_details.round_2_status?.status === 'SAFE' ? 'bg-emerald-100 text-emerald-800' : (complianceModalItem.compliance_details.round_2_status?.status === 'DISPUTED' ? 'bg-purple-200 text-purple-900' : 'bg-amber-100 text-amber-800')">
+                      第二轮首图: {{ complianceModalItem.compliance_details.round_2_status?.status === 'SAFE' ? '✓ 一致SAFE' : (complianceModalItem.compliance_details.round_2_status?.status === 'DISPUTED' ? '⚠️ 分歧' : '风险') }}
+                    </span>
+                  </div>
+                </div>
+
+                <div class="text-[11px] text-slate-800 leading-relaxed bg-white/90 p-3 rounded-lg border border-purple-200/70 shadow-2xs">
+                  <strong class="text-purple-950">🔍 分歧核心溯源: </strong>
+                  <span>{{ complianceModalItem.compliance_details.dispute_root_cause?.detail || complianceModalItem.compliance_details.reconciliation_summary }}</span>
+                </div>
+
+                <div class="text-[11px] text-purple-950 bg-purple-100/70 p-3 rounded-lg border border-purple-200 flex items-start space-x-2">
+                  <span class="text-sm">💡</span>
+                  <div>
+                    <strong>人工仲裁参考建议: </strong>
+                    <span>{{ complianceModalItem.compliance_details.dispute_root_cause?.recommendation || '请结合千问与DeepSeek的审查理由，点击下方控制台按钮进行终审裁决。' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ★★★ 第一轮：标题与品牌文本风控 (Qwen vs DeepSeek 对称卡片) ★★★ -->
+              <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                <!-- 第一轮轮次栏 -->
+                <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+                  <div class="flex items-center space-x-2">
+                    <span class="text-sm">📝</span>
+                    <span class="font-bold text-xs text-slate-800">第一轮：标题与品牌文本风控 (Round 1)</span>
+                  </div>
+                  <!-- 本轮共识徽章 -->
+                  <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-2xs" :class="{
+                    'bg-emerald-100 text-emerald-800 border border-emerald-300': complianceModalItem.compliance_details.round_1_status?.status === 'SAFE',
+                    'bg-purple-100 text-purple-800 border border-purple-300': complianceModalItem.compliance_details.round_1_status?.status === 'DISPUTED',
+                    'bg-amber-100 text-amber-800 border border-amber-300': complianceModalItem.compliance_details.round_1_status?.status === 'RISK',
+                    'bg-rose-100 text-rose-800 border border-rose-300': complianceModalItem.compliance_details.round_1_status?.status === 'PROHIBITED'
+                  }">
+                    {{ complianceModalItem.compliance_details.round_1_status?.summary || (complianceModalItem.compliance_details.qwen_verdict?.title_audit?.risk_level === 'SAFE' && complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '标题文本审查完成') }}
+                  </span>
+                </div>
+
+                <!-- 品牌检出归因横幅 -->
+                <div v-if="complianceModalItem.compliance_details.brand_breakdown?.has_brand || complianceModalItem.compliance_details.brand_info?.detected_brands?.length" class="bg-amber-50/70 border-b border-amber-200/80 px-4 py-2 flex items-center justify-between text-[11px]">
+                  <div class="flex items-center space-x-1.5 flex-wrap gap-1">
+                    <span class="font-bold text-amber-900">🏷️ 品牌检出归因分析:</span>
+                    <span v-if="complianceModalItem.compliance_details.brand_breakdown?.source_summary" class="px-2 py-0.5 rounded font-bold text-[10px]" :class="complianceModalItem.compliance_details.brand_breakdown.consensus_brands?.length ? 'bg-amber-200 text-amber-900' : 'bg-purple-100 text-purple-800 border border-purple-200'">
+                      {{ complianceModalItem.compliance_details.brand_breakdown.source_summary }}
+                    </span>
+                    <span v-else class="text-amber-800 font-semibold">
+                      检出词: {{ complianceModalItem.compliance_details.brand_info?.detected_brands?.join(', ') }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- 第一轮并排两列/三列对比 -->
+                <div class="p-3.5 grid gap-3.5" :class="complianceModalItem.compliance_details?.three_ai_mode || complianceModalItem.compliance_details?.jev_verdict?.tested ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-2'">
+                  <!-- 左列: 通义千问 (Qwen-Plus) -->
+                  <div class="bg-blue-50/40 p-3.5 rounded-xl border border-blue-200/80 space-y-2">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                      <span class="font-bold text-blue-900 text-xs flex items-center">
+                        <span class="mr-1">🤖</span>通义千问 (Qwen-Plus)
+                      </span>
+                      <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.qwen_verdict?.title_audit?.risk_level)">
+                        {{ complianceModalItem.compliance_details.qwen_verdict?.title_audit?.risk_level || '未执行' }}
+                      </span>
+                    </div>
+
+                    <!-- 品牌排查 -->
+                    <div class="text-[11px] space-y-1.5">
+                      <div class="flex items-center space-x-1">
+                        <span class="text-slate-500 font-medium">品牌检出:</span>
+                        <span v-if="complianceModalItem.compliance_details.qwen_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                          {{ complianceModalItem.compliance_details.qwen_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                        </span>
+                        <span v-else class="text-emerald-700 font-semibold">✓ 未检出品牌/IP</span>
+                      </div>
+                      <div>
+                        <span class="text-slate-500 font-medium">违规类型:</span>
+                        <span class="font-mono text-slate-700 ml-1 font-semibold">{{ complianceModalItem.compliance_details.qwen_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                      </div>
+                      <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
+                        <div class="text-slate-400 font-semibold text-[10px]">审查理由:</div>
+                        <div class="mt-0.5">{{ complianceModalItem.compliance_details.qwen_verdict?.title_audit?.summary || '未返回说明' }}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 中列: DeepSeek (Flash) -->
+                  <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                      <span class="font-bold text-indigo-900 text-xs flex items-center">
+                        <span class="mr-1">🐬</span>DeepSeek (Flash)
+                      </span>
+                      <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.risk_level)">
+                        {{ complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.risk_level || '未执行' }}
+                      </span>
+                    </div>
+
+                    <!-- 品牌排查 -->
+                    <div class="text-[11px] space-y-1.5">
+                      <div class="flex items-center space-x-1 flex-wrap">
+                        <span class="text-slate-500 font-medium">品牌检出:</span>
+                        <span v-if="complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.detected_brands_or_ips?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded">
+                          {{ complianceModalItem.compliance_details.deepseek_verdict.title_audit.detected_brands_or_ips.join(', ') }}
+                          <span v-if="complianceModalItem.compliance_details.brand_breakdown?.deepseek_only_brands?.length" class="text-[9px] bg-purple-200 text-purple-800 px-1 rounded ml-1 font-normal">单方检出</span>
+                        </span>
+                        <span v-else class="text-emerald-700 font-semibold">✓ 未检出品牌/IP</span>
+                      </div>
+                      <div>
+                        <span class="text-slate-500 font-medium">违规类型:</span>
+                        <span class="font-mono text-slate-700 ml-1 font-semibold">{{ complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.violation_type || 'NONE' }}</span>
+                      </div>
+                      <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
+                        <div class="text-slate-400 font-semibold text-[10px]">审查理由:</div>
+                        <div class="mt-0.5">{{ complianceModalItem.compliance_details.deepseek_verdict?.title_audit?.summary || '未返回说明' }}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 右列: Jev (TypeSafe 决策模型) -->
+                  <div v-if="complianceModalItem.compliance_details?.three_ai_mode || complianceModalItem.compliance_details?.jev_verdict?.tested" class="bg-amber-50/40 p-3.5 rounded-xl border border-amber-200/80 space-y-2">
+                    <div class="flex items-center justify-between pb-1.5 border-b border-amber-200/60">
+                      <span class="font-bold text-amber-950 text-xs flex items-center">
+                        <span class="mr-1">⚡</span>Jev-Latest (决策模型)
+                      </span>
+                      <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.jev_verdict?.risk_level)">
+                        {{ complianceModalItem.compliance_details.jev_verdict?.risk_level || '未执行' }}
+                      </span>
+                    </div>
+
+                    <div class="text-[11px] space-y-1.5">
+                      <!-- 违规概率分量化 -->
+                      <div>
+                        <div class="flex items-center justify-between text-slate-500 font-medium text-[10px]">
+                          <span>违规概率量化:</span>
+                          <span class="font-mono font-bold" :class="(complianceModalItem.compliance_details.jev_verdict?.violation_score || 0) >= 0.5 ? 'text-rose-600' : 'text-emerald-700'">
+                            {{ (((complianceModalItem.compliance_details.jev_verdict?.violation_score || 0) * 100)).toFixed(0) }}%
+                          </span>
+                        </div>
+                        <div class="w-full bg-slate-200 rounded-full h-1.5 mt-1 overflow-hidden">
+                          <div class="h-1.5 rounded-full transition-all duration-300"
+                               :class="(complianceModalItem.compliance_details.jev_verdict?.violation_score || 0) >= 0.7 ? 'bg-rose-500' : ((complianceModalItem.compliance_details.jev_verdict?.violation_score || 0) >= 0.35 ? 'bg-amber-500' : 'bg-emerald-500')"
+                               :style="{ width: ((complianceModalItem.compliance_details.jev_verdict?.violation_score || 0) * 100) + '%' }">
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- 品牌形态识别 -->
+                      <div class="pt-1">
+                        <span class="text-slate-500 font-medium">品牌形态:</span>
+                        <span v-if="complianceModalItem.compliance_details.jev_verdict?.brand_nature === 'COMPATIBLE_ACCESSORY'" class="ml-1 font-bold text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded text-[10px]">
+                          🔌 兼容配件 ({{ complianceModalItem.compliance_details.jev_verdict?.target_brand || '生态' }})
+                        </span>
+                        <span v-else-if="complianceModalItem.compliance_details.jev_verdict?.brand_nature === 'ORIGINAL_BRAND'" class="ml-1 font-bold text-amber-900 bg-amber-200 px-1.5 py-0.5 rounded text-[10px]">
+                          🏷️ 知名原装整机
+                        </span>
+                        <span v-else class="ml-1 font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[10px]">
+                          ⚪ 纯中性白牌
+                        </span>
+                      </div>
+
+                      <!-- 审查结论与耗时 -->
+                      <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-amber-100">
+                        <div class="flex items-center justify-between text-[10px] text-slate-400 font-semibold">
+                          <span>审查结论:</span>
+                          <span class="font-mono text-slate-500">{{ complianceModalItem.compliance_details.jev_verdict?.latency_ms }}ms</span>
+                        </div>
+                        <div class="mt-0.5 text-slate-600">{{ complianceModalItem.compliance_details.jev_verdict?.summary || '未返回说明' }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 推荐修改标题条 -->
+                <div v-if="complianceModalItem.compliance_details.brand_info?.recommended_title" class="p-3.5 bg-amber-50/70 border-t border-amber-200/80 text-[11px]">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-[10px] text-amber-800 font-semibold">💡 AI 推荐合规标题 (已规避侵权词并规范兼容声明):</div>
+                      <div class="font-mono text-blue-900 font-semibold mt-1 select-all">{{ complianceModalItem.compliance_details.brand_info.recommended_title }}</div>
+                    </div>
+                    <button @click="adoptRecommendedTitle(complianceModalItem); complianceModalItem = null;" class="ml-3 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer shrink-0 transition active:scale-95">
+                      一键采纳并更新
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ★★★ 第二轮：首图视觉与运输合规 (Qwen-VL vs DeepSeek-Vision 对称卡片) ★★★ -->
+              <div class="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+                <!-- 第二轮轮次栏 -->
+                <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
+                  <div class="flex items-center space-x-2">
+                    <span class="text-sm">🖼️</span>
+                    <span class="font-bold text-xs text-slate-800">第二轮：首图视觉与运输合规 (Round 2 多模态看图)</span>
+                  </div>
+                  <!-- 本轮共识徽章 -->
+                  <span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold shadow-2xs" :class="{
+                    'bg-emerald-100 text-emerald-800 border border-emerald-300': complianceModalItem.compliance_details.round_2_status?.status === 'SAFE',
+                    'bg-purple-100 text-purple-800 border border-purple-300': complianceModalItem.compliance_details.round_2_status?.status === 'DISPUTED',
+                    'bg-amber-100 text-amber-800 border border-amber-300': complianceModalItem.compliance_details.round_2_status?.status === 'RISK',
+                    'bg-rose-100 text-rose-800 border border-rose-300': complianceModalItem.compliance_details.round_2_status?.status === 'PROHIBITED'
+                  }">
+                    {{ complianceModalItem.compliance_details.round_2_status?.summary || (complianceModalItem.compliance_details.qwen_verdict?.image_audit?.risk_level === 'SAFE' && complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level === 'SAFE' ? '双方一致判定 SAFE' : '视觉审查完成') }}
+                  </span>
+                </div>
+
+                <!-- 首图预览与两列对比 -->
+                <div class="p-3.5 space-y-3.5">
+                  <!-- 首图缩略图 -->
+                  <div v-if="complianceModalItem.compliance_details.image_inspection?.image_url" class="flex items-center space-x-3 p-2.5 bg-slate-50 rounded-xl border border-slate-200/80">
+                    <img 
+                      :src="cleanImageUrl(complianceModalItem.compliance_details.image_inspection.image_url)" 
+                      @error="handleImageError($event, complianceModalItem.compliance_details.image_inspection.image_url)"
+                      @click="openImagePreview(complianceModalItem.compliance_details.image_inspection.image_url)"
+                      class="w-14 h-14 rounded-lg object-cover border border-slate-200 cursor-pointer hover:opacity-80 transition shadow-2xs shrink-0" 
+                      title="点击放大预览首图"
+                    />
+                    <div class="text-[11px] text-slate-600 flex-1 min-w-0">
+                      <div class="font-semibold text-slate-800">首图图片审查对象:</div>
+                      <div class="font-mono text-[10px] text-slate-400 truncate max-w-lg mt-0.5">{{ complianceModalItem.compliance_details.image_inspection.image_url }}</div>
+                      <div class="text-[10px] text-indigo-600 font-medium mt-1">点击左侧缩略图可查看大图</div>
+                    </div>
+                  </div>
+
+                  <!-- 视觉并排两列对比 -->
+                  <div class="grid grid-cols-2 gap-3.5">
+                    <!-- 左列: 通义千问视觉 (Qwen-VL-Max) -->
+                    <div class="bg-blue-50/40 p-3.5 rounded-xl border border-blue-200/80 space-y-2">
+                      <div class="flex items-center justify-between pb-1.5 border-b border-blue-200/60">
+                        <span class="font-bold text-blue-900 text-xs flex items-center">
+                          <span class="mr-1">🤖</span>通义千问视觉 (Qwen-VL)
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.qwen_verdict?.image_audit?.risk_level)">
+                          {{ complianceModalItem.compliance_details.qwen_verdict?.image_audit?.risk_level || 'SAFE' }}
+                        </span>
+                      </div>
+
+                      <div class="text-[11px] space-y-1.5">
+                        <div>
+                          <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                          <span v-if="complianceModalItem.compliance_details.qwen_verdict?.image_audit?.logo_names?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.qwen_verdict.image_audit.logo_names.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                        </div>
+                        <div>
+                          <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                          <span v-if="complianceModalItem.compliance_details.qwen_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.qwen_verdict.image_audit.prohibited_types.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                        </div>
+                        <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
+                          <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
+                          <div class="mt-0.5">{{ complianceModalItem.compliance_details.qwen_verdict?.image_audit?.summary || '无异常' }}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 右列: DeepSeek 视觉 (DeepSeek-Vision) -->
+                    <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
+                      <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
+                        <span class="font-bold text-indigo-900 text-xs flex items-center">
+                          <span class="mr-1">🐬</span>DeepSeek 视觉 (Flash-Vision)
+                        </span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level)">
+                          {{ complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level || 'SAFE' }}
+                        </span>
+                      </div>
+
+                      <div class="text-[11px] space-y-1.5">
+                        <div>
+                          <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
+                          <span v-if="complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.logo_names?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.deepseek_verdict.image_audit.logo_names.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
+                        </div>
+                        <div>
+                          <span class="text-slate-500 font-medium">运输违禁排查:</span>
+                          <span v-if="complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                            {{ complianceModalItem.compliance_details.deepseek_verdict.image_audit.prohibited_types.join(', ') }}
+                          </span>
+                          <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
+                        </div>
+                        <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
+                          <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
+                          <div class="mt-0.5">{{ complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.summary || '无异常' }}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ★★★ AI 识别平台受限/违禁特征 (AI Prohibited Items) ★★★ -->
+              <div v-if="complianceModalItem.compliance_details.prohibited_items?.length" class="p-3.5 bg-rose-50/80 border border-rose-200 rounded-xl text-[11px] text-rose-900 space-y-1">
+                <div class="flex items-center justify-between font-bold">
+                  <span>🚫 AI 识别平台受限/违禁特征:</span>
+                  <span class="px-2 py-0.5 bg-rose-600 text-white rounded text-[10px]">不可上架</span>
+                </div>
+                <div>检出项: <strong class="underline decoration-rose-400">{{ complianceModalItem.compliance_details.prohibited_items.join('、') }}</strong></div>
+                <div class="text-slate-500 text-[10px] leading-relaxed">说明：AI 综合图文语义与首图多模态视觉检测到商品包含受限或禁售特征（如蓝牙/WiFi无线通讯、未授权影视IP、航空禁运液体或假冒品牌）。建议核实或停止刊登。</div>
+              </div>
+
+              <!-- ★★★ 人工终审裁定控制台 (Human Arbitration Console) ★★★ -->
+              <div class="p-4 bg-purple-50/80 rounded-xl border border-purple-200/90 space-y-3 shadow-xs">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-xs text-purple-950 flex items-center">
+                    <span class="mr-1.5 text-sm">⚖️</span> 人工终审裁定控制台
+                  </span>
+                  <span v-if="complianceModalItem.compliance_details?.human_arbitration" class="text-[10px] text-purple-700 bg-purple-100 px-2 py-0.5 rounded font-bold border border-purple-200">
+                    ✓ 已终审: {{ complianceModalItem.compliance_details.human_arbitration.human_verdict }} (归因: {{ complianceModalItem.compliance_details.human_arbitration.error_attribution }})
+                  </span>
+                  <span v-else class="text-[10px] text-purple-700 font-medium">
+                    人工裁定结果将保存为日志，自动沉淀为 AI 提示词优化样本
+                  </span>
+                </div>
+
+                <!-- 备注输入框 -->
+                <input 
+                  v-model="arbitrationNotes" 
+                  type="text" 
+                  placeholder="填写裁定理由或关键词修正备注（例如：HW300PRO是通用产品型号，非侵权大牌商标；或：画面无Logo判为SAFE）..." 
+                  class="w-full text-xs px-3.5 py-2.5 bg-white border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 focus:outline-none placeholder:text-slate-400 transition"
+                />
+
+                <!-- 一键裁定按钮组 -->
+                <div class="flex items-center space-x-2 pt-0.5">
+                  <button 
+                    @click="submitArbitration(complianceModalItem, 'SAFE')" 
+                    :disabled="isArbitrating"
+                    class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+                  >
+                    <span>🛡️</span>
+                    <span>裁定为【SAFE 安全合规】</span>
+                  </button>
+                  <button 
+                    @click="submitArbitration(complianceModalItem, 'RISK')" 
+                    :disabled="isArbitrating"
+                    class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+                  >
+                    <span>⚠️</span>
+                    <span>裁定为【RISK 风险预警】</span>
+                  </button>
+                  <button 
+                    @click="submitArbitration(complianceModalItem, 'PROHIBITED')" 
+                    :disabled="isArbitrating"
+                    class="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs shadow-xs transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 active:scale-95"
+                  >
+                    <span>🚫</span>
+                    <span>裁定为【PROHIBITED 违禁拦截】</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-center py-12 text-slate-400">
+              <span class="text-2xl block mb-2">🔍</span>
+              暂无详细检测数据，请点击右上角【重新检测 (双AI)】按钮触发会审诊断。
+            </div>
+          </div>
+
+          <!-- 弹窗底栏 -->
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2 shrink-0">
+            <button @click="complianceModalItem = null" class="px-4.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg cursor-pointer transition">
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 弹窗: PLID / 链接极速采集 ================= -->
+      <div v-if="showQuickCollectModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200/60 flex items-center justify-center text-lg shadow-2xs">📥</div>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight">Takealot 官方原生 API 极速采集</h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">免插件直连云端极速入库</p>
+              </div>
+            </div>
+            <button @click="showQuickCollectModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+
+          <!-- 采集模式切换选项卡: 单品输入 vs CSV表格批量采集 -->
+          <div class="flex border-b border-slate-200/80 bg-slate-50/50 px-6 pt-2">
+            <button 
+              @click="quickCollectTab = 'single'"
+              :class="quickCollectTab === 'single' ? 'border-blue-600 text-blue-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'"
+              class="pb-2.5 px-3 border-b-2 text-xs transition cursor-pointer flex items-center space-x-1.5"
+            >
+              <span>🎯 单商品/链接快速采集</span>
+            </button>
+            <button 
+              @click="quickCollectTab = 'csv'"
+              :class="quickCollectTab === 'csv' ? 'border-blue-600 text-blue-600 font-bold' : 'border-transparent text-slate-500 hover:text-slate-700'"
+              class="pb-2.5 px-3 border-b-2 text-xs transition cursor-pointer flex items-center space-x-1.5"
+            >
+              <span>📄 导入 CSV 表格批量采集</span>
+            </button>
+          </div>
+
+          <!-- 模式 1: 单品 PLID / 链接采集 -->
+          <div v-if="quickCollectTab === 'single'" class="p-6 space-y-4">
+            <p class="text-xs text-slate-500 leading-relaxed">
+              输入 Takealot 商品的 <strong>PLID</strong>、<strong>TSIN</strong>（如 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">PLID102204256</code> 或 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">103776345</code>）或 <strong>商品详情页链接</strong>，系统将直接调用 Takealot 官方 API 双模毫秒级提取全量规格与图组：
+            </p>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1.5">Takealot PLID / TSIN 编号或商品网址</label>
+              <input 
+                v-model="quickCollectInput" 
+                type="text" 
+                placeholder="例如: PLID102204256 或 103776345 或商品网址" 
+                class="w-full px-3.5 py-2.5 text-xs border border-slate-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none placeholder:text-slate-400 transition"
+                @keyup.enter="submitQuickCollect"
+              />
+              <!-- 实时智能识别状态指示卡 (与插件完全对齐) -->
+              <div v-if="parsedPlidInfo.status === 'valid'" class="mt-2.5 px-3 py-2 bg-emerald-50/80 border border-emerald-200 rounded-xl flex items-center justify-between text-xs text-emerald-800">
+                <div class="flex items-center space-x-1.5 font-semibold">
+                  <span>{{ parsedPlidInfo.label }}</span>
+                </div>
+                <span class="px-2 py-0.5 bg-emerald-200 text-emerald-900 rounded-md font-mono text-[10px] font-bold">智能双模就绪</span>
+              </div>
+              <div v-else-if="parsedPlidInfo.status === 'invalid'" class="mt-2.5 px-3 py-2 bg-rose-50/80 border border-rose-200 rounded-xl text-xs text-rose-700 font-medium">
+                {{ parsedPlidInfo.label }}
+              </div>
+            </div>
+            <div class="p-3 bg-blue-50/60 rounded-xl border border-blue-100 text-[11px] text-blue-800 flex items-start space-x-2 leading-relaxed">
+              <span class="text-sm shrink-0">💡</span>
+              <div>
+                <strong>官方 API 优势</strong>：支持纯数字自动双模容灾。若按母商品编号 (PLID) 未命中，系统将自动回退尝试变体/单品编号 (TSIN) 全量下钻。
+              </div>
+            </div>
+            <div class="p-3 bg-amber-50/60 rounded-xl border border-amber-200/80 text-[11px] text-amber-800 flex items-start space-x-2 leading-relaxed">
+              <span class="text-sm shrink-0">⚠️</span>
+              <div>
+                <strong>提示</strong>：编号通常为 8~9 位数字。若依然返回 404 错误，说明该商品在 Takealot 已下架或编号有误。您也可以直接在 Chrome 打开商品页使用插件一键采集。
+              </div>
+            </div>
+          </div>
+
+          <!-- 模式 2: 批量 CSV / TXT 文件导入采集 -->
+          <div v-if="quickCollectTab === 'csv'" class="p-6 space-y-4">
+            <p class="text-xs text-slate-500 leading-relaxed">
+              支持上传从其他系统导出的商品表格文件（<code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">.csv</code> 或 <code class="bg-slate-100 px-1.5 py-0.5 rounded text-blue-600 font-mono text-[11px]">.txt</code>），系统将自动识别提取 <strong>PLID</strong> 与 <strong>TSIN</strong>，并在后台并发拉取全量规格、多维变体与高清图组：
+            </p>
+
+            <!-- 拖拽/点击上传区域 -->
+            <div 
+              @click="$refs.csvFileInput.click()" 
+              @dragover.prevent
+              @dragenter.prevent
+              @drop.prevent="handleCsvFileDrop"
+              class="border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition select-none"
+              :class="csvFile ? 'border-blue-400 bg-blue-50/40' : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50/70'"
+            >
+              <input 
+                type="file" 
+                ref="csvFileInput" 
+                accept=".csv,.txt" 
+                @change="handleCsvFileSelect" 
+                class="hidden"
+              />
+              <div v-if="!csvFile" class="space-y-1.5 text-xs text-slate-500">
+                <div class="text-2xl">📤</div>
+                <div class="font-medium text-slate-700">点击或将 CSV / TXT 文件拖拽到此处</div>
+                <div class="text-[11px] text-slate-400">支持 8店_有出单商品_PLID明细.csv 等任意包含 PLID 列的表格</div>
+              </div>
+              <div v-else class="space-y-1 text-xs">
+                <div class="text-2xl">📄</div>
+                <div class="font-bold text-slate-800 break-all">{{ csvFileName }}</div>
+                <div class="text-[11px] text-blue-600 font-medium">
+                  识别到约 <span class="font-bold text-blue-700 font-mono">{{ csvPlidCount }}</span> 个待采集商品
+                </div>
+                <div class="text-[10px] text-slate-400 mt-1">（点击可更换文件）</div>
+              </div>
+            </div>
+
+            <!-- 智能去重保护开关 -->
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+              <label class="flex items-start space-x-2 text-xs text-slate-700 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  v-model="csvSkipExisting" 
+                  class="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                />
+                <div>
+                  <span class="font-semibold text-slate-900">智能跳过已存在商品 (推荐)</span>
+                  <p class="text-[11px] text-slate-500 mt-0.5 leading-normal">
+                    若商品在系统中已存在，自动跳过采集，防止覆盖已清洗或已提交至 Makro 的数据。
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div class="p-3 bg-blue-50/60 rounded-xl border border-blue-100 text-[11px] text-blue-800 flex items-start space-x-2 leading-relaxed">
+              <span class="text-sm shrink-0">💡</span>
+              <div>
+                <strong>并发与后台执行</strong>：提交后系统将在后台以 6 线程并发拉取官方 API 物料，不影响您正常操作其他页面，顶部任务栏可实时查看百分比与入库进度。
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showQuickCollectModal = false" 
+              class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              取消
+            </button>
+            <template v-if="quickCollectTab === 'single'">
+              <button 
+                @click="submitQuickCollect" 
+                :disabled="parsedPlidInfo.status !== 'valid' || isQuickCollecting"
+                class="px-4.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-xl flex items-center space-x-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+              >
+                <span v-if="isQuickCollecting">⏳ 正在读取 API...</span>
+                <span v-else>立即采集入库</span>
+              </button>
+            </template>
+            <template v-else>
+              <button 
+                @click="submitCsvCollect" 
+                :disabled="!csvFile || isCsvCollecting"
+                class="px-4.5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-xl flex items-center space-x-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+              >
+                <span v-if="isCsvCollecting">⏳ 正在启动任务...</span>
+                <span v-else>🚀 开始批量采集入库</span>
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 批量修改售价模态框 ================= -->
+      <div 
+        v-if="showBatchPriceModal" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-amber-50 border border-amber-200/60 flex items-center justify-center text-lg shadow-2xs">💰</div>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight">批量修改商品售价与划线原价</h3>
+                <p class="text-[11px] text-slate-500 mt-0.5">已选定 <strong class="text-blue-600 font-bold font-mono">{{ selectedIds.length }}</strong> 件独立变体进行批量改价</p>
+              </div>
+            </div>
+            <button @click="showBatchPriceModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 space-y-4.5 text-xs text-slate-700">
+            <!-- 改价模式选择 -->
+            <div>
+              <label class="block font-semibold text-slate-800 mb-2">选择改价方式:</label>
+              <div class="grid grid-cols-2 gap-3">
+                <label 
+                  :class="batchPriceForm.mode === 'formula' ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20' : 'border-slate-200 bg-white hover:bg-slate-50'"
+                  class="flex items-center p-3 rounded-xl border cursor-pointer transition space-x-2.5"
+                >
+                  <input type="radio" v-model="batchPriceForm.mode" value="formula" class="text-blue-600 cursor-pointer" />
+                  <div>
+                    <div class="font-bold text-slate-900">按公式比例/加价</div>
+                    <div class="text-[10px] text-slate-500 mt-0.5">当前售价 × 系数 + 固定金额</div>
+                  </div>
+                </label>
+
+                <label 
+                  :class="batchPriceForm.mode === 'fixed' ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20' : 'border-slate-200 bg-white hover:bg-slate-50'"
+                  class="flex items-center p-3 rounded-xl border cursor-pointer transition space-x-2.5"
+                >
+                  <input type="radio" v-model="batchPriceForm.mode" value="fixed" class="text-blue-600 cursor-pointer" />
+                  <div>
+                    <div class="font-bold text-slate-900">统一固定价格</div>
+                    <div class="text-[10px] text-slate-500 mt-0.5">全部设定为统一金额</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <!-- 模式一: 公式参数 -->
+            <div v-if="batchPriceForm.mode === 'formula'" class="p-4 bg-slate-50/80 rounded-xl border border-slate-200 space-y-3">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[11px] font-semibold text-slate-700 mb-1">
+                    售价比例系数 (乘数):
+                  </label>
+                  <div class="flex items-center space-x-1.5">
+                    <input 
+                      type="number" 
+                      step="0.05" 
+                      v-model.number="batchPriceForm.multiplier" 
+                      placeholder="1.0"
+                      class="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none font-bold text-slate-800 font-mono"
+                    />
+                  </div>
+                  <span class="text-[10px] text-slate-400 mt-0.5 block">例如: 1.1 = 加价 10%，0.9 = 降价 10%</span>
+                </div>
+
+                <div>
+                  <label class="block text-[11px] font-semibold text-slate-700 mb-1">
+                    固定附加金额 (加/减 ZAR):
+                  </label>
+                  <div class="flex items-center space-x-1.5">
+                    <span class="text-slate-400 font-bold font-mono">R</span>
+                    <input 
+                      type="number" 
+                      v-model.number="batchPriceForm.fixed_offset" 
+                      placeholder="0"
+                      class="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none font-bold text-slate-800 font-mono"
+                    />
+                  </div>
+                  <span class="text-[10px] text-slate-400 mt-0.5 block">支持负数，例如: +20 或 -10</span>
+                </div>
+              </div>
+
+              <!-- 示例与公式实时演示 -->
+              <div class="p-3 bg-blue-50/80 border border-blue-200/70 rounded-xl text-[11px] text-blue-900 flex items-center justify-between">
+                <div>
+                  <span class="text-slate-500 font-medium">实时公式：</span>
+                  <strong class="font-mono text-blue-950 font-bold">新售价 = 当前售价 × {{ batchPriceForm.multiplier || 1 }} + (R{{ batchPriceForm.fixed_offset || 0 }})</strong>
+                </div>
+                <div class="text-[10px] font-bold text-blue-800 font-mono bg-blue-100/80 px-2 py-0.5 rounded">
+                  原价 R200 &rarr; 新价 R{{ Math.max(1, Math.round(200 * (Number(batchPriceForm.multiplier) || 1) + (Number(batchPriceForm.fixed_offset) || 0))) }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 模式二: 固定统一售价 -->
+            <div v-else class="p-4 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+              <label class="block text-[11px] font-semibold text-slate-700">
+                统一固定售价 (Makro Selling Price ZAR):
+              </label>
+              <div class="flex items-center space-x-2">
+                <span class="text-base font-bold text-slate-400 font-mono">R</span>
+                <input 
+                  type="number" 
+                  v-model.number="batchPriceForm.fixed_price" 
+                  placeholder="例如: 299"
+                  class="w-full text-sm p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:outline-none font-black text-slate-900 font-mono"
+                />
+              </div>
+              <span class="text-[10px] text-slate-400 block">所选的 {{ selectedIds.length }} 件商品将全部被修改为此统一售价</span>
+            </div>
+
+            <!-- 划线原价 (MRP) 说明 -->
+            <div class="p-3 bg-amber-50/60 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 flex items-start space-x-2 leading-relaxed">
+              <span class="text-base shrink-0">💡</span>
+              <div>
+                <strong>MRP 划线原价自动联动</strong>：
+                系统将根据当前系统设置的 MRP 系数 (<strong class="font-mono text-amber-950">x{{ settings.mrp_ratio || 1.5 }}</strong>) 自动同步计算并更新划线原价，无需人工繁琐重算。
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showBatchPriceModal = false" 
+              class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="submitBatchPriceUpdate" 
+              :disabled="isUpdatingBatchPrice"
+              class="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-xl shadow-xs flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
+            >
+              <span v-if="isUpdatingBatchPrice">⏳ 正在调价中...</span>
+              <span v-else>确认批量调价</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 批量指派归属员工模态框 (方案 C) ================= -->
+      <div 
+        v-if="showBatchAssignModal" 
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4"
+      >
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-200/80 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+            <div class="flex items-center space-x-2">
+              <span class="text-lg">👤</span>
+              <h3 class="font-bold text-slate-800 text-sm">批量分配商品归属员工</h3>
+            </div>
+            <button 
+              @click="showBatchAssignModal = false" 
+              class="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition text-sm cursor-pointer"
+            >✕</button>
+          </div>
+
+          <div class="p-5 space-y-4 text-xs text-slate-600">
+            <div class="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-indigo-900 leading-relaxed">
+              当前已选定 <strong class="text-indigo-700 font-bold font-mono text-sm">{{ selectedIds.length }}</strong> 件商品进行归属分配。指派后，目标员工将在其个人工作台中可见并负责管理这些商品。
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1.5">选择目标归属员工 / 管理员：</label>
+              <select 
+                v-model="batchAssignTargetUserId" 
+                class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none cursor-pointer"
+              >
+                <option value="">⚠️ 重置为【未分配】(公共商品池)</option>
+                <option v-for="op in operatorsList" :key="op.id" :value="op.id">
+                  👤 {{ op.nickname || op.username }} ({{ op.username }}) [{{ op.role === 'ADMIN' ? '管理员' : '员工' }}]
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div class="px-5 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showBatchAssignModal = false" 
+              class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="submitBatchAssignUser" 
+              :disabled="isAssigningUser"
+              class="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 rounded-xl shadow-xs flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
+            >
+              <span v-if="isAssigningUser">⏳ 正在分配中...</span>
+              <span v-else>确认批量分配</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 全屏图片放大预览模态框 (Lightbox) ================= -->
+      <div 
+        v-if="previewImageUrl" 
+        @click.self="closeImagePreview"
+        class="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 z-[9999] transition-all duration-200 animate-in fade-in"
+      >
+        <div class="relative max-w-5xl w-full flex flex-col items-center animate-in zoom-in-95 duration-150">
+          <!-- 关闭按钮 -->
+          <button 
+            @click="closeImagePreview" 
+            class="absolute -top-12 right-0 bg-white/10 hover:bg-white/20 text-white rounded-full w-10 h-10 flex items-center justify-center text-lg transition font-medium cursor-pointer border border-white/20 shadow-xl"
+            title="关闭预览 (ESC)"
+          >
+            ✕
+          </button>
+
+          <!-- 图片展示容器 -->
+          <div class="bg-slate-900/60 p-2.5 rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] max-w-full flex items-center justify-center min-w-[280px] min-h-[280px] relative border border-white/10 ring-1 ring-black/40">
+            <!-- 加载状态指示器 -->
+            <div v-if="previewLoading && !previewImageFailed" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 z-10 space-y-3 backdrop-blur-xs">
+              <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-xs text-slate-300 font-medium tracking-tight">正在加载高清大图...</span>
+            </div>
+
+            <!-- 加载失败友好提示 -->
+            <div v-if="previewImageFailed" class="flex flex-col items-center justify-center p-8 text-center space-y-3">
+              <span class="text-3xl">🖼️</span>
+              <div class="text-sm font-bold text-slate-200">图片加载受限或超时</div>
+              <p class="text-xs text-slate-400 max-w-xs">Takealot 远程图片服务器响应较慢，或受国内网络限制</p>
+              <div class="flex items-center space-x-2 pt-2">
+                <button 
+                  @click="retryPreviewWithProxy" 
+                  class="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold cursor-pointer shadow-xs transition active:scale-95"
+                >
+                  🔄 强制本地代理中转重试
+                </button>
+                <a 
+                  :href="previewImageUrl" 
+                  target="_blank" 
+                  class="px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-slate-200 rounded-xl text-xs font-semibold transition"
+                >
+                  新标签页打开 ↗
+                </a>
+              </div>
+            </div>
+
+            <!-- 核心大图 -->
+            <img 
+              v-show="!previewImageFailed"
+              :src="previewImageUrl" 
+              referrerpolicy="no-referrer"
+              @load="onPreviewImageLoad"
+              @error="handlePreviewImageError"
+              class="max-h-[80vh] max-w-full object-contain rounded-xl select-none" 
+            />
+          </div>
+
+          <!-- 底部工具栏与操作提示 -->
+          <div class="mt-3.5 flex items-center justify-between w-full max-w-xl px-2 text-xs text-white/80">
+            <span class="text-white/50 text-[11px]">按 ESC 键或点击外部退出</span>
+            <div class="flex items-center space-x-4">
+              <button 
+                v-if="!previewImageUrl.includes('/api/products/image-proxy')"
+                @click="previewImageUrl = getImageProxyUrl(previewImageUrl)" 
+                class="text-[11px] text-blue-400 hover:text-blue-300 underline cursor-pointer transition"
+                title="若直连加载慢，切换通过系统本地服务加速"
+              >
+                🔄 切换本地代理加载
+              </button>
+              <a :href="previewImageUrl" target="_blank" class="hover:text-white underline flex items-center space-x-1 transition text-slate-300">
+                <span>在新标签页中打开原图 ↗</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 通用确认模态对话框 (代替原生 confirm) ================= -->
+      <div 
+        v-if="confirmDialog.show" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="text-sm font-bold text-slate-900 tracking-tight">{{ confirmDialog.title }}</h3>
+            <button @click="confirmDialog.show = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+          <div class="p-6 text-xs text-slate-600 leading-relaxed whitespace-pre-wrap font-sans">
+            {{ confirmDialog.message }}
+          </div>
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="confirmDialog.show = false" 
+              class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              {{ confirmDialog.cancelText }}
+            </button>
+            <button 
+              @click="handleConfirm" 
+              :class="{
+                'bg-rose-600 hover:bg-rose-700 text-white': confirmDialog.type === 'danger',
+                'bg-blue-600 hover:bg-blue-700 text-white': confirmDialog.type === 'primary',
+                'bg-emerald-600 hover:bg-emerald-700 text-white': confirmDialog.type === 'success'
+              }"
+              class="px-4.5 py-2 text-xs font-semibold rounded-xl shadow-xs transition active:scale-95 cursor-pointer"
+            >
+              {{ confirmDialog.confirmText }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 操作日志回执详情模态框 ================= -->
+      <div 
+        v-if="showLogDetailModal && activeLogDetail" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-2.5">
+              <span 
+                :class="getTaskTypeInfo(activeLogDetail.task_type).bg" 
+                class="px-2.5 py-1 rounded-lg text-xs font-bold border shadow-2xs"
+              >
+                {{ getTaskTypeInfo(activeLogDetail.task_type).text }}
+              </span>
+              <h3 class="text-sm font-bold text-slate-900 tracking-tight">操作日志回执详情 <span class="font-mono text-slate-400 font-normal">#{{ activeLogDetail.id }}</span></h3>
+            </div>
+            <button @click="showLogDetailModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs custom-scrollbar">
+            <div class="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">执行状态:</span>
+                <span :class="getStatusBadgeClass(activeLogDetail.status)" class="px-2 py-0.5 rounded-md text-[11px] font-bold">
+                  {{ activeLogDetail.status }}
+                </span>
+              </div>
+              <div v-if="activeLogDetail.operator_name" class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">执行员工:</span>
+                <span class="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-[11px]">{{ activeLogDetail.operator_name }} (UID: {{ activeLogDetail.user_id || '-' }})</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">记录时间:</span>
+                <span class="font-mono text-slate-700">{{ formatDateTime(activeLogDetail.created_at) }}</span>
+              </div>
+              <div v-if="activeLogDetail.finished_at" class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">完成时间:</span>
+                <span class="font-mono text-slate-700">{{ formatDateTime(activeLogDetail.finished_at) }}</span>
+              </div>
+              <div v-if="activeLogDetail.request_id" class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">Makro RequestId:</span>
+                <span class="font-mono text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">{{ activeLogDetail.request_id }}</span>
+              </div>
+              <div class="pt-2 border-t border-slate-200/60">
+                <span class="text-slate-400 font-semibold block mb-1 uppercase tracking-wider text-[10px]">操作说明</span>
+                <div class="text-slate-800 font-medium whitespace-pre-wrap leading-relaxed">{{ activeLogDetail.message }}</div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="font-bold text-slate-800">回执原始数据 (JSON / 响应内容):</span>
+                <span class="text-[10px] text-slate-400 font-mono">Structured JSON</span>
+              </div>
+              <pre class="bg-slate-950 text-slate-200 border border-slate-800 p-4 rounded-xl text-[11px] font-mono overflow-x-auto max-h-80 select-text leading-relaxed shadow-inner custom-scrollbar">{{ formatJsonLog(activeLogDetail.detail_logs) }}</pre>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end">
+            <button 
+              @click="showLogDetailModal = false" 
+              class="px-4.5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 批量修改商品库存模态框 ================= -->
+      <div 
+        v-if="showBatchInventoryModal" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 p-6 space-y-5">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div class="flex items-center space-x-2">
+              <span class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm">✏️</span>
+              <h3 class="font-bold text-sm text-slate-900 tracking-tight">批量修改在线商品库存</h3>
+            </div>
+            <button @click="showBatchInventoryModal = false" class="text-slate-400 hover:text-slate-700 text-lg cursor-pointer">✕</button>
+          </div>
+
+          <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200/70 text-xs space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-500 font-medium">目标修改范围:</span>
+              <span class="font-bold font-mono text-indigo-600">
+                {{ isAllStoreProductsSelected ? `全店全量商品 (共 ${storeProducts.total} 件)` : `已勾选的 ${selectedStoreProductSkus.length} 件商品` }}
+              </span>
+            </div>
+            <div class="text-[11px] text-slate-400">
+              提交后系统将分批调用 Makro 官方网关 (/napi/sfx/updateListingsInventory) 实时回写并同步本地数据。
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5">新的统一库存数量 (件)</label>
+            <input 
+              type="number" 
+              v-model.number="batchInventoryValue" 
+              min="0" 
+              max="99999"
+              placeholder="例如 999" 
+              class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold font-mono text-slate-900 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+            />
+            <p class="text-[11px] text-slate-400 mt-1">通常设为 999 或实际物理仓库现存量，若填 0 则下架可售库存</p>
+          </div>
+
+          <div class="flex justify-end space-x-2 pt-2">
+            <button 
+              @click="showBatchInventoryModal = false" 
+              :disabled="isSubmittingBatchInventory"
+              class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="submitBatchInventory" 
+              :disabled="isSubmittingBatchInventory"
+              class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
+            >
+              <span v-if="isSubmittingBatchInventory" class="animate-spin text-xs">🔄</span>
+              <span>{{ isSubmittingBatchInventory ? '正在分批回写官方网关...' : '确认批量修改' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 审核记录诊断与详情模态框 ================= -->
+      <div 
+        v-if="showAuditDetailModal && activeAuditDetail" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]">
+          <div class="px-6 py-4 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-2.5">
+              <span class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm">📋</span>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight">Makro 官方审核与诊断详情</h3>
+                <p class="text-[11px] font-mono text-slate-400">SKU: {{ activeAuditDetail.sku_id || '未分配' }} · REQ: {{ activeAuditDetail.request_id }}</p>
+              </div>
+            </div>
+            <button @click="showAuditDetailModal = false" class="text-slate-400 hover:text-slate-700 text-base cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs custom-scrollbar">
+            <!-- 基础概览 -->
+            <div class="bg-slate-50/70 p-4 rounded-xl border border-slate-200/80 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">当前审核状态:</span>
+                <span 
+                  :class="{
+                    'bg-amber-50 text-amber-800 border-amber-300 font-bold': activeAuditDetail.state === 'QC_IN_PROGRESS',
+                    'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold': activeAuditDetail.state === 'QC_PASSED',
+                    'bg-rose-50 text-rose-700 border-rose-300 font-bold': activeAuditDetail.state === 'DRAFT' || activeAuditDetail.state === 'QC_FAILED'
+                  }"
+                  class="px-2.5 py-1 rounded-md text-[11px] border shadow-2xs"
+                >
+                  <template v-if="activeAuditDetail.state === 'QC_IN_PROGRESS'">⏳ 质检审核中 (QC In Progress)</template>
+                  <template v-else-if="activeAuditDetail.state === 'QC_PASSED'">🟢 审核通过 (QC Passed)</template>
+                  <template v-else-if="activeAuditDetail.state === 'QC_FAILED'">❌ 质检驳回 (QC Failed)</template>
+                  <template v-else>🚨 驳回/草稿待修改 (Draft)</template>
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">商品名称:</span>
+                <span class="font-medium text-slate-800 max-w-sm truncate text-right" :title="activeAuditDetail.title">{{ activeAuditDetail.title }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">所属类目 (Vertical):</span>
+                <span class="font-mono text-slate-700">{{ activeAuditDetail.vertical }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500 font-medium">申报价格:</span>
+                <span class="font-mono font-bold text-slate-900">FSP: R{{ activeAuditDetail.fsp || 0 }} / MRP: R{{ activeAuditDetail.mrp || 0 }}</span>
+              </div>
+            </div>
+
+            <!-- 质检审核中流转说明 (若为 QC_IN_PROGRESS) -->
+            <div v-if="activeAuditDetail.state === 'QC_IN_PROGRESS'" class="p-3.5 bg-amber-50/80 border border-amber-200 rounded-xl text-xs space-y-1.5">
+              <div class="font-bold text-amber-900 flex items-center space-x-1.5">
+                <span>⏳</span>
+                <span>官方当前流转阶段：平台质检审核中 (QC In Progress)</span>
+              </div>
+              <p class="text-amber-800 text-[11.5px] leading-relaxed">
+                该商品在 Makro 官方平台基础目录（FSN）已建档成功，目前正处于官方严格质检（Strict QC）与 Listing 刊登流转中。质检通过后官方将自动激活上线为在售商品。
+              </p>
+              <div class="text-[10.5px] font-mono text-amber-700/80 pt-0.5">
+                官方原生流转代码: {{ activeAuditDetail.raw_state || 'FSN_CREATION_COMPLETED' }}
+              </div>
+            </div>
+
+            <!-- 诊断错误解析 (若为 DRAFT 或有错误) -->
+            <div v-if="activeAuditDetail.error_summary && activeAuditDetail.error_summary.length > 0">
+              <div class="font-bold text-rose-800 mb-2 flex items-center space-x-1.5">
+                <span>⚠️ 官方拦截与驳回原因诊断:</span>
+              </div>
+              <div class="space-y-2">
+                <div 
+                  v-for="(err, idx) in activeAuditDetail.error_summary" 
+                  :key="idx"
+                  class="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start space-x-2"
+                >
+                  <span class="shrink-0 mt-0.5">🚨</span>
+                  <div>
+                    <div class="font-bold">{{ err }}</div>
+                    <div class="text-[11px] text-rose-600 mt-0.5">请前往选品箱或官方后台修正该属性后重新提交。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 原始详细错误 JSON (折叠展开) -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="font-bold text-slate-800">官方原始错误详情结构:</span>
+                <span class="text-[10px] text-slate-400 font-mono">errorDetails JSON</span>
+              </div>
+              <pre class="bg-slate-950 text-slate-200 border border-slate-800 p-4 rounded-xl text-[11px] font-mono overflow-x-auto max-h-60 select-text leading-relaxed custom-scrollbar">{{ JSON.stringify(activeAuditDetail.error_details, null, 2) }}</pre>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-between items-center">
+            <button 
+              v-if="activeAuditDetail.local_product || activeAuditDetail.sku_id"
+              @click="jumpToLocalProduct(activeAuditDetail)"
+              class="px-4 py-2 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl transition cursor-pointer"
+            >
+              前往选品箱修改原商品 ➔
+            </button>
+            <div v-else></div>
+            <button 
+              @click="showAuditDetailModal = false" 
+              class="px-4.5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 关联本地选品查看模态框 ================= -->
+      <div 
+        v-if="showAuditLocalProductModal && activeAuditLocalProduct" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 p-6 space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <h3 class="font-bold text-sm text-slate-900 tracking-tight">关联的本地选品箱商品</h3>
+            <button @click="showAuditLocalProductModal = false" class="text-slate-400 hover:text-slate-700 text-lg cursor-pointer">✕</button>
+          </div>
+          <div class="space-y-2 text-xs">
+            <div><span class="text-slate-400">商品 ID:</span> <span class="font-mono font-bold text-slate-800">#{{ activeAuditLocalProduct.id }}</span></div>
+            <div><span class="text-slate-400">商品标题:</span> <div class="font-medium text-slate-900 mt-0.5 leading-snug">{{ activeAuditLocalProduct.title }}</div></div>
+            <div><span class="text-slate-400">本地状态:</span> <span class="px-2 py-0.5 rounded bg-slate-100 font-bold text-slate-700 font-mono">{{ activeAuditLocalProduct.status }}</span></div>
+            <div v-if="activeAuditLocalProduct.original_url"><span class="text-slate-400">Takealot 来源:</span> <a :href="activeAuditLocalProduct.original_url" target="_blank" class="text-indigo-600 hover:underline block truncate">{{ activeAuditLocalProduct.original_url }}</a></div>
+          </div>
+          <div class="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+            <button @click="jumpToLocalProduct(activeAuditLocalProduct)" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition">
+              立即在选品箱中搜索定位 ➔
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 店铺新增 / 编辑模态框 ================= -->
+      <div 
+        v-if="showStoreModal" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-200/60 flex items-center justify-center text-lg shadow-2xs">🏪</div>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight">{{ storeModalTitle }}</h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">配置 Makro 卖家店铺访问凭据与默认品牌</p>
+              </div>
+            </div>
+            <button @click="showStoreModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs custom-scrollbar">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1.5">店铺名称 <span class="text-rose-500">*</span></label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.name" 
+                  placeholder="例: Makro 主力店 / 2号数码店" 
+                  class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition placeholder:text-slate-400"
+                />
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1.5">Seller ID <span class="text-rose-500">*</span></label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.seller_id" 
+                  placeholder="例: cb80491bf0a34dc5" 
+                  class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs font-mono bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1.5">FK-CSRF-Token</label>
+              <input 
+                type="text" 
+                v-model="storeForm.fk_csrf_token" 
+                placeholder="Makro 卖家中心请求头中的 fk-csrf-token (如无特殊校验可留空)" 
+                class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs font-mono bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition placeholder:text-slate-400"
+              />
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="font-semibold text-slate-700">Cookie 凭据</label>
+                <span v-if="storeForm.id" class="text-[11px] text-slate-400">编辑时留空表示保留原 Cookie</span>
+              </div>
+              <textarea 
+                v-model="storeForm.cookie" 
+                rows="4" 
+                placeholder="粘贴该店铺登录后的完整 Cookie 字符串..." 
+                class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs font-mono bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none leading-relaxed transition placeholder:text-slate-400 custom-scrollbar"
+              ></textarea>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1.5">默认刊登品牌</label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.default_brand" 
+                  placeholder="默认 Beishi" 
+                  class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition placeholder:text-slate-400"
+                />
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1.5">备注说明</label>
+                <input 
+                  type="text" 
+                  v-model="storeForm.notes" 
+                  placeholder="如: 负责家居类目" 
+                  class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+
+            <!-- 自动化登录与多邮箱自动收码凭据 -->
+            <div class="p-4 bg-slate-50/80 rounded-xl border border-slate-200/80 space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-1.5">
+                  <span class="text-sm font-bold text-slate-800">🔑 自动登录与多邮箱收码配置 (可选)</span>
+                  <span class="text-[10px] px-1.5 py-0.2 bg-indigo-50 text-indigo-700 border border-indigo-200/60 rounded font-semibold">支持全自动</span>
+                </div>
+                <button 
+                  type="button"
+                  @click="openAutoLoginFromStoreForm"
+                  class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer flex items-center space-x-1"
+                  title="使用上方填写的账号即时登录并回填凭据"
+                >
+                  <span>⚡ 立即登录并提取凭据</span>
+                </button>
+              </div>
+              <p class="text-[11px] text-slate-500">
+                配置 Makro 账号密码与邮箱专用授权码后，系统支持一键全自动登录与提取验证码，自动刷新 Cookie 凭据。
+              </p>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label class="block font-medium text-slate-700 mb-1">Makro 登录邮箱</label>
+                  <input 
+                    type="text" 
+                    v-model="storeForm.login_email" 
+                    @input="onStoreEmailInput"
+                    placeholder="如: xiaoyanjingqishi@gmail.com" 
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block font-medium text-slate-700">
+                      Makro 登录密码 
+                      <span v-if="storeForm.id && storeForm.has_login_password" class="text-[10px] text-emerald-600 font-normal">(已保存，留空保持原密码)</span>
+                    </label>
+                    <button 
+                      type="button" 
+                      @click="showStoreLoginPassword = !showStoreLoginPassword" 
+                      class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {{ showStoreLoginPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                    </button>
+                  </div>
+                  <input 
+                    :type="showStoreLoginPassword ? 'text' : 'password'" 
+                    v-model="storeForm.login_password" 
+                    placeholder="Makro 卖家中心密码" 
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                  />
+                </div>
+              </div>
+
+              <!-- 邮箱服务商快捷选择 -->
+              <div class="pt-2 border-t border-slate-200/60">
+                <div class="flex items-center justify-between mb-1.5">
+                  <label class="text-[11.5px] font-semibold text-slate-700">邮箱自动收信服务商 (IMAP):</label>
+                  <span class="text-[10.5px] text-slate-400">自动读取 6 位 OTP 验证码</span>
+                </div>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <button 
+                    type="button"
+                    v-for="prov in [
+                      { id: '163', name: '网易 163', srv: 'imap.163.com' },
+                      { id: 'gmail', name: 'Google Gmail', srv: 'imap.gmail.com' },
+                      { id: 'qq', name: '腾讯 QQ', srv: 'imap.qq.com' },
+                      { id: 'outlook', name: '微软 Outlook', srv: 'outlook.office365.com' },
+                      { id: 'custom', name: '自定义 IMAP', srv: '' }
+                    ]"
+                    :key="prov.id"
+                    @click="setStoreFormMailProvider(prov)"
+                    :class="storeForm.imap_provider === prov.id ? 'bg-indigo-600 text-white font-semibold shadow-2xs' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'"
+                    class="px-2.5 py-1 rounded-md text-[11px] transition cursor-pointer"
+                  >
+                    {{ prov.name }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block font-medium text-slate-700">
+                      邮箱授权码 / 应用专用密码
+                      <span v-if="storeForm.id && storeForm.has_imap_password" class="text-[10px] text-emerald-600 font-normal">(已保存，留空保持原密码)</span>
+                    </label>
+                    <div class="flex items-center space-x-2">
+                      <button 
+                        type="button" 
+                        @click="showStoreImapPassword = !showStoreImapPassword" 
+                        class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                      >
+                        {{ showStoreImapPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                      </button>
+                      <button 
+                        type="button"
+                        @click="testEmailFromStoreForm"
+                        :disabled="testingEmail || !storeForm.imap_password"
+                        class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer disabled:opacity-40"
+                      >
+                        {{ testingEmail ? '⏳ 连接中...' : '🔍 测试连通' }}
+                      </button>
+                    </div>
+                  </div>
+                  <input 
+                    :type="showStoreImapPassword ? 'text' : 'password'" 
+                    v-model="storeForm.imap_password" 
+                    placeholder="163授权密码 / Gmail应用专用密码 / QQ授权码" 
+                    class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                  />
+                  <p class="text-[10px] text-slate-400 mt-1">
+                    提示: 163/QQ 邮箱请使用邮箱设置中生成的专属授权码，Gmail 请使用 Google 应用专用密码。
+                  </p>
+                </div>
+                <div class="space-y-2">
+                  <div class="grid grid-cols-3 gap-2">
+                    <div class="col-span-2">
+                      <label class="block font-medium text-slate-700 mb-1">IMAP 服务器</label>
+                      <input 
+                        type="text" 
+                        v-model="storeForm.imap_server" 
+                        placeholder="如: imap.163.com" 
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label class="block font-medium text-slate-700 mb-1">端口</label>
+                      <input 
+                        type="number" 
+                        v-model.number="storeForm.imap_port" 
+                        placeholder="993" 
+                        class="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-end pt-1">
+                    <button 
+                      type="button"
+                      @click="testEmailFromStoreForm"
+                      :disabled="testingEmail"
+                      class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg text-[11px] font-medium transition cursor-pointer shadow-2xs disabled:opacity-50"
+                    >
+                      <span>{{ testingEmail ? '⏳ 连接测试中...' : '🔍 测试邮箱收信连通性' }}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center space-x-6 pt-3 border-t border-slate-100">
+              <label class="flex items-center space-x-2.5 cursor-pointer select-none">
+                <input type="checkbox" v-model="storeForm.is_active" class="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer" />
+                <span class="text-xs font-semibold text-slate-700">启用该店铺</span>
+              </label>
+              <label class="flex items-center space-x-2.5 cursor-pointer select-none">
+                <input type="checkbox" v-model="storeForm.is_default" class="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer" />
+                <span class="text-xs font-semibold text-slate-700">设为主力默认店</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showStoreModal = false" 
+              class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="saveStore" 
+              class="px-5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
+            >
+              保存店铺
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Makro 全自动登录与多邮箱验证码同步模态框 ================= -->
+      <div 
+        v-if="showAutoLoginModal" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col max-h-[92vh]">
+          <!-- 弹窗头部 -->
+          <div class="px-6 py-4.5 bg-gradient-to-r from-indigo-50/80 via-slate-50 to-blue-50/80 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xl shadow-md">
+                ⚡
+              </div>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight flex items-center space-x-2">
+                  <span>Makro 卖家中心自动登录</span>
+                  <span v-if="autoLoginStore" class="px-2 py-0.5 rounded text-[10.5px] font-bold bg-indigo-100 text-indigo-700">
+                    {{ autoLoginStore.name }}
+                  </span>
+                </h3>
+                <p class="text-[11px] text-slate-500 mt-0.5">支持 163 / Gmail / QQ / Outlook / 自定义多邮箱自动提取 6 位验证码</p>
+              </div>
+            </div>
+            <button 
+              @click="closeAutoLoginModal" 
+              class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer"
+            >✕</button>
+          </div>
+
+          <!-- 弹窗内容主体 -->
+          <div class="p-6 overflow-y-auto space-y-4 text-xs custom-scrollbar">
+            <!-- 目标店铺选择 (若从顶部全局按钮打开) -->
+            <div v-if="!autoLoginStore && stores.length > 0" class="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100 flex items-center justify-between">
+              <span class="font-semibold text-indigo-950">同步到指定店铺:</span>
+              <select 
+                v-model="autoLoginForm.store_id"
+                @change="onAutoLoginStoreChange"
+                class="px-3 py-1.5 bg-white border border-indigo-200 rounded-lg text-xs font-semibold text-slate-800 outline-none cursor-pointer"
+              >
+                <option :value="null">-- 仅提取凭据 (手动复制) --</option>
+                <option v-for="s in stores" :key="s.id" :value="s.id">
+                  {{ s.name }} ({{ s.seller_id }})
+                </option>
+              </select>
+            </div>
+
+            <!-- 邮箱服务商快捷选择 -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="font-semibold text-slate-800">1. 选择收件邮箱类型 (自动匹配协议):</label>
+                <span class="text-[11px] text-slate-400 font-mono">{{ autoLoginForm.imap_server }}:{{ autoLoginForm.imap_port }}</span>
+              </div>
+              <div class="grid grid-cols-5 gap-1.5">
+                <button 
+                  type="button"
+                  v-for="prov in [
+                    { id: '163', name: '网易 163', srv: 'imap.163.com', port: 993, tip: '需在网易邮箱设置生成客户端授权密码' },
+                    { id: 'gmail', name: 'Google', srv: 'imap.gmail.com', port: 993, tip: '需在 Google 账号开启两步验证并创建应用专用密码' },
+                    { id: 'qq', name: '腾讯 QQ', srv: 'imap.qq.com', port: 993, tip: '需在 QQ 邮箱账户设置生成 16 位授权码' },
+                    { id: 'outlook', name: 'Outlook', srv: 'outlook.office365.com', port: 993, tip: '支持 @outlook.com / @hotmail.com' },
+                    { id: 'custom', name: '自定义', srv: '', port: 993, tip: '自行指定 IMAP 服务器与端口' }
+                  ]"
+                  :key="prov.id"
+                  @click="selectAutoLoginProvider(prov)"
+                  :class="autoLoginForm.imap_provider === prov.id ? 'bg-indigo-600 text-white font-bold ring-2 ring-indigo-500/20 shadow-xs' : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200/80'"
+                  class="py-2 rounded-xl text-center text-xs transition cursor-pointer flex flex-col items-center justify-center"
+                >
+                  <span>{{ prov.name }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Makro 账号与密码输入 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1.5">Makro 登录邮箱 <span class="text-rose-500">*</span></label>
+                <input 
+                  type="email" 
+                  v-model="autoLoginForm.email" 
+                  @input="onAutoLoginEmailInput"
+                  placeholder="例: xiaoyanjingqishi@gmail.com" 
+                  class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1.5">
+                  <label class="block font-semibold text-slate-700">Makro 登录密码 <span class="text-rose-500">*</span></label>
+                  <button 
+                    type="button" 
+                    @click="showAutoLoginPassword = !showAutoLoginPassword" 
+                    class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {{ showAutoLoginPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                  </button>
+                </div>
+                <input 
+                  :type="showAutoLoginPassword ? 'text' : 'password'" 
+                  v-model="autoLoginForm.password" 
+                  placeholder="Makro 卖家中心密码" 
+                  class="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <!-- 邮箱收码凭据 -->
+            <div class="p-3.5 bg-slate-50/90 rounded-xl border border-slate-200/80 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <label class="font-semibold text-slate-800 flex items-center space-x-1">
+                  <span>📨 邮箱应用授权码 (用于自动收码)</span>
+                  <span class="text-amber-500 text-[11px]" title="非邮箱网页登录密码，如未配置也可手动输入验证码">ⓘ</span>
+                </label>
+                <div class="flex items-center space-x-2">
+                  <button 
+                    type="button" 
+                    @click="showAutoLoginImapPassword = !showAutoLoginImapPassword" 
+                    class="text-[11px] text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    {{ showAutoLoginImapPassword ? '🙈 隐藏' : '👁️ 显示' }}
+                  </button>
+                  <button 
+                    type="button"
+                    @click="testEmailConnection(autoLoginForm.email, autoLoginForm.imap_password, autoLoginForm.imap_server, autoLoginForm.imap_port)"
+                    :disabled="testingEmail || !autoLoginForm.imap_password"
+                    class="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer disabled:opacity-40"
+                  >
+                    {{ testingEmail ? '⏳ 连接中...' : '🔍 测试邮箱连通' }}
+                  </button>
+                </div>
+              </div>
+              <input 
+                :type="showAutoLoginImapPassword ? 'text' : 'password'" 
+                v-model="autoLoginForm.imap_password" 
+                placeholder="163授权密码 / Google应用专用密码 / QQ授权码 (选填，留空则手动输验证码)" 
+                class="w-full px-3.5 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+              />
+              <div v-if="autoLoginForm.imap_provider === 'custom'" class="grid grid-cols-3 gap-2 pt-1">
+                <div class="col-span-2">
+                  <input 
+                    type="text" 
+                    v-model="autoLoginForm.imap_server" 
+                    placeholder="IMAP 地址 (如 mail.yourdomain.com)" 
+                    class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <input 
+                    type="number" 
+                    v-model.number="autoLoginForm.imap_port" 
+                    placeholder="993" 
+                    class="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- 执行状态面板 / 实时进度条 -->
+            <div v-if="autoLoginStage === 'running_auto'" class="p-4 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-3 animate-in fade-in duration-150">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-indigo-950 flex items-center space-x-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-indigo-600 animate-ping"></span>
+                  <span>全自动流水线执行中...</span>
+                </span>
+                <span class="text-xs font-mono font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                  倒计时: {{ autoLoginCountdown }}s
+                </span>
+              </div>
+              <div class="space-y-1.5 text-[11.5px] text-slate-600">
+                <div class="flex items-center space-x-2 text-indigo-900 font-medium">
+                  <span class="text-indigo-600">✓</span>
+                  <span>已向 Makro 网关发起登录认证请求</span>
+                </div>
+                <div class="flex items-center space-x-2 text-indigo-900 font-medium">
+                  <span class="animate-spin text-indigo-600 font-bold">⟳</span>
+                  <span>正在连接收件箱轮询读取 Makro 验证码邮件 ({{ autoLoginForm.imap_server }})...</span>
+                </div>
+              </div>
+              <div class="pt-1 flex items-center justify-between">
+                <span class="text-[11px] text-slate-400">若收件缓慢，您可随时切换为手动输入验证码</span>
+                <button 
+                  type="button"
+                  @click="switchToManualOtpMode"
+                  class="text-xs text-indigo-700 hover:text-indigo-900 font-bold underline cursor-pointer"
+                >
+                  转为手动输入验证码 ➔
+                </button>
+              </div>
+            </div>
+
+            <!-- 手动输入验证码面板 -->
+            <div v-if="autoLoginStage === 'waiting_otp'" class="p-4 bg-amber-50/80 border border-amber-200 rounded-xl space-y-3 animate-in fade-in duration-150">
+              <div>
+                <h4 class="font-bold text-amber-950">请输入邮箱收到的 6 位验证码</h4>
+                <p class="text-[11px] text-amber-800 mt-0.5">
+                  Makro 已向您的邮箱发送了登录 OTP，请在下方填入以完成登录并生成凭据。
+                </p>
+              </div>
+              <div class="flex items-center space-x-3">
+                <input 
+                  type="text" 
+                  maxlength="6"
+                  v-model="autoLoginForm.otp" 
+                  ref="otpInput"
+                  placeholder="6 位数字验证码" 
+                  class="w-48 px-4 py-2.5 text-center text-lg font-bold font-mono tracking-widest border-2 border-amber-400 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none"
+                />
+                <button 
+                  type="button"
+                  @click="submitManualOtp"
+                  :disabled="!autoLoginForm.otp || autoLoginForm.otp.length < 6"
+                  class="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-50 active:scale-95"
+                >
+                  确认验证并同步 ➔
+                </button>
+              </div>
+            </div>
+
+            <!-- 成功提示面板 -->
+            <div v-if="autoLoginStage === 'success'" class="p-4 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2 text-emerald-900 animate-in fade-in duration-150">
+              <div class="font-bold flex items-center space-x-1.5 text-emerald-800">
+                <span>🎉</span>
+                <span>{{ autoLoginStatusMsg || '登录成功，凭据已自动同步并持久化！' }}</span>
+              </div>
+              <p class="text-[11px] text-emerald-700 leading-relaxed">
+                Makro 会话有效性与接口连通性已测试通过，相关店铺已就绪，可随时进行在线选品上架与订单同步。
+              </p>
+            </div>
+
+            <!-- 错误提示面板 -->
+            <div v-if="autoLoginErrorMsg" class="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 leading-relaxed">
+              <div class="font-bold flex items-center space-x-1 mb-1">
+                <span>⚠️</span>
+                <span>登录失败或发生异常</span>
+              </div>
+              <div>{{ autoLoginErrorMsg }}</div>
+            </div>
+          </div>
+
+          <!-- 弹窗底部操作按钮 -->
+          <div class="px-6 py-4 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between">
+            <div class="text-[11px] text-slate-400">
+              {{ autoLoginForm.imap_password ? '已配授权码: 支持一键全自动' : '未配授权码: 自动触发发码并手动输入' }}
+            </div>
+            <div class="flex items-center space-x-2">
+              <button 
+                type="button"
+                @click="closeAutoLoginModal" 
+                class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+              >
+                {{ autoLoginStage === 'success' ? '关闭' : '取消' }}
+              </button>
+
+              <button 
+                v-if="autoLoginStage !== 'running_auto' && autoLoginStage !== 'waiting_otp' && autoLoginStage !== 'success'"
+                type="button"
+                @click="startAutoLoginPipeline"
+                :disabled="!autoLoginForm.email || !autoLoginForm.password"
+                class="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition cursor-pointer shadow-xs active:scale-95 disabled:opacity-50 flex items-center space-x-1.5"
+              >
+                <span>{{ autoLoginForm.imap_password ? '⚡ 一键全自动登录 (自动提取码)' : '📩 发送验证码 (手动输入)' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 批量上品店铺选择模态框 ================= -->
+      <div 
+        v-if="showBatchPublishModal" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200/60 flex items-center justify-center text-lg shadow-2xs">🚀</div>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight">批量上品至 Makro 卖家中心</h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">多店铺多线程受控并发上架</p>
+              </div>
+            </div>
+            <button @click="showBatchPublishModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 space-y-4.5 text-xs">
+            <div class="bg-blue-50/80 border border-blue-200/70 p-3.5 rounded-xl flex items-center justify-between">
+              <span class="text-blue-900 font-medium">已勾选待上架商品:</span>
+              <span class="text-blue-950 font-bold font-mono text-sm bg-blue-100/80 px-2 py-0.5 rounded">{{ selectedIds.length }} 件</span>
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-800 mb-2">选择上架目标店铺:</label>
+              <div class="space-y-2.5">
+                <label 
+                  :class="batchPublishTarget === 'all' ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20' : 'border-slate-200 bg-white hover:bg-slate-50'"
+                  class="flex items-start space-x-3 p-3.5 rounded-xl border cursor-pointer transition"
+                >
+                  <input type="radio" value="all" v-model="batchPublishTarget" class="mt-1 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                  <div>
+                    <div class="font-bold text-slate-900 flex items-center space-x-1.5">
+                      <span>🌐 全部已启用店铺</span>
+                      <span class="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md font-bold">共 {{ activeStores.length }} 家</span>
+                    </div>
+                    <div class="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                      系统将同时为每家已启用的店铺创建独立刊登，并自动替换为各店铺配置的刊登品牌。
+                    </div>
+                  </div>
+                </label>
+
+                <label 
+                  :class="batchPublishTarget === 'single' ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20' : 'border-slate-200 bg-white hover:bg-slate-50'"
+                  class="flex items-start space-x-3 p-3.5 rounded-xl border cursor-pointer transition"
+                >
+                  <input type="radio" value="single" v-model="batchPublishTarget" class="mt-1 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                  <div class="flex-1">
+                    <div class="font-bold text-slate-900">🏪 指定单一店铺</div>
+                    <div class="text-[11px] text-slate-500 mt-1 mb-2 leading-relaxed">
+                      仅将勾选商品上传至选定的单个 Makro 店铺（自动替换为该店铺的刊登品牌）。
+                    </div>
+                    <select 
+                      v-if="batchPublishTarget === 'single'"
+                      v-model="batchPublishTargetStoreId" 
+                      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 bg-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition"
+                    >
+                      <option v-for="s in activeStores" :key="s.id" :value="s.id">
+                        {{ s.name }} (刊登品牌: {{ s.default_brand || 'Beishi' }} · {{ s.seller_id }}) {{ s.is_default ? '⭐ 默认' : '' }}
+                      </option>
+                    </select>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <!-- 并发与调度策略提示 -->
+            <div class="p-3 bg-indigo-50/70 border border-indigo-200/70 rounded-xl flex items-center justify-between text-xs text-indigo-950">
+              <div class="flex items-center space-x-2">
+                <span>⚡</span>
+                <span>当前调度模式: <strong class="text-indigo-900 font-bold font-mono">{{ settings.publish_concurrency || 2 }} 线程受控并发</strong> (多店铺交替并行)</span>
+              </div>
+              <button 
+                @click="showBatchPublishModal = false; currentTab = 'settings'" 
+                class="text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold cursor-pointer shrink-0"
+              >
+                在设置中调整 &rarr;
+              </button>
+            </div>
+
+            <div class="pt-2 border-t border-slate-100">
+              <label class="flex items-center space-x-2 cursor-pointer select-none">
+                <input type="checkbox" v-model="batchPublishForce" class="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500 cursor-pointer" />
+                <span class="text-xs text-amber-900 font-medium">跳过违禁品二次确认强行上架 (仅限自审安全商品)</span>
+              </label>
+              <div v-if="batchPublishForce" class="mt-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start space-x-2 leading-relaxed animate-in fade-in duration-150">
+                <span class="text-xs shrink-0">⚠️</span>
+                <span><strong>已开启强制上架模式</strong>：命中液体/蓝牙/违禁特征的商品将跳过安全拦截强行刊登，请确保商品确实合规以避免店铺风险。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end space-x-2">
+            <button 
+              @click="showBatchPublishModal = false" 
+              class="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              取消
+            </button>
+            <button 
+              @click="executeBatchPublish" 
+              class="px-5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition cursor-pointer shadow-xs flex items-center space-x-1.5 active:scale-95"
+            >
+              <span>🚀 立即启动批量上品</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 单品上品目标店铺选择模态框 ================= -->
+      <div 
+        v-if="showSinglePublishModal && singlePublishItem" 
+        class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+      >
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200/90 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+          <div class="px-6 py-4.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200/60 flex items-center justify-center text-lg shadow-2xs">🚀</div>
+              <div>
+                <h3 class="text-sm font-bold text-slate-900 tracking-tight">商品上品发布</h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">选择上架目标店铺与状态追踪</p>
+              </div>
+            </div>
+            <button @click="showSinglePublishModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors text-base cursor-pointer">✕</button>
+          </div>
+
+          <div class="p-6 overflow-y-auto space-y-4 text-xs custom-scrollbar">
+            <!-- 商品概览卡片 -->
+            <div class="flex items-start space-x-3 p-3.5 bg-slate-50/80 rounded-xl border border-slate-200/80">
+              <img 
+                :src="getItemImage(singlePublishItem)" 
+                @error="handleImageError($event, getItemImage(singlePublishItem))"
+                @click="openImagePreview(getItemImage(singlePublishItem))"
+                class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0 bg-white cursor-pointer hover:opacity-85 transition shadow-2xs" 
+                title="点击放大预览主图"
+              />
+              <div class="flex-1 min-w-0">
+                <div class="font-bold text-slate-800 truncate leading-snug">{{ singlePublishItem.makro_title || singlePublishItem.takealot_title }}</div>
+                <div class="text-[11px] text-slate-500 font-mono mt-1 flex items-center space-x-2 flex-wrap">
+                  <span>TSIN: {{ singlePublishItem.takealot_tsin_id || singlePublishItem.takealot_tsin }}</span>
+                  <span>·</span>
+                  <span class="font-bold text-slate-800">售价: R{{ singlePublishItem.makro_selling_price || 0 }}</span>
+                  <span v-if="getDisplayMakroSku(singlePublishItem)">·</span>
+                  <span v-if="getDisplayMakroSku(singlePublishItem)" class="text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200/80 font-bold">Makro SKU: {{ getDisplayMakroSku(singlePublishItem) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 违禁品提示警告 -->
+            <div v-if="singlePublishItem.compliance_status === 'PROHIBITED'" class="bg-rose-50/80 border border-rose-200 p-3.5 rounded-xl space-y-1.5">
+              <div class="font-bold text-rose-800 flex items-center space-x-1.5">
+                <span>🚨</span>
+                <span>违禁品高风险拦截警告</span>
+              </div>
+              <p class="text-[11px] text-rose-700 leading-relaxed">
+                系统检测到包含敏感/违禁特征（{{ getProhibitedSummary(singlePublishItem) }}）。如需强行上传，请勾选下方强制上架开关。
+              </p>
+              <label class="flex items-center space-x-2 pt-1 cursor-pointer">
+                <input type="checkbox" v-model="singlePublishForce" class="w-4 h-4 text-rose-600 rounded border-rose-300 focus:ring-rose-500 cursor-pointer" />
+                <span class="text-[11px] font-bold text-rose-800">已知晓风险，强制提交上架</span>
+              </label>
+            </div>
+
+            <!-- 全部店铺一键发布 -->
+            <div class="pt-1">
+              <button 
+                @click="doPublishItem(singlePublishItem, null, true, singlePublishForce)"
+                :disabled="singlePublishItem.compliance_status === 'PROHIBITED' && !singlePublishForce"
+                class="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold shadow-xs cursor-pointer flex items-center justify-center space-x-2 transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span>🌐 一键发布至全部已启用店铺 (共 {{ activeStores.length }} 家)</span>
+              </button>
+            </div>
+
+            <div class="relative flex py-1.5 items-center">
+              <div class="flex-grow border-t border-slate-200"></div>
+              <span class="flex-shrink mx-3 text-[11px] text-slate-400 font-medium">或单独发布至特定店铺</span>
+              <div class="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <!-- 各店铺列表与已上架状态 -->
+            <div class="space-y-2.5">
+              <div 
+                v-for="s in activeStores" 
+                :key="s.id"
+                class="p-3.5 rounded-xl border border-slate-200/80 bg-white hover:border-slate-300 transition flex items-center justify-between shadow-2xs"
+              >
+                <div>
+                  <div class="font-bold text-slate-800 flex items-center space-x-1.5">
+                    <span>🏪 {{ s.name }}</span>
+                    <span v-if="s.is_default" class="text-[10px] px-1.5 py-0.2 bg-blue-100 text-blue-700 rounded font-bold">默认</span>
+                    <span class="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 border border-indigo-200/70 rounded-md font-semibold">
+                      刊登品牌: {{ s.default_brand || 'Beishi' }}
+                    </span>
+                  </div>
+                  <div class="text-[11px] text-slate-400 font-mono mt-0.5">
+                    Seller ID: {{ s.seller_id }}
+                  </div>
+                  <!-- 该店铺上的发布状态 -->
+                  <div class="mt-1.5 flex items-center space-x-1.5">
+                    <span class="text-[11px] text-slate-500">店铺刊登状态:</span>
+                    <span 
+                      v-if="getListingForStore(singlePublishItem, s.id)"
+                      :class="getStatusBadgeClass(getListingForStore(singlePublishItem, s.id).status)"
+                      class="px-2 py-0.5 text-[10px] font-bold rounded-md"
+                    >
+                      {{ formatStatus(getListingForStore(singlePublishItem, s.id).status) }}
+                      <span v-if="getListingForStore(singlePublishItem, s.id).makro_sku_id" class="font-mono text-[9px] opacity-90 ml-1">
+                        ({{ getListingForStore(singlePublishItem, s.id).makro_sku_id }})
+                      </span>
+                      <span v-if="getListingForStore(singlePublishItem, s.id).makro_request_id" class="font-mono text-[9px] opacity-80 ml-0.5">
+                        (#{{ getListingForStore(singlePublishItem, s.id).makro_request_id }})
+                      </span>
+                    </span>
+                    <span v-else class="text-[10.5px] text-slate-400">
+                      ⚪ 未在此店刊登
+                    </span>
+                  </div>
+                </div>
+
+                <button 
+                  @click="doPublishItem(singlePublishItem, s.id, false, singlePublishForce)"
+                  :disabled="singlePublishItem.compliance_status === 'PROHIBITED' && !singlePublishForce"
+                  class="px-3.5 py-2 bg-slate-100 hover:bg-slate-900 hover:text-white text-slate-700 rounded-xl font-bold text-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0 active:scale-95 shadow-2xs"
+                >
+                  仅上架此店
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 flex justify-end">
+            <button 
+              @click="showSinglePublishModal = false" 
+              class="px-4.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- ================= 登录对话框 (未登录或主动切换登录触发) ================= -->
+      <div v-if="showLoginModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-[9999] animate-in fade-in duration-200">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 p-7 ring-1 ring-black/5 animate-in zoom-in-95 duration-150">
+          <div class="text-center mb-6">
+            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-center font-black text-xl mx-auto shadow-md mb-3">
+              M
+            </div>
+            <h2 class="text-lg font-bold text-slate-900 tracking-tight">Makro 智能搬品系统</h2>
+            <p class="text-xs text-slate-500 mt-1">请输入账号与密码以登录系统并管理对应店铺</p>
+          </div>
+
+          <form @submit.prevent="doLogin" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">用户名</label>
+              <input 
+                type="text" 
+                v-model="loginForm.username" 
+                placeholder="例如: admin 或 员工账号" 
+                class="w-full text-xs px-3.5 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                required
+                autofocus
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">登录密码</label>
+              <input 
+                type="password" 
+                v-model="loginForm.password" 
+                placeholder="请输入密码" 
+                class="w-full text-xs px-3.5 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                required
+              />
+            </div>
+
+            <div v-if="loginForm.error" class="p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs flex items-center space-x-1.5">
+              <span>⚠️</span>
+              <span>{{ loginForm.error }}</span>
+            </div>
+
+            <button 
+              type="submit" 
+              :disabled="loginForm.loading"
+              class="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs shadow-xs transition active:scale-95 cursor-pointer disabled:opacity-50"
+            >
+              {{ loginForm.loading ? '正在验证并登录...' : '立即登录' }}
+            </button>
+          </form>
+
+          <div class="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+            <span>初始管理员: <strong class="font-mono text-slate-600">admin / admin123</strong></span>
+            <button v-if="currentUser" @click="showLoginModal = false" class="text-slate-500 hover:text-slate-800 underline cursor-pointer">关闭</button>
+          </div>
+
+          <!-- 登录弹窗底部的插件下载快捷引导 -->
+          <div class="mt-3 pt-2.5 text-center border-t border-dashed border-slate-200/80">
+            <button 
+              type="button"
+              @click="showExtensionModal = true" 
+              class="inline-flex items-center space-x-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition cursor-pointer hover:underline"
+            >
+              <span>🧩</span>
+              <span>下载 Chrome 搬品采集插件 & 安装指引</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 浏览器插件下载与安装指引对话框 ================= -->
+      <div v-if="showExtensionModal" class="fixed inset-0 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 z-[99999] animate-in fade-in duration-200">
+        <div class="bg-white rounded-3xl max-w-xl w-full shadow-2xl overflow-hidden border border-slate-200 ring-1 ring-black/5 animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+          
+          <!-- 弹窗顶栏 -->
+          <div class="px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between shrink-0">
+            <div class="flex items-center space-x-2.5">
+              <div class="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-base font-bold">
+                🧩
+              </div>
+              <div>
+                <h3 class="text-sm font-bold text-white tracking-tight">Chrome 搬品采集助手 · 下载与安装</h3>
+                <p class="text-[11px] text-slate-300">Takealot 原生多变体抓取 · Makro 店铺凭据一键同步</p>
+              </div>
+            </div>
+            <button 
+              @click="showExtensionModal = false" 
+              class="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center text-xs transition cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+
+          <!-- 弹窗主体 (支持滚动) -->
+          <div class="p-6 overflow-y-auto space-y-5 custom-scrollbar text-slate-700">
+            
+            <!-- 核心下载卡片 -->
+            <div class="bg-gradient-to-br from-indigo-50/90 via-purple-50/50 to-white rounded-2xl p-5 border border-indigo-100/80 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div class="space-y-1 text-center sm:text-left">
+                <div class="flex items-center justify-center sm:justify-start space-x-2">
+                  <span class="text-sm font-bold text-slate-900">Makro 搬品插件安装包</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 font-mono">v1.1.3</span>
+                </div>
+                <p class="text-xs text-slate-500">已预设当前云端服务接口，解压安装即可直接连通</p>
+              </div>
+
+              <a 
+                href="/api/download/extension" 
+                download="makro-extension-v1.1.3.zip"
+                class="inline-flex items-center justify-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer shrink-0"
+              >
+                <span>📥</span>
+                <span>立即下载 (.ZIP)</span>
+              </a>
+            </div>
+
+            <!-- 安装四步法 -->
+            <div class="space-y-3">
+              <h4 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center space-x-1.5">
+                <span class="text-indigo-600">📖</span>
+                <span>四步极简安装指引</span>
+              </h4>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                
+                <!-- 步骤 1 -->
+                <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition space-y-1.5">
+                  <div class="flex items-center space-x-2">
+                    <span class="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">1</span>
+                    <span class="font-bold text-slate-900">解压安装包</span>
+                  </div>
+                  <p class="text-slate-500 text-[11.5px] leading-relaxed">
+                    下载完成后，右键将压缩包解压到一个文件夹（如 <strong class="text-slate-800 font-mono">makro-extension-v1.1.3</strong>）。
+                  </p>
+                </div>
+
+                <!-- 步骤 2 -->
+                <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition space-y-1.5">
+                  <div class="flex items-center space-x-2">
+                    <span class="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">2</span>
+                    <span class="font-bold text-slate-900">打开扩展管理页</span>
+                  </div>
+                  <p class="text-slate-500 text-[11.5px] leading-relaxed">
+                    在 Chrome 浏览器地址栏输入 <strong class="text-indigo-700 font-mono bg-indigo-50 px-1 rounded select-all">chrome://extensions</strong> 并回车直达。
+                  </p>
+                </div>
+
+                <!-- 步骤 3 -->
+                <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition space-y-1.5">
+                  <div class="flex items-center space-x-2">
+                    <span class="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">3</span>
+                    <span class="font-bold text-slate-900">开启【开发者模式】</span>
+                  </div>
+                  <p class="text-slate-500 text-[11.5px] leading-relaxed">
+                    在扩展管理页面的右上角，找到并打开 <strong>【开发者模式 (Developer mode)】</strong> 开关。
+                  </p>
+                </div>
+
+                <!-- 步骤 4 -->
+                <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition space-y-1.5">
+                  <div class="flex items-center space-x-2">
+                    <span class="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">4</span>
+                    <span class="font-bold text-slate-900">加载已解压程序</span>
+                  </div>
+                  <p class="text-slate-500 text-[11.5px] leading-relaxed">
+                    点击左上角 <strong>【加载已解压的扩展程序】</strong>，直接选中包含 <strong class="text-slate-800 font-mono">manifest.json</strong> 的文件夹即可！
+                  </p>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- 使用场景亮点提示 -->
+            <div class="p-3.5 bg-emerald-50/70 border border-emerald-200/80 rounded-xl flex items-start space-x-3 text-[11.5px] text-emerald-800">
+              <span class="text-base shrink-0 mt-0.5">💡</span>
+              <div class="space-y-1">
+                <span class="font-bold">开箱即用小贴士：</span>
+                <p class="leading-relaxed text-emerald-700">
+                  安装成功后点击浏览器工具栏中的拼图图标固定插件。在 Takealot 商品页一键抓取全部变体；在 Makro 买家端商品页一键采集同款进入跟品池；在 Makro 卖家后台登录后点击同步即可将店铺凭据一键接入中台！
+                </p>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 弹窗底栏 -->
+          <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 shrink-0">
+            <span>支持环境：Chrome / Edge / 360 / 搜狗等 Chromium 内核浏览器</span>
+            <button 
+              @click="showExtensionModal = false" 
+              class="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg font-medium transition cursor-pointer"
+            >
+              知道了，关闭
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ================= 修改个人密码对话框 ================= -->
+      <div v-if="showChangePwdModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <div class="bg-white rounded-2xl max-w-sm w-full shadow-2xl overflow-hidden border border-slate-200 p-6 animate-in zoom-in-95 duration-150">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
+              <span>🔑</span>
+              <span>修改个人登录密码</span>
+            </h3>
+            <button @click="showChangePwdModal = false" class="text-slate-400 hover:text-slate-700 cursor-pointer">✕</button>
+          </div>
+
+          <form @submit.prevent="doChangePassword" class="space-y-3.5">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">原密码</label>
+              <input 
+                type="password" 
+                v-model="changePwdForm.old_password" 
+                class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                required
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">新密码 (至少6位)</label>
+              <input 
+                type="password" 
+                v-model="changePwdForm.new_password" 
+                class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                required
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">确认新密码</label>
+              <input 
+                type="password" 
+                v-model="changePwdForm.confirm_password" 
+                class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                required
+              />
+            </div>
+
+            <div v-if="changePwdForm.error" class="p-2 bg-rose-50 border border-rose-200 rounded text-rose-700 text-xs">
+              ⚠️ {{ changePwdForm.error }}
+            </div>
+
+            <div class="pt-2 flex items-center justify-end space-x-2">
+              <button 
+                type="button" 
+                @click="showChangePwdModal = false" 
+                class="px-3.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer"
+              >
+                取消
+              </button>
+              <button 
+                type="submit" 
+                :disabled="changePwdForm.loading"
+                class="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                {{ changePwdForm.loading ? '正在提交...' : '确认修改' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ================= 新增/编辑员工账号对话框 ================= -->
+      <div v-if="showUserModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 p-6 animate-in zoom-in-95 duration-150">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
+              <span>👤</span>
+              <span>{{ userModalTitle }}</span>
+            </h3>
+            <button @click="showUserModal = false" class="text-slate-400 hover:text-slate-700 cursor-pointer">✕</button>
+          </div>
+
+          <form @submit.prevent="saveUser" class="space-y-3.5">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">登录用户名</label>
+                <input 
+                  type="text" 
+                  v-model="userForm.username" 
+                  :disabled="!!userForm.id"
+                  placeholder="员工英文/拼音账号" 
+                  class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none disabled:bg-slate-100 font-mono"
+                  required
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">员工姓名 / 昵称</label>
+                <input 
+                  type="text" 
+                  v-model="userForm.nickname" 
+                  placeholder="例如: 张三" 
+                  class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">
+                  {{ userForm.id ? '重置密码 (留空则不修改)' : '登录密码 (至少6位)' }}
+                </label>
+                <input 
+                  type="password" 
+                  v-model="userForm.password" 
+                  :required="!userForm.id"
+                  placeholder="设置员工登录密码" 
+                  class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">系统角色权限</label>
+                <select 
+                  v-model="userForm.role" 
+                  class="w-full text-xs px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none bg-white font-medium"
+                >
+                  <option value="OPERATOR">运营员工 (OPERATOR - 选品独立隔离)</option>
+                  <option value="ADMIN">超级管理员 (ADMIN - 拥有全盘权限)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- 店铺授权勾选 -->
+            <div class="pt-2">
+              <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                <span>🏪 授权操作店铺 (多选)</span>
+                <span class="text-[10px] text-slate-400">只有被授权的店铺，员工登录后才能切换查看</span>
+              </label>
+              <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 max-h-40 overflow-y-auto custom-scrollbar space-y-2">
+                <div v-if="stores.length === 0" class="text-xs text-slate-400 text-center py-2">暂无店铺，请先在【多店铺管理】中添加店铺</div>
+                <label 
+                  v-for="s in stores" 
+                  :key="s.id" 
+                  class="flex items-center space-x-2 text-xs font-medium text-slate-700 cursor-pointer hover:text-slate-900"
+                >
+                  <input 
+                    type="checkbox" 
+                    :value="s.id" 
+                    v-model="userForm.store_ids" 
+                    class="rounded text-indigo-600 focus:ring-indigo-500" 
+                  />
+                  <span>{{ s.name }}</span>
+                  <span class="text-[10.5px] text-slate-400 font-mono">({{ s.seller_id }})</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <button 
+                type="button" 
+                @click="showUserModal = false" 
+                class="px-3.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer"
+              >
+                取消
+              </button>
+              <button 
+                type="submit" 
+                :disabled="isSavingUser"
+                class="px-5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                {{ isSavingUser ? '正在保存...' : '确认保存' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ================= 店铺授权勾选矩阵对话框 ================= -->
+      <div v-if="showAuthStoresModal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 p-6 animate-in zoom-in-95 duration-150">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
+                <span>🏪</span>
+                <span>为员工分配授权店铺</span>
+              </h3>
+              <p class="text-[11px] text-slate-500 mt-0.5" v-if="targetAuthUser">
+                当前员工: <strong class="text-indigo-600 font-mono">{{ targetAuthUser.username }}</strong> ({{ targetAuthUser.nickname }})
+              </p>
+            </div>
+            <button @click="showAuthStoresModal = false" class="text-slate-400 hover:text-slate-700 cursor-pointer">✕</button>
+          </div>
+
+          <div class="space-y-3">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-500">勾选允许该员工操作的 Makro 店铺:</span>
+              <div class="space-x-2">
+                <button @click="targetAuthStoreIds = stores.map(s => s.id)" class="text-indigo-600 hover:underline text-[11px]">全选</button>
+                <button @click="targetAuthStoreIds = []" class="text-slate-400 hover:underline text-[11px]">清空</button>
+              </div>
+            </div>
+
+            <div class="p-3 bg-slate-50/70 rounded-xl border border-slate-200/80 max-h-56 overflow-y-auto custom-scrollbar space-y-2">
+              <label 
+                v-for="s in stores" 
+                :key="s.id" 
+                class="flex items-center space-x-2 text-xs font-medium text-slate-700 cursor-pointer hover:bg-white p-1.5 rounded-lg transition"
+              >
+                <input 
+                  type="checkbox" 
+                  :value="s.id" 
+                  v-model="targetAuthStoreIds" 
+                  class="rounded text-indigo-600 focus:ring-indigo-500" 
+                />
+                <span class="font-semibold text-slate-800">{{ s.name }}</span>
+                <span class="text-[10px] text-slate-400 font-mono">Seller ID: {{ s.seller_id }}</span>
+              </label>
+            </div>
+
+            <div class="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <button 
+                @click="showAuthStoresModal = false" 
+                class="px-3.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg font-medium cursor-pointer"
+              >
+                取消
+              </button>
+              <button 
+                @click="saveUserStores" 
+                class="px-5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer active:scale-95"
+              >
+                保存授权
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>

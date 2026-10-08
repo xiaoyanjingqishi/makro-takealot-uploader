@@ -6,7 +6,9 @@ from pathlib import Path
 
 import app.utils.asyncio_patch  # Windows asyncio 补丁
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, Response, FileResponse
@@ -47,8 +49,16 @@ app.add_middleware(
 # 挂载核心 API 路由
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-TEMPLATE_PATH = Path(__file__).resolve().parent / "app" / "templates" / "index.html"
-_template_cache = {"content": "", "mtime": 0}
+# 挂载静态文件目录 (CSS / JS / 扩展包)
+STATIC_DIR = Path(__file__).resolve().parent / "app" / "static"
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "app" / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# 避免与 Vue 3 的双大括号 {{ }} 插值冲突，将 Jinja2 变量定界符定制为 {[ 和 ]}
+templates.env.variable_start_string = "{[["
+templates.env.variable_end_string = "]]}"
 CALCULATOR_PATH = Path(__file__).resolve().parent.parent / "tools" / "makro_pricing_calculator.html"
 
 
@@ -101,27 +111,14 @@ def download_extension():
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
-def dashboard():
-    html_content = ""
-    if TEMPLATE_PATH.exists():
-        try:
-            cur_mtime = TEMPLATE_PATH.stat().st_mtime
-            if cur_mtime != _template_cache["mtime"] or not _template_cache["content"]:
-                with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-                    _template_cache["content"] = f.read()
-                _template_cache["mtime"] = cur_mtime
-            html_content = _template_cache["content"]
-        except Exception:
-            with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-                html_content = f.read()
-    else:
-        html_content = "<h1>Makro-Takealot System Backend Online</h1><p><a href='/api/docs'>API Docs</a></p>"
-
-    resp = HTMLResponse(content=html_content)
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    resp.headers["Pragma"] = "no-cache"
-    resp.headers["Expires"] = "0"
-    return resp
+def dashboard(request: Request):
+    if (TEMPLATES_DIR / "index.html").exists():
+        resp = templates.TemplateResponse("index.html", {"request": request})
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
+    return HTMLResponse("<h1>Makro-Takealot System Backend Online</h1><p><a href='/api/docs'>API Docs</a></p>")
 
 
 @app.get("/calculator", response_class=HTMLResponse, summary="打开 Makro 选品与全链路精准定价测算工具")

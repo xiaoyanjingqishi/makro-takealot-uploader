@@ -1,0 +1,209 @@
+        <!-- 1. 左侧现代化深色沉浸式侧边栏 (支持 240px 展开 / 68px 收起) -->
+        <aside 
+          :class="sidebarCollapsed ? 'w-[68px]' : 'w-60'" 
+          class="bg-slate-900 text-slate-300 flex flex-col shrink-0 border-r border-slate-800 transition-all duration-200 ease-in-out select-none relative z-30 shadow-md"
+        >
+          <!-- 侧边栏品牌 Logo 顶栏 -->
+          <div 
+            class="h-12 border-b border-slate-800/80 shrink-0 flex items-center transition-all"
+            :class="sidebarCollapsed ? 'justify-center px-1' : 'justify-between px-3.5'"
+          >
+            <div v-if="sidebarCollapsed" class="flex items-center justify-center">
+              <button 
+                @click="toggleSidebar" 
+                class="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-700 border border-indigo-400/30 flex items-center justify-center text-white font-black text-base shadow-sm hover:scale-105 transition cursor-pointer group relative"
+                title="点击展开侧边菜单栏"
+              >
+                <span>M</span>
+                <span class="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-slate-800 border border-slate-700 rounded-full text-[8px] flex items-center justify-center text-slate-300">▶</span>
+              </button>
+            </div>
+            <template v-else>
+              <div class="flex items-center space-x-2.5 overflow-hidden">
+                <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-indigo-700 border border-indigo-400/30 flex items-center justify-center text-white font-black text-base shadow-sm shrink-0">
+                  <span>M</span>
+                </div>
+                <div class="overflow-hidden whitespace-nowrap transition-opacity duration-150">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="font-bold text-white text-xs tracking-tight">Makro 搬品</span>
+                    <span class="px-1 py-0.2 rounded text-[9px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">v2.1.3</span>
+                  </div>
+                  <p class="text-[10px] text-slate-400 tracking-tight truncate">双 AI 智能刊登系统</p>
+                </div>
+              </div>
+              <!-- 收起侧边栏按钮 -->
+              <button 
+                @click="toggleSidebar" 
+                class="w-6 h-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800/80 transition cursor-pointer text-xs shrink-0"
+                title="收起侧边菜单栏"
+              >
+                <span>◀</span>
+              </button>
+            </template>
+          </div>
+
+          <!-- 导航菜单区域 (分模块分组) -->
+          <nav class="flex-1 overflow-y-auto px-2 py-3 space-y-4 custom-scrollbar">
+            
+            <!-- 分组一：业务作业 (高频核心) -->
+            <div>
+              <div v-show="!sidebarCollapsed" class="px-2.5 mb-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                业务作业
+              </div>
+              <div class="space-y-0.5">
+                <button 
+                  v-for="tab in businessTabs" 
+                  :key="tab.id"
+                  :data-tab="tab.id"
+                  @click="switchTab(tab.id)"
+                  :class="[
+                    'w-full flex items-center px-2.5 py-2 rounded-xl text-xs font-medium transition-all duration-150 cursor-pointer select-none group relative',
+                    sidebarCollapsed ? 'justify-center' : 'justify-between',
+                    currentTab === tab.id 
+                      ? 'bg-indigo-600 text-white font-semibold shadow-xs' 
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+                  ]"
+                  :title="sidebarCollapsed ? tab.name : ''"
+                >
+                  <div class="flex items-center space-x-2.5 overflow-hidden">
+                    <span class="text-sm shrink-0 text-center w-5">{{ tab.icon }}</span>
+                    <span v-show="!sidebarCollapsed" class="whitespace-nowrap">{{ tab.name }}</span>
+                  </div>
+                  <!-- 动态徽标 (如待清洗数) -->
+                  <span 
+                    v-if="!sidebarCollapsed && tab.badge" 
+                    :class="[
+                      'px-1.5 py-0.2 rounded-full text-[10px] font-bold tabular-nums',
+                      currentTab === tab.id 
+                        ? 'bg-white/25 text-white' 
+                        : (tab.badgeType === 'warning' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-slate-800 text-slate-400')
+                    ]"
+                  >
+                    {{ tab.badge }}
+                  </span>
+                  <!-- 折叠时的红点/小标 -->
+                  <span 
+                    v-if="sidebarCollapsed && tab.badge" 
+                    class="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-400 ring-2 ring-slate-900"
+                  ></span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 分组二：系统与店铺 (配置与运维) -->
+            <div>
+              <div v-show="!sidebarCollapsed" class="px-2.5 mb-1 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                系统与店铺
+              </div>
+              <div class="space-y-0.5">
+                <button 
+                  v-for="tab in systemTabs" 
+                  :key="tab.id"
+                  :data-tab="tab.id"
+                  @click="switchTab(tab.id)"
+                  :class="[
+                    'w-full flex items-center px-2.5 py-2 rounded-xl text-xs font-medium transition-all duration-150 cursor-pointer select-none group relative',
+                    sidebarCollapsed ? 'justify-center' : 'justify-between',
+                    currentTab === tab.id 
+                      ? 'bg-indigo-600 text-white font-semibold shadow-xs' 
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+                  ]"
+                  :title="sidebarCollapsed ? tab.name : ''"
+                >
+                  <div class="flex items-center space-x-2.5 overflow-hidden">
+                    <span class="text-sm shrink-0 text-center w-5">{{ tab.icon }}</span>
+                    <span v-show="!sidebarCollapsed" class="whitespace-nowrap">{{ tab.name }}</span>
+                  </div>
+                  <!-- 动态任务运行指示脉冲 -->
+                  <span 
+                    v-if="!sidebarCollapsed && tab.hasActiveTask" 
+                    class="flex h-2 w-2 relative"
+                  >
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <!-- 文字徽章 -->
+                  <span 
+                    v-else-if="!sidebarCollapsed && tab.badge" 
+                    :class="[
+                      'px-1.5 py-0.2 rounded text-[9.5px] font-bold',
+                      tab.badgeType === 'admin' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'text-slate-400'
+                    ]"
+                  >
+                    {{ tab.badge }}
+                  </span>
+                  <!-- 折叠态下的任务绿点 -->
+                  <span 
+                    v-if="sidebarCollapsed && tab.hasActiveTask" 
+                    class="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-slate-900 animate-pulse"
+                  ></span>
+                </button>
+              </div>
+            </div>
+
+          </nav>
+
+          <!-- 侧边栏底部：当前用户、店铺连接与退出 -->
+          <div 
+            class="border-t border-slate-800/90 shrink-0 bg-slate-950/50 transition-all"
+            :class="sidebarCollapsed ? 'p-1.5' : 'p-2.5'"
+          >
+            <div class="relative">
+              <div 
+                @click="showUserMenu = !showUserMenu" 
+                class="flex items-center rounded-xl p-1.5 hover:bg-slate-800/80 cursor-pointer transition select-none group"
+                :class="sidebarCollapsed ? 'justify-center' : 'justify-between'"
+                :title="currentUser ? (currentUser.nickname || currentUser.username) : '未登录'"
+              >
+                <div class="flex items-center space-x-2 overflow-hidden">
+                  <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center font-bold text-xs shadow-xs shrink-0">
+                    {{ (currentUser.nickname || currentUser.username).slice(0, 1).toUpperCase() }}
+                  </div>
+                  <div v-show="!sidebarCollapsed" class="overflow-hidden whitespace-nowrap">
+                    <div class="flex items-center space-x-1.5">
+                      <span class="text-xs font-semibold text-slate-200 truncate max-w-[85px]">{{ currentUser.nickname || currentUser.username }}</span>
+                      <span 
+                        class="px-1 py-0.2 rounded text-[8.5px] font-bold"
+                        :class="currentUser.role === 'ADMIN' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'"
+                      >
+                        {{ currentUser.role === 'ADMIN' ? '管理员' : '员工' }}
+                      </span>
+                    </div>
+                    <div class="text-[10px] text-slate-400 flex items-center space-x-1 mt-0.5">
+                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                      <span>Makro 在线</span>
+                    </div>
+                  </div>
+                </div>
+                <span v-show="!sidebarCollapsed" class="text-[10px] text-slate-500 group-hover:text-slate-300">▼</span>
+              </div>
+
+              <!-- 用户下拉控制菜单 (向上弹出) -->
+              <div 
+                v-if="showUserMenu" 
+                @mouseleave="showUserMenu = false"
+                class="absolute bottom-12 bg-white rounded-xl shadow-2xl border border-slate-200/90 py-1.5 z-50 text-xs animate-in fade-in zoom-in-95 duration-100"
+                :class="sidebarCollapsed ? 'left-14 w-44' : 'left-2 w-48'"
+              >
+                <div class="px-3 py-1.5 border-b border-slate-100 text-[11px] text-slate-400">
+                  当前账号: <strong class="text-slate-800 font-mono">{{ currentUser.username }}</strong>
+                </div>
+                <button 
+                  @click="openChangePasswordModal" 
+                  class="w-full text-left px-3 py-2 text-slate-700 hover:bg-slate-50 flex items-center space-x-2 cursor-pointer transition"
+                >
+                  <span>🔑</span>
+                  <span>修改登录密码</span>
+                </button>
+                <button 
+                  @click="logout" 
+                  class="w-full text-left px-3 py-2 text-rose-600 hover:bg-rose-50 flex items-center space-x-2 cursor-pointer transition border-t border-slate-100"
+                >
+                  <span>🚪</span>
+                  <span>退出登录</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </aside>

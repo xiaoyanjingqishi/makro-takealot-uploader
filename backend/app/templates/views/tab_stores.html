@@ -1,0 +1,177 @@
+      <div v-if="currentTab === 'stores'" class="flex-1 min-h-0 overflow-y-auto pr-1 py-1 space-y-3.5 custom-scrollbar">
+        <!-- 头部标题与操作 -->
+        <div class="flex items-center justify-between bg-white p-4 sm:p-5 rounded-xl border border-slate-200/80 shadow-xs flex-wrap gap-3">
+          <div>
+            <h2 class="text-sm sm:text-base font-bold text-slate-900 flex items-center space-x-2 tracking-tight">
+              <span>🏪 Makro 多店铺协同管理</span>
+              <span class="px-2.5 py-0.5 text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/70 rounded-full font-mono tabular-nums">
+                共 {{ stores.length }} 家店铺 · {{ activeStores.length }} 家已启用
+              </span>
+            </h2>
+            <p class="text-xs text-slate-500 mt-1 leading-relaxed">
+              集中配置与授权多个 Makro 卖家店铺凭据。支持跨店铺独立上架，同一个商品可同时上架至多家店铺，各自独立跟踪平台状态与 Request ID。
+            </p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="loadStores" 
+              class="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200/80 rounded-lg text-xs font-medium text-slate-700 shadow-2xs cursor-pointer flex items-center space-x-1 transition active:scale-95"
+            >
+              <span>🔄 刷新</span>
+            </button>
+            <button 
+              @click="openAutoLoginModal(null)" 
+              class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 transition active:scale-95"
+              title="使用 Makro 账号自动登录并提取凭据"
+            >
+              <span>🔑 账号自动登录</span>
+            </button>
+            <button 
+              @click="openAddStoreModal" 
+              class="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs cursor-pointer flex items-center space-x-1.5 transition active:scale-95"
+            >
+              <span>➕ 添加新店铺</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 店铺网格卡片 -->
+        <div v-if="stores.length === 0" class="bg-white p-12 rounded-xl border border-slate-200/80 text-center text-slate-400 font-medium">
+          暂无店铺配置，请点击右上角【➕ 添加新店铺】开始配置您的第一个 Makro 店铺！
+        </div>
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+          <div 
+            v-for="s in stores" 
+            :key="s.id" 
+            :class="s.is_default ? 'border-indigo-300 ring-2 ring-indigo-500/15 bg-white' : 'border-slate-200/80 bg-white'"
+            class="rounded-xl border shadow-xs p-4 sm:p-5 space-y-3.5 transition-all duration-200 hover:shadow-subtle relative flex flex-col justify-between"
+          >
+            <div>
+              <!-- 店铺名与徽章 -->
+              <div class="flex items-start justify-between">
+                <div class="flex items-center space-x-3">
+                  <div class="w-9 h-9 rounded-xl bg-indigo-50/80 border border-indigo-200/60 flex items-center justify-center text-lg shrink-0">
+                    🏪
+                  </div>
+                  <div>
+                    <div class="font-bold text-slate-900 text-sm flex items-center space-x-1.5 flex-wrap">
+                      <span>{{ s.name }}</span>
+                      <span v-if="s.is_default" class="px-1.5 py-0.2 text-[10px] bg-indigo-50 text-indigo-700 font-semibold rounded border border-indigo-200/70">
+                        ⭐ 默认主力店
+                      </span>
+                    </div>
+                    <div class="text-[11px] font-mono text-slate-400 mt-0.5">Seller ID: {{ s.seller_id }}</div>
+                  </div>
+                </div>
+                <span 
+                  :class="s.is_active ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' : 'bg-slate-100 text-slate-500 border-slate-200/80'"
+                  class="px-2 py-0.5 rounded-full text-[11px] font-semibold border shrink-0"
+                >
+                  {{ s.is_active ? '已启用' : '已停用' }}
+                </span>
+              </div>
+
+              <!-- 凭据与上架指标 -->
+              <div class="mt-3.5 pt-3 border-t border-slate-100 space-y-2 text-xs">
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500">Cookie 凭据状态:</span>
+                  <span v-if="s.has_cookie" class="text-emerald-600 font-semibold flex items-center space-x-1">
+                    <span>🟢 凭据已就绪</span>
+                  </span>
+                  <span v-else class="text-rose-600 font-semibold flex items-center space-x-1">
+                    <span>🔴 凭据缺失/未登录</span>
+                  </span>
+                </div>
+                <div v-if="s.cookie_preview" class="text-[10.5px] font-mono text-slate-400 bg-slate-50 p-1.5 rounded-md border border-slate-200/60 truncate">
+                  Cookie: {{ s.cookie_preview }}
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500">默认刊登品牌:</span>
+                  <span class="font-semibold text-slate-800">{{ s.default_brand || 'Beishi' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-slate-500">已刊登/提交商品:</span>
+                  <span class="font-bold text-indigo-700 font-mono tabular-nums">{{ s.listings_count }} 件</span>
+                </div>
+                <!-- 自动登录与保活状态 -->
+                <div class="space-y-1.5 pt-2 border-t border-slate-100/80">
+                  <div class="flex items-center justify-between">
+                    <span class="text-slate-500">账密缓存状态:</span>
+                    <div class="flex items-center space-x-1">
+                      <span v-if="s.has_login_password" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200" title="已缓存 Makro 登录密码">🔑 密码已存</span>
+                      <span v-else class="px-1.5 py-0.2 rounded text-[10px] text-slate-400 bg-slate-100">密码未存</span>
+                      <span v-if="s.has_imap_password" class="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="已配置邮箱授权码，支持自动收信">📬 授权码已存</span>
+                      <span v-else class="px-1.5 py-0.2 rounded text-[10px] text-slate-400 bg-slate-100">未配授权码</span>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-500">登录账号:</span>
+                    <span v-if="s.login_email" class="font-mono text-slate-700 font-medium truncate max-w-[140px]" :title="s.login_email">{{ s.login_email }}</span>
+                    <span v-else class="text-slate-400">未设置</span>
+                  </div>
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-500">定时保活状态:</span>
+                    <div class="flex items-center space-x-1">
+                      <span v-if="s.last_auto_login_at" class="font-mono text-[10px] text-slate-600">
+                        {{ formatDateTime(s.last_auto_login_at) }}
+                      </span>
+                      <span v-if="s.last_auto_login_status === 'SUCCESS'" class="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">✓ 成功</span>
+                      <span v-else-if="s.last_auto_login_status && s.last_auto_login_status.startsWith('FAILED')" class="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200" :title="s.last_auto_login_status">✕ 异常</span>
+                      <span v-else class="text-slate-400 text-[10px]">待轮询</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="s.notes" class="text-[11px] text-slate-400 italic">
+                  备注: {{ s.notes }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部操作按钮 -->
+            <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-1 flex-wrap">
+              <div class="flex items-center space-x-1.5">
+                <button 
+                  @click="openAutoLoginModal(s)"
+                  class="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-indigo-700 rounded-lg text-xs font-semibold transition cursor-pointer shadow-2xs active:scale-95 flex items-center space-x-1"
+                  :title="(s.has_login_password && s.has_imap_password) ? '点击一键全自动提取验证码并刷新登录态' : '自动登录 Makro 并更新凭据'"
+                >
+                  <span>{{ (s.has_login_password && s.has_imap_password) ? '⚡ 全自动登录' : '🔑 自动登录' }}</span>
+                </button>
+                <button 
+                  @click="testStore(s.id)" 
+                  :disabled="testingStoreId === s.id"
+                  class="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200/80 text-slate-700 rounded-lg text-xs font-medium transition cursor-pointer shadow-2xs disabled:opacity-50 active:scale-95"
+                  title="验证该店铺 Cookie 与 Makro 接口有效性"
+                >
+                  <span>{{ testingStoreId === s.id ? '⏳ 测试中...' : '🔄 测试连通' }}</span>
+                </button>
+                <button 
+                  @click="openEditStoreModal(s)" 
+                  class="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200/80 text-slate-700 rounded-lg text-xs font-medium transition cursor-pointer shadow-2xs active:scale-95"
+                >
+                  ✏️ 编辑
+                </button>
+              </div>
+              <div class="flex items-center space-x-1">
+                <button 
+                  v-if="!s.is_default"
+                  @click="setDefaultStore(s.id)" 
+                  class="px-2 py-1 text-indigo-600 hover:text-indigo-800 text-xs font-medium transition cursor-pointer"
+                  title="设为系统默认上品店铺"
+                >
+                  设为默认
+                </button>
+                <button 
+                  @click="deleteStore(s)" 
+                  class="px-2 py-1 text-rose-500 hover:text-rose-700 text-xs font-medium transition cursor-pointer"
+                  title="删除店铺"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= Tab 3: 系统操作与任务日志 ================= -->
