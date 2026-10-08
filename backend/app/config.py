@@ -7,8 +7,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Makro-Takealot 智能搬品系统"
     API_V1_STR: str = "/api"
-    SYSTEM_VERSION: str = "2.1.1"
-    EXTENSION_VERSION: str = "1.1.1"
+    SYSTEM_VERSION: str = "2.1.2"
+    EXTENSION_VERSION: str = "1.1.2"
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/makro_app.db"
 
     # 默认定价策略规则

@@ -13,7 +13,7 @@ class ProxyPoolService:
     统一国内动态代理池管理器 (支持携趣代理 API 动态提取与故障自动转移)
     为跟品批量高并发采集、全店定时巡航改价提供 100% 防封与自动换 IP 支持
     """
-    DEFAULT_API_URL = "http://api.xiequ.cn/VAD/GetIp.aspx?act=getturn51&uid=53898&vkey=78DB146CC637E8735CD85174996AE873&num=10&time=6&plat=1&re=0&type=7&so=1&group=51&ow=1&spl=1&addr=&db=1"
+    DEFAULT_API_URL = "http://api.xiequ.cn/VAD/GetIp.aspx?act=getturn51&uid=53898&vkey=78DB146CC637E8735CD85174996AE873&num=50&time=6&plat=1&re=0&type=7&so=1&group=51&ow=1&spl=1&addr=&db=1"
 
     _lock = threading.Lock()
     _pool: List[str] = []
@@ -88,12 +88,12 @@ class ProxyPoolService:
     def get_proxy(cls, exclude: Optional[set] = None) -> Optional[str]:
         """
         从活跃代理池中提取一个可用代理 URL (如 http://117.89.88.137:5417)
-        采用轮转机制支持高并发多线程复用；当池中代理不足 3 个时，自动后台异步补充
+        采用轮转机制支持高并发多线程复用；当池中代理不足 15 个时，自动后台异步补充
         """
         exclude_set = exclude or set()
         with cls._lock:
             # 若池中代理偏少，且未在提取中，触发后台补充
-            if (len(cls._pool) < 3 or (time.time() - cls._last_fetch_time > 240)) and not cls._is_fetching:
+            if (len(cls._pool) < 15 or (time.time() - cls._last_fetch_time > 240)) and not cls._is_fetching:
                 threading.Thread(target=cls.refresh_pool, args=(False,), daemon=True, name="ProxyRefreshThread").start()
 
             if cls._pool:
@@ -133,7 +133,7 @@ class ProxyPoolService:
         # 若代理池为空，立即同步阻塞拉取一批代理
         if pool_len == 0:
             cls.refresh_pool(force=True)
-        elif pool_len < max_count and not cls._is_fetching:
+        elif pool_len < 15 and not cls._is_fetching:
             threading.Thread(target=cls.refresh_pool, args=(False,), daemon=True, name="ProxyRefreshThread").start()
 
         with cls._lock:
@@ -153,7 +153,7 @@ class ProxyPoolService:
             if raw in cls._pool:
                 cls._pool.remove(raw)
                 logger.info(f"代理 {raw} 请求失败已立即淘汰，当前池内剩余: {len(cls._pool)}")
-                if len(cls._pool) < 2 and not cls._is_fetching:
+                if len(cls._pool) < 10 and not cls._is_fetching:
                     threading.Thread(target=cls.refresh_pool, args=(True,), daemon=True).start()
 
     @classmethod

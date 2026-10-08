@@ -27,7 +27,7 @@ class BatchRepriceRequest(BaseModel):
 
 class FullCruiseRequest(BaseModel):
     store_id: Optional[int] = None
-    concurrency: Optional[int] = 6
+    concurrency: Optional[int] = 100
 
 @router.get("/logs")
 def get_reprice_logs(
@@ -100,7 +100,7 @@ def trigger_single_item_reprice(
 def trigger_full_cruise_reprice(
     req: Optional[FullCruiseRequest] = None,
     store_id: Optional[int] = Query(None),
-    concurrency: Optional[int] = Query(6),
+    concurrency: Optional[int] = Query(100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -109,7 +109,7 @@ def trigger_full_cruise_reprice(
     抓取买家前台最新在售竞对与 Buybox 归属，对已开启自动跟价的在售商品执行智能调价，未开启的商品全面刷新 Buybox 状态并同步最新竞品情报。
     """
     target_store_id = (req.store_id if req and req.store_id is not None else store_id)
-    target_concurrency = (req.concurrency if req and req.concurrency else concurrency) or 6
+    target_concurrency = (req.concurrency if req and req.concurrency else concurrency) or 100
 
     store_name = "全店铺"
     if target_store_id:

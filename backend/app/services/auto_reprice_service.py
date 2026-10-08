@@ -11,6 +11,7 @@ from ..models.makro_reprice_log import MakroRepriceLog
 from ..models.store import Store
 from .makro_scraper_service import MakroScraperService
 from .makro_piggyback_service import MakroPiggybackService, MAKRO_HOST
+from .proxy_service import ProxyPoolService
 
 logger = logging.getLogger(__name__)
 
@@ -322,9 +323,9 @@ class AutoRepriceService:
             raise Exception(f"官方更新失败 (状态: {status}): {errors}")
 
     @classmethod
-    def run_reprice_for_store(cls, store: Store, db: Session, max_workers: int = 8) -> Dict[str, Any]:
+    def run_reprice_for_store(cls, store: Store, db: Session, max_workers: int = 100) -> Dict[str, Any]:
         """
-        为指定店铺中所有在售已激活且开启自动跟价的跟品执行超高并发智能跟价巡检 (8线程多路复用，遇反爬秒切代理)
+        为指定店铺中所有在售已激活且开启自动跟价的跟品执行超高并发智能跟价巡检 (100线程多路复用，直通携趣动态代理池)
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from ..database import SessionLocal
@@ -356,7 +357,8 @@ class AutoRepriceService:
         failed_count = 0
         details = []
 
-        logger.info(f"店铺 [{store.name}] 启动高并发自动跟价巡航：共 {total} 件商品，并发工作线程数: {min(max_workers, total)}")
+        actual_workers = max(1, min(max_workers, total, 100))
+        logger.info(f"店铺 [{store.name}] 启动高并发自动跟价巡航：共 {total} 件商品，并发工作线程数: {actual_workers}")
 
         def _cruise_worker(iid: int) -> Dict[str, Any]:
             worker_db = SessionLocal()
@@ -364,7 +366,8 @@ class AutoRepriceService:
                 target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
                 if not target_item:
                     return {"status": "FAILED", "reason": "商品不存在", "item_id": iid}
-                return cls.reprice_single_item(target_item, worker_db)
+                dyn_proxy = ProxyPoolService.get_proxy()
+                return cls.reprice_single_item(target_item, worker_db, proxy=dyn_proxy)
             except Exception as w_err:
                 return {"status": "FAILED", "reason": str(w_err), "item_id": iid}
             finally:
@@ -411,7 +414,7 @@ class AutoRepriceService:
         tm: Any,
         task_id: str,
         item_ids: List[int],
-        concurrency: int = 6
+        concurrency: int = 100
     ):
         """
         全量立刻巡检巡航后台执行器 (集成 TaskManager，支持多线程高并发、防页面刷新、实时进度与取消)
@@ -449,7 +452,9 @@ class AutoRepriceService:
                         tm.update_progress(task_id, current=done_count, fail_inc=1, error=f"ID {iid} 商品不存在")
                     return
 
-                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True)
+                # 直通分配携趣动态代理，100 线程并发破防
+                dyn_proxy = ProxyPoolService.get_proxy()
+                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True, proxy=dyn_proxy)
                 action = res.get("action", "")
                 status = res.get("status", "")
 
@@ -500,7 +505,7 @@ class AutoRepriceService:
             finally:
                 worker_db.close()
 
-        actual_workers = max(1, min(concurrency, total, 8))
+        actual_workers = max(1, min(concurrency, total, 100))
         logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，并发线程数: {actual_workers}")
 
         with ThreadPoolExecutor(max_workers=actual_workers) as executor:
