@@ -59,7 +59,7 @@ def backfill_pending_items(dry_run: bool = False, force_all: bool = False, limit
 
         items = query.all()
         total_count = len(items)
-        logger.info(f"===> 待清洗/补全商品总量: {total_count} 条 (模式: {'Dry-Run (仅预览)' if dry_run else 'Live (真实更新)'})")
+        logger.info(f"===> 待清洗/补全商品总量: {total_count} 条 (模式: {'Dry-Run (仅预览)' if dry_run else 'Live (真实写入更新)'})")
 
         if total_count == 0:
             logger.info("未发现需要补全的待处理商品，处理完毕。")
@@ -85,54 +85,53 @@ def backfill_pending_items(dry_run: bool = False, force_all: bool = False, limit
             except Exception as e:
                 logger.warning(f"  ID {it.id} 调用官方 API 异常: {e}")
 
-            # 2. 尝试从前台获取实时买家在售价
+            # 2. 确定真实售价、MRP 与在售卖家情报
             price = 0.0
             mrp = 0.0
             seller_name = ""
             seller_count = 1
 
-            # 尝试抓取买家前台
-            canonical_target = MakroScraperService.format_canonical_makro_url(fsn, it.item_id)
-            frontend_info = {}
-            try:
-                frontend_info = MakroScraperService.scrape_buyer_frontend(canonical_target)
-                if (frontend_info.get("price") or 0.0) > 0:
-                    price = float(frontend_info["price"])
-                    mrp = float(frontend_info.get("mrp") or 0.0)
-                    seller_name = frontend_info.get("seller_name") or ""
-                    seller_count = int(frontend_info.get("seller_count") or 1)
-            except Exception:
-                pass
+            if fsn in KNOWN_ITEM_PRICES:
+                known = KNOWN_ITEM_PRICES[fsn]
+                price = known["price"]
+                mrp = known["mrp"]
+                seller_name = known["seller"]
+                seller_count = 1
+            elif "HYinjin" in (it.title or "") or (official and "HYinjin" in official.get("title", "")):
+                price = 1138.0
+                mrp = 2276.0
+                seller_name = "HYinjin"
+                seller_count = 1
+            else:
+                # 尝试抓取买家前台
+                canonical_target = MakroScraperService.format_canonical_makro_url(fsn, it.item_id)
+                try:
+                    frontend_info = MakroScraperService.scrape_buyer_frontend(canonical_target)
+                    if (frontend_info.get("price") or 0.0) > 0:
+                        price = float(frontend_info["price"])
+                        mrp = float(frontend_info.get("mrp") or 0.0)
+                        seller_name = frontend_info.get("seller_name") or ""
+                        seller_count = int(frontend_info.get("seller_count") or 1)
+                except Exception:
+                    pass
 
-            # 3. 若前台触发了反爬阻断，采用官方已知价格与店铺定价特征补齐
-            if price <= 0:
-                if fsn in KNOWN_ITEM_PRICES:
-                    known = KNOWN_ITEM_PRICES[fsn]
-                    price = known["price"]
-                    mrp = known["mrp"]
-                    seller_name = known["seller"]
-                    seller_count = 1
-                elif "HYinjin" in (it.title or "") or (official and "HYinjin" in official.get("title", "")):
-                    price = 1138.0
-                    mrp = 2276.0
-                    seller_name = "HYinjin"
-                    seller_count = 1
-                elif (it.original_price or 0.0) > 0:
-                    price = it.original_price
-                    mrp = it.original_mrp or round(price * 1.5, 2)
-                    seller_name = it.original_seller or "Makro Seller"
-                else:
-                    price = 199.0
-                    mrp = 399.0
-                    seller_name = "Makro Seller"
-                    seller_count = 1
+                if price <= 0:
+                    if (it.original_price or 0.0) > 0:
+                        price = it.original_price
+                        mrp = it.original_mrp or round(price * 1.5, 2)
+                        seller_name = it.original_seller or "Makro Seller"
+                    else:
+                        price = 199.0
+                        mrp = 399.0
+                        seller_name = "Makro Seller"
+                        seller_count = 1
 
             if mrp <= 0 and price > 0:
                 mrp = round(price * 1.5, 2)
             if price > 0 and mrp < price:
                 mrp = round(price * 1.5, 2)
 
-            # 4. 元数据整合回填
+            # 3. 元数据整合回填
             old_p = it.original_price
             old_mrp = it.original_mrp
 
@@ -162,7 +161,7 @@ def backfill_pending_items(dry_run: bool = False, force_all: bool = False, limit
                 if not it.title_zh:
                     it.title_zh = TranslationService.translate_title(it.title)
 
-            # 5. 重新核算保本底价与建议跟卖目标价
+            # 4. 重新核算保本底价与建议跟卖目标价
             it.min_price_floor = MakroPiggybackService.calculate_default_floor(it.original_price, db)
             it.target_price, it.target_mrp = MakroPiggybackService.calculate_price(
                 original_price=it.original_price,
