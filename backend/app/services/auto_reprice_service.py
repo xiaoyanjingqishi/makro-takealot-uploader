@@ -384,10 +384,11 @@ class AutoRepriceService:
         failed_count = 0
         details = []
 
-        actual_workers = max(1, min(max_workers, total, 30))
-        logger.info(f"店铺 [{store.name}] 启动高性能自动跟价巡航：共 {total} 件商品，并发工作线程数: {actual_workers}")
+        actual_workers = max(1, min(max_workers, total, 5))
+        logger.info(f"店铺 [{store.name}] 启动平稳安全自动跟价巡航：共 {total} 件商品，受控工作线程数: {actual_workers}")
 
         def _cruise_worker(iid: int) -> Dict[str, Any]:
+            time.sleep(random.uniform(0.3, 0.8))
             worker_db = SessionLocal()
             try:
                 target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
@@ -468,6 +469,7 @@ class AutoRepriceService:
             if tm.is_cancelled(task_id):
                 return
 
+            time.sleep(random.uniform(0.3, 0.8))
             worker_db = SessionLocal()
             try:
                 target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
@@ -530,8 +532,8 @@ class AutoRepriceService:
             finally:
                 worker_db.close()
 
-        actual_workers = max(1, min(concurrency, total, 30))
-        logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，并发线程数: {actual_workers}")
+        actual_workers = max(1, min(concurrency, total, 5))
+        logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，受控并发线程数: {actual_workers}")
 
         with ThreadPoolExecutor(max_workers=actual_workers) as executor:
             futures = [executor.submit(_cruise_one, iid) for iid in item_ids]
