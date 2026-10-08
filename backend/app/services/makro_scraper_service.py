@@ -5,6 +5,13 @@ import requests
 from typing import Optional, Dict, Any, Tuple
 from .translation_service import TranslationService
 
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    cffi_requests = requests
+    HAS_CURL_CFFI = False
+
 logger = logging.getLogger(__name__)
 
 class MakroScraperService:
@@ -108,7 +115,7 @@ class MakroScraperService:
             headers["x-location-id"] = store.default_location_id.strip()
 
         try:
-            resp = requests.get(url, headers=headers, timeout=20)
+            resp = requests.get(url, headers=headers, timeout=20, proxies={"http": None, "https": None})
             if resp.status_code == 200:
                 data = resp.json()
                 product_list = data.get("result", {}).get("productList", [])
@@ -143,23 +150,26 @@ class MakroScraperService:
             logger.error(f"调用 Makro searchProduct 异常: {e}")
         return None
 
-    _buyer_session: Optional[requests.Session] = None
+    _buyer_session: Optional[Any] = None
 
     @classmethod
-    def get_buyer_session(cls) -> requests.Session:
+    def get_buyer_session(cls) -> Any:
         if cls._buyer_session is None:
-            s = requests.Session()
-            adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
-            s.mount("https://", adapter)
-            s.mount("http://", adapter)
-            cls._buyer_session = s
+            if HAS_CURL_CFFI:
+                cls._buyer_session = cffi_requests.Session(impersonate="chrome124")
+            else:
+                s = requests.Session()
+                adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
+                s.mount("https://", adapter)
+                s.mount("http://", adapter)
+                cls._buyer_session = s
         return cls._buyer_session
 
     @classmethod
     def scrape_buyer_frontend(cls, url_or_fsn: str) -> Dict[str, Any]:
         """
         强化抓取 Makro 前台买家商城 (makro.co.za) 详情页获取当前售价、MRP 与竞争情报
-        具备长连接会话复用、规范 URL 路径收敛、PerimeterX 阻断即时止损与深度多层级价格解析。
+        具备 Chrome 124 浏览器指纹模拟 (curl_cffi)、国内清洁 IP 强制直连、长连接复用与深度多层级价格解析。
         """
         fsn, item_id = cls.extract_identifiers(url_or_fsn)
         
@@ -174,10 +184,10 @@ class MakroScraperService:
             return {"price": 0.0, "mrp": 0.0, "seller_name": "", "seller_count": 0, "image_url": "", "title": "", "brand": "", "vertical": "", "item_id": "", "url": "", "blocked": False}
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Language": "en-US,en;q=0.9",
-            "sec-ch-ua": '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
+            "sec-ch-ua": '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "document",
@@ -204,7 +214,26 @@ class MakroScraperService:
         for cur_url in candidate_urls:
             chosen_url = cur_url
             try:
-                resp = session.get(cur_url, headers=headers, timeout=15, allow_redirects=True)
+                # 强化反爬：强制直连国内清洁 IP (proxies={"http": "", "https": ""})，绕过污染海外代理
+                # 同时使用 curl_cffi 模拟 Chrome 124 真实 TLS (JA3/JA4) 与 HTTP/2
+                if HAS_CURL_CFFI:
+                    resp = session.get(
+                        cur_url,
+                        headers=headers,
+                        timeout=15,
+                        allow_redirects=True,
+                        proxies={"http": "", "https": ""},
+                        impersonate="chrome124"
+                    )
+                else:
+                    resp = session.get(
+                        cur_url,
+                        headers=headers,
+                        timeout=15,
+                        allow_redirects=True,
+                        proxies={"http": None, "https": None}
+                    )
+
                 if resp.status_code != 200:
                     continue
 
@@ -212,6 +241,7 @@ class MakroScraperService:
                 if "/blocked" in resp.url or "<title>Are you a human?</title>" in html:
                     logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}")
                     blocked = True
+                    cls._buyer_session = None
                     # 遭遇 IP 级反爬阻断时即刻止损，禁止在同一 IP 上无谓轮询其他候选链接
                     break
 
@@ -390,6 +420,7 @@ class MakroScraperService:
 
             except Exception as req_err:
                 logger.warning(f"请求 Makro 前台链接 {cur_url} 异常: {req_err}")
+                cls._buyer_session = None
 
         return {
             "price": price,
