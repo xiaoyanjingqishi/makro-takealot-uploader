@@ -244,7 +244,7 @@
                 @click="triggerFullCruiseReprice"
                 :disabled="runningFullCruise"
                 class="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40"
-                title="立刻在后台发起全量巡航：100 线程直通携趣动态代理池高并发抓取在售商品最新前台竞价、重新评定 Buybox 赢车状态并自动执行跟价调价"
+                title="立刻在后台发起全量平稳巡航：智能防反爬流控抖动，精准抓取在售商品最新前台竞价、重新评定 Buybox 赢车状态并自动执行跟价调价"
               >
                 <span :class="{'inline-block animate-spin': runningFullCruise}">⚡</span>
                 <span>{{ runningFullCruise ? '全量巡检中...' : '全量立刻巡检' }}</span>

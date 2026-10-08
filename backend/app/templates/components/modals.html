@@ -898,11 +898,30 @@
                   <div class="font-bold text-slate-800">{{ log.seller_sku }}</div>
                   <div class="text-[10px] text-slate-400">{{ log.makro_product_id }}</div>
                 </td>
-                <td class="py-2 px-3 text-slate-700 font-sans truncate max-w-[120px]" :title="log.competitor_seller">{{ log.competitor_seller || '无/自营' }}</td>
-                <td class="py-2 px-3 text-slate-600">R {{ log.competitor_price.toFixed(2) }}</td>
+                <td class="py-2 px-3 text-slate-700 font-sans truncate max-w-[120px]" :title="log.competitor_seller">
+                  <span v-if="log.action === 'BLOCKED' || log.competitor_seller === '阻断未获取'" class="text-amber-600 font-medium flex items-center space-x-1">
+                    <span>🛡️</span>
+                    <span>阻断未获取</span>
+                  </span>
+                  <span v-else>{{ log.competitor_seller || '无/自营' }}</span>
+                </td>
                 <td class="py-2 px-3">
-                  <span class="text-slate-400 line-through">R {{ log.old_price.toFixed(2) }}</span>
-                  <span class="text-emerald-600 font-bold ml-1">R {{ log.new_price.toFixed(2) }}</span>
+                  <span v-if="log.action === 'BLOCKED' || log.competitor_seller === '阻断未获取'" class="text-amber-600 font-sans text-[11px] bg-amber-50 px-1 py-0.5 rounded border border-amber-200">阻断未获取</span>
+                  <span v-else-if="log.competitor_price > 0" class="text-slate-600">R {{ log.competitor_price.toFixed(2) }}</span>
+                  <span v-else class="text-slate-400 font-sans">-</span>
+                </td>
+                <td class="py-2 px-3">
+                  <template v-if="log.action === 'BLOCKED'">
+                    <span class="text-slate-700 font-medium">R {{ (log.old_price || 0).toFixed(2) }}</span>
+                    <span class="text-amber-600 text-[10px] ml-1">(维持)</span>
+                  </template>
+                  <template v-else-if="log.action === 'UNDER_CUT' || log.action === 'REACHED_FLOOR'">
+                    <span class="text-slate-400 line-through">R {{ (log.old_price || 0).toFixed(2) }}</span>
+                    <span class="text-emerald-600 font-bold ml-1">R {{ (log.new_price || 0).toFixed(2) }}</span>
+                  </template>
+                  <template v-else>
+                    <span class="text-slate-600">R {{ (log.old_price || 0).toFixed(2) }}</span>
+                  </template>
                 </td>
                 <td class="py-2 px-3 text-center font-sans">
                   <span 
@@ -911,6 +930,7 @@
                       'bg-emerald-100 text-emerald-800': log.action === 'UNDER_CUT',
                       'bg-sky-100 text-sky-800': log.action === 'WINNING_HOLD',
                       'bg-amber-100 text-amber-800': log.action === 'REACHED_FLOOR',
+                      'bg-amber-100 text-amber-800 border border-amber-300': log.action === 'BLOCKED',
                       'bg-slate-100 text-slate-600': log.action === 'NO_CHANGE',
                       'bg-rose-100 text-rose-800': log.action === 'FAILED'
                     }"
@@ -918,6 +938,7 @@
                     <template v-if="log.action === 'UNDER_CUT'">📉 降价抢流</template>
                     <template v-else-if="log.action === 'WINNING_HOLD'">🏆 胜出维持</template>
                     <template v-else-if="log.action === 'REACHED_FLOOR'">🛡️ 触底保本</template>
+                    <template v-else-if="log.action === 'BLOCKED'">🛡️ 反爬保护</template>
                     <template v-else-if="log.action === 'NO_CHANGE'">⚪ 维持现价</template>
                     <template v-else>❌ 执行异常</template>
                   </span>

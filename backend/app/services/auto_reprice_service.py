@@ -150,9 +150,10 @@ class AutoRepriceService:
         is_blocked = scraped.get("blocked", False)
 
         if comp_price <= 0:
-            if is_blocked and (old_selling_price > 0 or (item.original_price or 0.0) > 0):
-                action = "WINNING_HOLD" if item.buybox_status in ["WINNING", "NO_COMPETITOR"] else "NO_CHANGE"
-                reason = f"前台反爬瞬时流控保护：保留历史{'赢车' if action == 'WINNING_HOLD' else '在售'}状态及现价 R{old_selling_price}"
+            if is_blocked:
+                # 明确标记为反爬阻断，坚决不冒进调价，绝不假冒正常成功
+                action = "BLOCKED"
+                reason = f"前台反爬瞬时阻断防护：未能获取竞对有效报价，安全维持现价 R{old_selling_price}"
                 new_price = old_selling_price
             else:
                 action = "FAILED"
@@ -245,9 +246,11 @@ class AutoRepriceService:
         item.last_reprice_at = datetime.now()
         item.last_reprice_result = f"{action}: {reason[:120]}"
 
-        # 竞对卖家审计文案：清晰区分真实外部竞对与本店/友军占位
+        # 竞对卖家审计文案：清晰区分真实外部竞对与本店/友军占位或反爬阻断
         logged_seller = comp_seller or "未知/无竞对"
-        if is_own_current_store:
+        if action == "BLOCKED":
+            logged_seller = "阻断未获取"
+        elif is_own_current_store:
             logged_seller = f"{comp_seller or store.name} (本店抢占)"
         elif is_matrix_sister_store:
             logged_seller = f"{winning_store_name or comp_seller} (友军抢占)"
@@ -258,7 +261,7 @@ class AutoRepriceService:
             seller_sku=item.seller_sku,
             makro_product_id=item.makro_product_id,
             competitor_seller=logged_seller,
-            competitor_price=comp_price,
+            competitor_price=comp_price if action != "BLOCKED" else 0.0,
             old_price=old_selling_price,
             new_price=new_price if action in ["UNDER_CUT", "REACHED_FLOOR"] else old_selling_price,
             action=action,
@@ -268,13 +271,15 @@ class AutoRepriceService:
         db.commit()
         db.refresh(item)
 
+        final_status = "BLOCKED" if action == "BLOCKED" else ("SUCCESS" if action != "FAILED" else "FAILED")
+
         return {
-            "status": "SUCCESS" if action != "FAILED" else "FAILED",
+            "status": final_status,
             "action": action,
             "seller_sku": item.seller_sku,
             "makro_product_id": item.makro_product_id,
-            "competitor_seller": comp_seller,
-            "competitor_price": comp_price,
+            "competitor_seller": "阻断未获取" if action == "BLOCKED" else comp_seller,
+            "competitor_price": None if action == "BLOCKED" else comp_price,
             "old_price": old_selling_price,
             "new_price": item.target_price,
             "reason": reason,
@@ -378,17 +383,18 @@ class AutoRepriceService:
 
         item_ids = [it.id for it in items]
         success_count = 0
+        blocked_count = 0
         undercut_count = 0
         winning_hold_count = 0
         floor_count = 0
         failed_count = 0
         details = []
 
-        actual_workers = max(1, min(max_workers, total, 5))
+        actual_workers = max(1, min(max_workers, total, 3))
         logger.info(f"店铺 [{store.name}] 启动平稳安全自动跟价巡航：共 {total} 件商品，受控工作线程数: {actual_workers}")
 
         def _cruise_worker(iid: int) -> Dict[str, Any]:
-            time.sleep(random.uniform(0.3, 0.8))
+            time.sleep(random.uniform(0.8, 1.8))
             worker_db = SessionLocal()
             try:
                 target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
@@ -400,7 +406,6 @@ class AutoRepriceService:
             finally:
                 worker_db.close()
 
-        actual_workers = min(max_workers, total)
         with ThreadPoolExecutor(max_workers=actual_workers) as executor:
             future_map = {executor.submit(_cruise_worker, iid): iid for iid in item_ids}
             for fut in as_completed(future_map):
@@ -413,6 +418,8 @@ class AutoRepriceService:
                         winning_hold_count += 1
                     elif action == "REACHED_FLOOR":
                         floor_count += 1
+                    elif action == "BLOCKED":
+                        blocked_count += 1
                     elif action == "FAILED":
                         failed_count += 1
                     
@@ -423,11 +430,12 @@ class AutoRepriceService:
                     logger.error(f"并发巡检线程执行异常: {ex}")
                     failed_count += 1
 
-        logger.info(f"店铺 [{store.name}] 高并发巡航巡检完成: 处理 {total} 件，成功 {success_count} 件 (降价跟进: {undercut_count}, 保持胜出: {winning_hold_count}, 触底保本: {floor_count}, 失败: {failed_count})")
+        logger.info(f"店铺 [{store.name}] 巡航巡检完成: 处理 {total} 件，成功 {success_count} 件 (降价跟进: {undercut_count}, 保持胜出: {winning_hold_count}, 触底保本: {floor_count}, 阻断: {blocked_count}, 失败: {failed_count})")
 
         return {
             "total_items": total,
             "success_count": success_count,
+            "blocked_count": blocked_count,
             "undercut_count": undercut_count,
             "winning_hold_count": winning_hold_count,
             "floor_count": floor_count,
@@ -444,7 +452,7 @@ class AutoRepriceService:
         concurrency: int = 100
     ):
         """
-        全量立刻巡检巡航后台执行器 (集成 TaskManager，支持多线程高并发、防页面刷新、实时进度与取消)
+        全量立刻巡检巡航后台执行器 (集成 TaskManager，支持多线程受控平稳巡航、防页面刷新、真实阻断统计与取消)
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
@@ -452,7 +460,7 @@ class AutoRepriceService:
 
         total = len(item_ids)
         if total == 0:
-            tm.finish_task(task_id, status="SUCCESS", message="未找到符合巡检条件的在售跟品商品", success_count=0, fail_count=0)
+            tm.finish_task(task_id, status="SUCCESS", message="未找到符合巡检条件的在售跟品商品", success_count=0, fail_count=0, blocked_count=0)
             return
 
         done_count = 0
@@ -462,14 +470,15 @@ class AutoRepriceService:
         inspected_count = 0
         failed_count = 0
         no_change_count = 0
+        blocked_count = 0
         lock = threading.Lock()
 
         def _cruise_one(iid: int):
-            nonlocal done_count, undercut_count, winning_count, floor_count, inspected_count, failed_count, no_change_count
+            nonlocal done_count, undercut_count, winning_count, floor_count, inspected_count, failed_count, no_change_count, blocked_count
             if tm.is_cancelled(task_id):
                 return
 
-            time.sleep(random.uniform(0.3, 0.8))
+            time.sleep(random.uniform(0.8, 1.8))
             worker_db = SessionLocal()
             try:
                 target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
@@ -480,13 +489,16 @@ class AutoRepriceService:
                         tm.update_progress(task_id, current=done_count, fail_inc=1, error=f"ID {iid} 商品不存在")
                     return
 
-                # 服务端纯净 Chrome 124 浏览器指纹直连，秒级穿透反爬且零代理延迟
                 res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True, proxy=None)
                 action = res.get("action", "")
                 status = res.get("status", "")
 
                 with lock:
                     done_count += 1
+                    succ_inc = 0
+                    fail_inc = 0
+                    blocked_inc = 0
+
                     if action == "UNDER_CUT":
                         undercut_count += 1
                     elif action == "WINNING_HOLD":
@@ -497,12 +509,16 @@ class AutoRepriceService:
                         inspected_count += 1
                     elif action == "NO_CHANGE":
                         no_change_count += 1
+                    elif action == "BLOCKED":
+                        blocked_count += 1
+                        blocked_inc = 1
 
                     if status == "SUCCESS":
                         succ_inc = 1
-                        fail_inc = 0
+                    elif status == "BLOCKED" or action == "BLOCKED":
+                        # 反爬阻断明确统计，严禁归入成功！
+                        pass
                     else:
-                        succ_inc = 0
                         fail_inc = 1
                         failed_count += 1
 
@@ -513,6 +529,7 @@ class AutoRepriceService:
                         "REACHED_FLOOR": f"触底锁死 R{res.get('new_price')}",
                         "INSPECTED": f"巡检归属 [{target_item.buybox_status}]",
                         "NO_CHANGE": "价格一致无需调整",
+                        "BLOCKED": "🛡️反爬阻断防护(维持现价)",
                         "FAILED": f"失败: {res.get('reason', '')[:30]}"
                     }.get(action, action or "完成")
 
@@ -521,7 +538,8 @@ class AutoRepriceService:
                         current=done_count,
                         current_title=f"{sku_display}: {action_display}",
                         success_inc=succ_inc,
-                        fail_inc=fail_inc
+                        fail_inc=fail_inc,
+                        blocked_inc=blocked_inc
                     )
             except Exception as ex:
                 logger.error(f"巡检单品 [ID: {iid}] 发生异常: {ex}", exc_info=True)
@@ -532,7 +550,7 @@ class AutoRepriceService:
             finally:
                 worker_db.close()
 
-        actual_workers = max(1, min(concurrency, total, 5))
+        actual_workers = max(1, min(concurrency, total, 3))
         logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，受控并发线程数: {actual_workers}")
 
         with ThreadPoolExecutor(max_workers=actual_workers) as executor:
@@ -549,14 +567,15 @@ class AutoRepriceService:
             tm.finish_task(task_id, status="CANCELLED", message="任务已被用户取消")
             return
 
-        success_total = done_count - failed_count
-        summary_msg = f"全量巡检巡航完成！共处理 {done_count}/{total} 件 (降价抢流: {undercut_count}, 胜出保持: {winning_count}, 触底保本: {floor_count}, 巡检更新: {inspected_count}, 维持不变: {no_change_count}, 失败: {failed_count})"
+        success_total = done_count - failed_count - blocked_count
+        summary_msg = f"全量巡检巡航完成！共处理 {done_count}/{total} 件 (降价抢流: {undercut_count}, 胜出保持: {winning_count}, 触底保本: {floor_count}, 巡检更新: {inspected_count}, 维持不变: {no_change_count}, 🛡️反爬阻断: {blocked_count}, 失败: {failed_count})"
         logger.info(f"全量巡检巡航任务 [{task_id}] 执行完毕: {summary_msg}")
         tm.finish_task(
             task_id=task_id,
             status="SUCCESS",
             message=summary_msg,
             success_count=success_total,
-            fail_count=failed_count
+            fail_count=failed_count,
+            blocked_count=blocked_count
         )
 

@@ -40,6 +40,7 @@ class TaskManager:
             "progress": 0,
             "success_count": 0,
             "fail_count": 0,
+            "blocked_count": 0,
             "current_title": "准备启动...",
             "message": f"任务启动: 共 {total} 项",
             "errors": [],
@@ -74,6 +75,7 @@ class TaskManager:
         current_title: str = "",
         success_inc: int = 0,
         fail_inc: int = 0,
+        blocked_inc: int = 0,
         error: Optional[str] = None
     ):
         """
@@ -93,6 +95,8 @@ class TaskManager:
                 t["success_count"] += success_inc
             if fail_inc:
                 t["fail_count"] += fail_inc
+            if blocked_inc:
+                t["blocked_count"] = t.get("blocked_count", 0) + blocked_inc
             if error:
                 t["errors"].append(error[:250])
             t["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -120,6 +124,7 @@ class TaskManager:
         message: str = "",
         success_count: Optional[int] = None,
         fail_count: Optional[int] = None,
+        blocked_count: Optional[int] = None,
         **kwargs
     ):
         """
@@ -143,8 +148,13 @@ class TaskManager:
                 t["success_count"] = success_count
             if fail_count is not None:
                 t["fail_count"] = fail_count
+            if blocked_count is not None:
+                t["blocked_count"] = blocked_count
             if not message:
-                message = f"执行完成: 成功 {t['success_count']} 项, 失败 {t['fail_count']} 项"
+                msg_parts = [f"成功 {t['success_count']} 项", f"失败 {t['fail_count']} 项"]
+                if t.get("blocked_count", 0) > 0:
+                    msg_parts.append(f"🛡️阻断 {t['blocked_count']} 项")
+                message = f"执行完成: {', '.join(msg_parts)}"
             t["message"] = message
 
             # 复制一份用于持久化审计日志
@@ -160,6 +170,7 @@ class TaskManager:
                     "total": task_copy["total"],
                     "success": task_copy["success_count"],
                     "failed": task_copy["fail_count"],
+                    "blocked": task_copy.get("blocked_count", 0),
                     "errors": task_copy["errors"][:10],
                     "product_ids": task_copy.get("product_ids", [])[:50]
                 }

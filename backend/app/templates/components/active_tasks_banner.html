@@ -105,6 +105,7 @@
             </div>
             <div class="flex items-center space-x-3 text-[11px] tabular-nums">
               <span class="text-emerald-600 font-medium">✓ 成功: {{ task.success_count || 0 }}</span>
+              <span v-if="task.blocked_count" class="text-amber-600 font-medium bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">🛡️ 反爬阻断: {{ task.blocked_count }}</span>
               <span v-if="task.fail_count" class="text-rose-600 font-medium">✕ 失败: {{ task.fail_count }}</span>
               <span class="text-slate-400 font-mono">{{ task.message }}</span>
             </div>

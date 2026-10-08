@@ -504,6 +504,87 @@ class MakroScraperService:
         }
 
     @classmethod
+    def scrape_via_browser_fallback(cls, url: str) -> Optional[Dict[str, Any]]:
+        """
+        当 HTTP 直连遭遇 PerimeterX / Akamai 高强度反爬阻断时，
+        通过真实浏览器环境唤起并静默秒级提取买家前台真实情报 (破防兜底)
+        """
+        driver = None
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.edge.options import Options as EdgeOptions
+            import json, re
+
+            options = EdgeOptions()
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+            options.add_argument("--window-size=1200,800")
+            options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0")
+
+            driver = webdriver.Edge(options=options)
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"}
+            )
+            driver.set_page_load_timeout(25)
+            driver.get(url)
+
+            html = driver.page_source
+            if "/blocked" in driver.current_url or "Are you a human?" in driver.title:
+                logger.warning(f"浏览器兜底访问仍被阻断: {url}")
+                return None
+
+            state_m = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.S)
+            price = 0.0
+            mrp = 0.0
+            seller_name = ""
+            if state_m:
+                st = json.loads(state_m.group(1))
+                pageDataV4 = st.get("pageDataV4", {})
+                page = pageDataV4.get("page", {})
+                pageData = page.get("pageData", {})
+                ctx = pageData.get("pageContext", {}) or {}
+                pricing = ctx.get("pricing") or {}
+                final_p = pricing.get("finalPrice", {}) or {}
+                if final_p.get("decimalValue"):
+                    price = float(re.sub(r'[^0-9.]', '', str(final_p["decimalValue"])))
+                elif final_p.get("value"):
+                    price = float(final_p["value"])
+
+                for p_item in pricing.get("prices", []):
+                    if p_item.get("priceType") == "MRP" and p_item.get("decimalValue"):
+                        mrp = float(re.sub(r'[^0-9.]', '', str(p_item["decimalValue"])))
+
+                tracking = ctx.get("trackingDataV2", {}) or {}
+                seller_name = tracking.get("sellerName") or ""
+
+            if price <= 0:
+                dec_m = re.search(r'"finalPrice"\s*:\s*\{[^}]*"decimalValue"\s*:\s*"([0-9.]+)"', html)
+                if dec_m:
+                    price = float(dec_m.group(1))
+
+            if price > 0:
+                logger.info(f"真实浏览器兜底穿透成功: 价格 R{price}, 竞对: {seller_name}")
+                return {
+                    "price": price,
+                    "mrp": mrp or round(price * 1.5, 2),
+                    "seller_name": seller_name,
+                    "title": driver.title.split("|")[0].strip(),
+                    "blocked": False
+                }
+            return None
+        except Exception as e:
+            logger.warning(f"浏览器破防兜底执行异常: {e}")
+            return None
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+
+    @classmethod
     def resolve_piggyback_product(
         cls,
         url_or_fsn: str,
@@ -536,6 +617,13 @@ class MakroScraperService:
             alt_info = cls.scrape_buyer_frontend(url_or_fsn)
             if (alt_info.get("price") or 0.0) > 0:
                 frontend_info = alt_info
+
+        # 2.1 若前台遭遇反爬阻断且未能获取售价，调用浏览器破防兜底
+        if (frontend_info.get("price") or 0.0) <= 0 and frontend_info.get("blocked"):
+            logger.info(f"商品 {fsn} 前台 HTTP 遭遇反爬阻断，自动唤起浏览器内核兜底穿透...")
+            fallback_res = cls.scrape_via_browser_fallback(canonical_target)
+            if fallback_res and (fallback_res.get("price") or 0.0) > 0:
+                frontend_info.update(fallback_res)
 
         # 3. 整合权威数据
         final_item_id = item_id or frontend_info.get("item_id") or ""

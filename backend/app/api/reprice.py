@@ -27,7 +27,7 @@ class BatchRepriceRequest(BaseModel):
 
 class FullCruiseRequest(BaseModel):
     store_id: Optional[int] = None
-    concurrency: Optional[int] = 100
+    concurrency: Optional[int] = 3
 
 @router.get("/logs")
 def get_reprice_logs(
@@ -100,16 +100,17 @@ def trigger_single_item_reprice(
 def trigger_full_cruise_reprice(
     req: Optional[FullCruiseRequest] = None,
     store_id: Optional[int] = Query(None),
-    concurrency: Optional[int] = Query(100),
+    concurrency: Optional[int] = Query(3),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    全量立刻发起后台高并发巡检巡航任务：
+    全量立刻发起后台平稳巡检巡航任务：
     抓取买家前台最新在售竞对与 Buybox 归属，对已开启自动跟价的在售商品执行智能调价，未开启的商品全面刷新 Buybox 状态并同步最新竞品情报。
     """
     target_store_id = (req.store_id if req and req.store_id is not None else store_id)
-    target_concurrency = (req.concurrency if req and req.concurrency else concurrency) or 100
+    raw_concurrency = (req.concurrency if req and req.concurrency else concurrency) or 3
+    target_concurrency = max(1, min(raw_concurrency, 3))
 
     store_name = "全店铺"
     if target_store_id:
@@ -184,14 +185,21 @@ def trigger_batch_reprice(
         items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(target_ids)).all()
         results = []
         success_cnt = 0
+        blocked_cnt = 0
         undercut_cnt = 0
         winning_hold_cnt = 0
         floor_cnt = 0
+        failed_cnt = 0
         for it in items:
             r = AutoRepriceService.reprice_single_item(it, db, force=True)
+            act = r.get("action")
             if r.get("status") == "SUCCESS":
                 success_cnt += 1
-            act = r.get("action")
+            elif r.get("status") == "BLOCKED" or act == "BLOCKED":
+                blocked_cnt += 1
+            else:
+                failed_cnt += 1
+
             if act == "UNDER_CUT":
                 undercut_cnt += 1
             elif act == "WINNING_HOLD":
@@ -202,9 +210,11 @@ def trigger_batch_reprice(
         return {
             "total": len(items),
             "success_count": success_cnt,
+            "blocked_count": blocked_cnt,
             "undercut_count": undercut_cnt,
             "winning_hold_count": winning_hold_cnt,
             "floor_count": floor_cnt,
+            "failed_count": failed_cnt,
             "details": results
         }
     
@@ -218,6 +228,7 @@ def trigger_batch_reprice(
         "total_stores": len(stores),
         "total_items": 0,
         "success_count": 0,
+        "blocked_count": 0,
         "undercut_count": 0,
         "winning_hold_count": 0,
         "floor_count": 0,
@@ -228,6 +239,7 @@ def trigger_batch_reprice(
         res = AutoRepriceService.run_reprice_for_store(s, db)
         summary["total_items"] += res.get("total_items", 0)
         summary["success_count"] += res.get("success_count", 0)
+        summary["blocked_count"] += res.get("blocked_count", 0)
         summary["undercut_count"] += res.get("undercut_count", 0)
         summary["winning_hold_count"] += res.get("winning_hold_count", 0)
         summary["floor_count"] += res.get("floor_count", 0)

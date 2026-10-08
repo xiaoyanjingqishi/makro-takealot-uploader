@@ -914,16 +914,16 @@ export const piggybackMethods = {
       if (foundStore) storeName = foundStore.name;
     }
 
-    const promptText = `确定立即对【${storeName}】的所有在售跟品发起全量巡检巡航吗？\n\n系统将在后台启动 100 线程直通携趣动态代理池高并发抓取买家前台最新竞对报价、重新评定 Buybox 黄金购物车赢车归属，并对已开启自动跟价的商品执行智能调价。`;
+    const promptText = `确定立即对【${storeName}】的所有在售跟品发起全量巡检巡航吗？\n\n系统将在后台启动平稳防封受控巡航（智能防反爬流控抖动），抓取买家前台最新竞对报价、重新评定 Buybox 黄金购物车赢车归属，并对已开启自动跟价的商品执行智能调价。`;
     if (!confirm(promptText)) return;
 
     this.runningFullCruise = true;
-    this.showToast(`🚀 正在发起【${storeName}】100 线程全量巡检巡航...`, 'info');
+    this.showToast(`🚀 正在发起【${storeName}】平稳受控巡检巡航...`, 'info');
     try {
       const res = await fetch('/api/reprice/trigger-full-cruise', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store_id: storeId, concurrency: 100 })
+        body: JSON.stringify({ store_id: storeId, concurrency: 3 })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -957,7 +957,9 @@ export const piggybackMethods = {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      this.showToast(`🤖 批量跟价完成！处理 ${data.total || data.total_items} 件 (降价抢流: ${data.undercut_count || 0}, 胜出保持: ${data.winning_hold_count || 0}, 触底保本: ${data.floor_count || 0})`, 'success');
+      const blockedPart = data.blocked_count ? `, 🛡️阻断: ${data.blocked_count}` : '';
+      const toastType = data.blocked_count > 0 ? 'warning' : 'success';
+      this.showToast(`🤖 批量跟价完成！处理 ${data.total || data.total_items} 件 (降价抢流: ${data.undercut_count || 0}, 胜出保持: ${data.winning_hold_count || 0}, 触底保本: ${data.floor_count || 0}${blockedPart})`, toastType);
       this.loadPiggybackItems(this.piggyback.page);
     } catch (e) {
       this.showToast('批量跟价异常: ' + e.message, 'error');
