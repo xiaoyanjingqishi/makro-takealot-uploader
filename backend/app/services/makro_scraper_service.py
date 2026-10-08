@@ -170,12 +170,8 @@ class MakroScraperService:
         if location_id:
             headers["x-location-id"] = location_id.strip()
 
-        # 尝试通过候选代理列表轮转访问
-        candidate_proxies = ProxyPoolService.get_candidate_proxies(max_count=4)
-        attempts = []
-        if candidate_proxies:
-            attempts.extend(candidate_proxies)
-        attempts.append(None)  # 直连兜底
+        # 优先使用直连极速访问 Makro Seller API (经实测直连响应快速且稳定)
+        attempts = [None]
 
         for p_url in attempts:
             p_dict = {"http": p_url, "https": p_url} if p_url else None
@@ -262,23 +258,10 @@ class MakroScraperService:
         if not candidate_urls:
             return {"price": 0.0, "mrp": 0.0, "seller_name": "", "seller_count": 0, "image_url": "", "title": "", "brand": "", "vertical": "", "item_id": "", "url": "", "blocked": False}
 
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-            "Accept-Language": "en-US,en;q=0.9",
-            "sec-ch-ua": '"Google Chrome";v="124", "Chromium";v="124", "Not-A.Brand";v="99"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "document",
-            "sec-fetch-mode": "navigate",
-            "sec-fetch-site": "none",
-            "sec-fetch-user": "?1",
-            "upgrade-insecure-requests": "1"
-        }
-
         price = 0.0
         mrp = 0.0
         seller_name = ""
+        seller_id = ""
         seller_count = 1
         image_url = ""
         title = ""
@@ -293,13 +276,11 @@ class MakroScraperService:
         for cur_url in candidate_urls:
             chosen_url = cur_url
             try:
-                # 初始直连请求 (若指定了代理则使用 requests.get，避免 curl_cffi 挂起)
+                # 纯净 Chrome 124 浏览器原生指纹直连 (严禁传入手写 Headers，防止与 TLS/H2 伪头冲突引发 PerimeterX 误杀)
                 if proxy:
-                    resp = requests.get(cur_url, headers=headers, timeout=8, allow_redirects=True, proxies={"http": proxy, "https": proxy})
-                elif HAS_CURL_CFFI:
-                    resp = session.get(cur_url, headers=headers, timeout=15, allow_redirects=True, impersonate="chrome124")
+                    resp = session.get(cur_url, timeout=15, allow_redirects=True, proxies={"http": proxy, "https": proxy})
                 else:
-                    resp = session.get(cur_url, headers=headers, timeout=15, allow_redirects=True)
+                    resp = session.get(cur_url, timeout=15, allow_redirects=True)
 
                 if resp.status_code != 200:
                     continue
@@ -308,38 +289,10 @@ class MakroScraperService:
                 is_hit_bot = ("/blocked" in resp.url) or ("<title>Are you a human?</title>" in html) or (resp.status_code in [403, 429])
 
                 if is_hit_bot:
-                    logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}，启动携趣国内动态代理池轮转故障转移...")
+                    logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}")
                     blocked = True
                     cls.reset_buyer_session()
-
-                    # ★★★ 遇反爬立即从动态代理池取候选 IP 轮转破防 (使用标准 requests 避免 Windows cffi 挂起) ★★★
-                    candidate_proxies = ProxyPoolService.get_candidate_proxies(max_count=4)
-                    for dyn_proxy in candidate_proxies:
-                        logger.info(f"正在使用携趣国内动态代理换 IP 破防重试: {dyn_proxy}")
-                        try:
-                            dyn_proxies = {"http": dyn_proxy, "https": dyn_proxy}
-                            dyn_resp = requests.get(
-                                cur_url,
-                                headers=headers,
-                                timeout=8,
-                                allow_redirects=True,
-                                proxies=dyn_proxies
-                            )
-
-                            if dyn_resp.status_code == 200 and "/blocked" not in dyn_resp.url and "<title>Are you a human?</title>" not in dyn_resp.text:
-                                html = dyn_resp.text
-                                blocked = False
-                                logger.info(f"国内动态代理 {dyn_proxy} 成功破除反爬阻断，恢复正常解析！")
-                                break
-                            else:
-                                ProxyPoolService.report_failure(dyn_proxy)
-                        except Exception as p_err:
-                            logger.warning(f"动态代理 {dyn_proxy} 请求异常: {p_err}")
-                            ProxyPoolService.report_failure(dyn_proxy)
-
-                    if blocked:
-                        break
-
+                    break
 
                 # 1. 深度解析 window.__INITIAL_STATE__
                 state_m = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});\s*</script>', html, re.S)
@@ -363,10 +316,27 @@ class MakroScraperService:
                         if tracking:
                             seller_count = int(tracking.get("sellerCount") if tracking.get("sellerCount") is not None else 1)
                             seller_name = tracking.get("sellerName") or ("暂无在售卖家" if seller_count == 0 else "")
+                            seller_id = str(tracking.get("sellerId") or "").strip()
                             if tracking.get("brand"):
                                 brand = tracking.get("brand")
                             if tracking.get("vertical"):
                                 vertical = tracking.get("vertical")
+
+                        # 辅助从 SellerMetaValue 补充 sellerId 和 sellerName
+                        if not seller_id or not seller_name:
+                            slots_data = page.get("data", {})
+                            if isinstance(slots_data, dict):
+                                for s_key, widgets in slots_data.items():
+                                    if not isinstance(widgets, list):
+                                        continue
+                                    for w in widgets:
+                                        smv = w.get("widget", {}).get("data", {}).get("SellerMetaValue", {})
+                                        if smv and isinstance(smv, dict):
+                                            val = smv.get("value", {}) or {}
+                                            if not seller_id and val.get("id"):
+                                                seller_id = str(val["id"]).strip()
+                                            if not seller_name and val.get("name"):
+                                                seller_name = str(val["name"]).strip()
 
                         # 1.1 从 ctx.pricing 提取价格
                         pricing = ctx.get("pricing")
@@ -522,6 +492,7 @@ class MakroScraperService:
             "price": price,
             "mrp": mrp,
             "seller_name": seller_name,
+            "seller_id": seller_id,
             "seller_count": seller_count,
             "image_url": image_url,
             "title": title,

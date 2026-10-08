@@ -58,6 +58,7 @@ class AutoRepriceService:
         comp_price = scraped.get("price", 0.0)
         comp_mrp = scraped.get("mrp", 0.0)
         comp_seller = (scraped.get("seller_name") or "").strip()
+        comp_seller_id = (scraped.get("seller_id") or "").strip()
         seller_count = scraped.get("seller_count", 1)
 
         old_selling_price = float(item.target_price or 0.0)
@@ -75,10 +76,22 @@ class AutoRepriceService:
         is_matrix_sister_store = False
         winning_store_name = None
 
-        if comp_seller:
+        # 核心优先：通过官方唯一 sellerId 严格精准匹配
+        if comp_seller_id:
+            for s in all_active_stores:
+                if s.seller_id and s.seller_id.strip().lower() == comp_seller_id.lower():
+                    if s.id == store.id:
+                        is_own_current_store = True
+                        winning_store_name = s.name
+                    else:
+                        is_matrix_sister_store = True
+                        winning_store_name = s.name
+                    break
+
+        # 备选辅助：若无 sellerId，则通过前台卖家别名/默认品牌/店名模糊比对
+        if not is_own_current_store and not is_matrix_sister_store and comp_seller:
             comp_seller_clean = comp_seller.strip().lower()
             for s in all_active_stores:
-                # 收集店铺全量可能的前台展示标识：店铺名称、默认品牌、卖家 SellerID
                 identifiers = []
                 if s.name:
                     identifiers.append(s.name.strip().lower())
@@ -281,6 +294,10 @@ class AutoRepriceService:
         ssp_val = str(int(new_price)) if float(new_price).is_integer() else str(round(new_price, 2))
         mrp_val = str(int(safe_mrp)) if float(safe_mrp).is_integer() else str(round(safe_mrp, 2))
         lead_time = str(item.lead_time_days or 14)
+        pkg_len = str(item.length or 15.0)
+        pkg_brd = str(item.breadth or 10.0)
+        pkg_hgt = str(item.height or 5.0)
+        pkg_wgt = str(item.weight or 0.5)
 
         payload = {
             "bulkRequests": [
@@ -301,7 +318,17 @@ class AutoRepriceService:
                         "ignore_warnings": False
                     },
                     "productId": item.makro_product_id,
-                    "skuId": item.seller_sku
+                    "skuId": item.seller_sku,
+                    "packages": [
+                        {
+                            "id": {"value": "packages-0"},
+                            "length": {"value": pkg_len, "qualifier": "CM"},
+                            "breadth": {"value": pkg_brd, "qualifier": "CM"},
+                            "height": {"value": pkg_hgt, "qualifier": "CM"},
+                            "weight": {"value": pkg_wgt, "qualifier": "KG"},
+                            "sku_id": {"value": item.seller_sku, "qualifier": ""}
+                        }
+                    ]
                 }
             ],
             "sellerId": store.seller_id
@@ -357,8 +384,8 @@ class AutoRepriceService:
         failed_count = 0
         details = []
 
-        actual_workers = max(1, min(max_workers, total, 100))
-        logger.info(f"店铺 [{store.name}] 启动高并发自动跟价巡航：共 {total} 件商品，并发工作线程数: {actual_workers}")
+        actual_workers = max(1, min(max_workers, total, 30))
+        logger.info(f"店铺 [{store.name}] 启动高性能自动跟价巡航：共 {total} 件商品，并发工作线程数: {actual_workers}")
 
         def _cruise_worker(iid: int) -> Dict[str, Any]:
             worker_db = SessionLocal()
@@ -366,8 +393,7 @@ class AutoRepriceService:
                 target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
                 if not target_item:
                     return {"status": "FAILED", "reason": "商品不存在", "item_id": iid}
-                dyn_proxy = ProxyPoolService.get_proxy()
-                return cls.reprice_single_item(target_item, worker_db, proxy=dyn_proxy)
+                return cls.reprice_single_item(target_item, worker_db, proxy=None)
             except Exception as w_err:
                 return {"status": "FAILED", "reason": str(w_err), "item_id": iid}
             finally:
@@ -452,9 +478,8 @@ class AutoRepriceService:
                         tm.update_progress(task_id, current=done_count, fail_inc=1, error=f"ID {iid} 商品不存在")
                     return
 
-                # 直通分配携趣动态代理，100 线程并发破防
-                dyn_proxy = ProxyPoolService.get_proxy()
-                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True, proxy=dyn_proxy)
+                # 服务端纯净 Chrome 124 浏览器指纹直连，秒级穿透反爬且零代理延迟
+                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True, proxy=None)
                 action = res.get("action", "")
                 status = res.get("status", "")
 
@@ -505,7 +530,7 @@ class AutoRepriceService:
             finally:
                 worker_db.close()
 
-        actual_workers = max(1, min(concurrency, total, 100))
+        actual_workers = max(1, min(concurrency, total, 30))
         logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，并发线程数: {actual_workers}")
 
         with ThreadPoolExecutor(max_workers=actual_workers) as executor:
