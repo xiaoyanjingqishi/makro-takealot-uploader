@@ -64,6 +64,7 @@ class SystemSettingsSchema(BaseModel):
     piggyback_default_floor_mode: str = "PERCENT"  # 默认底价模式: PERCENT (原价百分比), FIXED_MINUS (直降), FIXED (固定底价)
     piggyback_default_floor_value: float = 70.0    # 默认保本底价计算数值 (如 70.0 代表原价的 70%)
     piggyback_default_inventory: int = 500         # 默认上架库存 (默认 500)
+    piggyback_cruise_concurrency: int = 3          # 跟品巡检巡航并发线程数 (管理员自定义配置，默认 3 线程，推荐 2~5)
 
 
 class CostPricingCalculateRequest(BaseModel):

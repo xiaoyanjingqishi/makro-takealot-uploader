@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from ..database import get_db
 from ..models.user import User
 from ..models.store import Store
+from ..models.setting import SystemSetting
 from ..models.makro_piggyback import MakroPiggybackItem
 from ..models.makro_reprice_log import MakroRepriceLog
 from ..schemas.piggyback import RepriceLogResponse
@@ -27,7 +28,7 @@ class BatchRepriceRequest(BaseModel):
 
 class FullCruiseRequest(BaseModel):
     store_id: Optional[int] = None
-    concurrency: Optional[int] = 3
+    concurrency: Optional[int] = None
 
 @router.get("/logs")
 def get_reprice_logs(
@@ -100,17 +101,39 @@ def trigger_single_item_reprice(
 def trigger_full_cruise_reprice(
     req: Optional[FullCruiseRequest] = None,
     store_id: Optional[int] = Query(None),
-    concurrency: Optional[int] = Query(3),
+    concurrency: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     全量立刻发起后台平稳巡检巡航任务：
     抓取买家前台最新在售竞对与 Buybox 归属，对已开启自动跟价的在售商品执行智能调价，未开启的商品全面刷新 Buybox 状态并同步最新竞品情报。
+    并发线程数优先读取系统全局设置中管理员配置的【跟品巡检并发线程数】。
     """
-    target_store_id = (req.store_id if req and req.store_id is not None else store_id)
-    raw_concurrency = (req.concurrency if req and req.concurrency else concurrency) or 3
-    target_concurrency = max(1, min(raw_concurrency, 3))
+    target_store_id = None
+    if req and req.store_id is not None:
+        target_store_id = req.store_id
+    elif isinstance(store_id, int):
+        target_store_id = store_id
+
+    # 优先从系统配置读取管理员自定义的并发线程数
+    cfg_item = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_cruise_concurrency").first()
+    system_concurrency = 3
+    if cfg_item and cfg_item.value:
+        try:
+            system_concurrency = int(cfg_item.value)
+        except Exception:
+            pass
+
+    # 若请求显式传入则优先采用，否则使用系统配置值 (安全限制 1~30)
+    raw_concurrency = None
+    if req and req.concurrency is not None:
+        raw_concurrency = req.concurrency
+    elif isinstance(concurrency, int):
+        raw_concurrency = concurrency
+
+    chosen_concurrency = raw_concurrency if raw_concurrency is not None else system_concurrency
+    target_concurrency = max(1, min(chosen_concurrency, 30))
 
     store_name = "全店铺"
     if target_store_id:
@@ -138,10 +161,10 @@ def trigger_full_cruise_reprice(
             "task_id": None
         }
 
-    # 创建标准后台异步批处理任务
+    # 创建标准后台异步批处理任务 (在名称中显式标明执行线程数)
     task = task_manager.create_task(
         task_type="FULL_CRUISE_INSPECTION",
-        name=f"全量巡检巡航 [{store_name}] ({total} 件)",
+        name=f"全量巡检巡航 [{store_name}] ({total} 件 · {target_concurrency}线程)",
         total=total,
         product_ids=item_ids
     )
