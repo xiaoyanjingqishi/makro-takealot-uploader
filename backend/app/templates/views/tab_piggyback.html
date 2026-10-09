@@ -755,13 +755,15 @@
                         :class="{
                           'bg-emerald-100 text-emerald-800': item.status === 'ACTIVE',
                           'bg-sky-100 text-sky-800 animate-pulse': item.status === 'SUBMITTING',
+                          'bg-amber-100 text-amber-800 animate-pulse': item.status === 'FETCHING',
                           'bg-slate-100 text-slate-700': item.status === 'PENDING',
                           'bg-rose-100 text-rose-800': item.status === 'FAILED'
                         }"
                       >
                         <template v-if="item.status === 'ACTIVE'">🟢 挂靠成功</template>
                         <template v-else-if="item.status === 'SUBMITTING'">⏳ 提交中...</template>
-                        <template v-else-if="item.status === 'FAILED'">❌ 挂靠失败</template>
+                        <template v-else-if="item.status === 'FETCHING'">🔄 数据获取中...</template>
+                        <template v-else-if="item.status === 'FAILED'">❌ 获取失败</template>
                         <template v-else>⚪ 待发布</template>
                       </span>
                       <span v-if="item.is_abandoned && item.abandoned_reason" class="text-[9.5px] text-slate-500 line-clamp-1 max-w-[120px]" :title="item.abandoned_reason">
@@ -789,13 +791,23 @@
                         <span>🔄 恢复</span>
                       </button>
 
-                      <!-- 立即挂靠 (未弃用) -->
+                      <!-- 重试获取数据 (若处于失败状态) -->
                       <button 
-                        v-if="!item.is_abandoned"
+                        v-if="!item.is_abandoned && item.status === 'FAILED'"
+                        @click="handleRetryFetchItem(item)"
+                        class="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded font-medium text-xs transition-colors cursor-pointer"
+                        title="重新放入后台静默拉取队列"
+                      >
+                        <span>🔄 重试</span>
+                      </button>
+
+                      <!-- 立即挂靠 (未弃用且非获取中) -->
+                      <button 
+                        v-if="!item.is_abandoned && item.status !== 'FAILED'"
                         @click="handlePublishPiggyback(item)"
-                        :disabled="item.compliance_status === 'PROHIBITED' || item.status === 'SUBMITTING'"
+                        :disabled="item.compliance_status === 'PROHIBITED' || item.status === 'SUBMITTING' || item.status === 'FETCHING'"
                         class="px-2 py-1 bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200 rounded font-medium text-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                        :title="item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品'"
+                        :title="item.status === 'FETCHING' ? '后台正在静默抓取商品数据，请稍候...' : (item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品')"
                       >
                         <span>🚀 跟品</span>
                       </button>

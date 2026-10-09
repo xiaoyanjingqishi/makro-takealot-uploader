@@ -1027,6 +1027,46 @@ export const piggybackMethods = {
       this.loadingRepriceLogs = false;
     }
   },
+
+  async handleRetryFetchItem(item) {
+    if (!item || !item.id) return;
+    try {
+      item.status = 'FETCHING';
+      const res = await fetch(`/api/piggyback/${item.id}/retry-fetch`, {
+        method: 'POST',
+        headers: this.getAuthHeaders()
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        this.showToast(`🔄 [${item.makro_product_id}] 已重新推入后台静默拉取队列`, 'info');
+      } else {
+        throw new Error(data.detail || data.message || '重试失败');
+      }
+    } catch (e) {
+      this.showToast('重试拉取失败: ' + e.message, 'error');
+      item.status = 'FAILED';
+    }
+  },
+
+  async handleBatchRetryFetch() {
+    const storeId = this.piggyback.store_id;
+    try {
+      const url = storeId ? `/api/piggyback/batch-retry-fetch?store_id=${storeId}` : '/api/piggyback/batch-retry-fetch';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: this.getAuthHeaders()
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        this.showToast(`🔄 已将 ${data.count || 0} 件失败商品重新加入静默拉取队列`, 'success');
+        this.loadPiggybackItems(this.piggyback.page);
+      } else {
+        throw new Error(data.detail || data.message || '批量重试失败');
+      }
+    } catch (e) {
+      this.showToast('批量重试失败: ' + e.message, 'error');
+    }
+  },
 };
 
 export default piggybackMethods;

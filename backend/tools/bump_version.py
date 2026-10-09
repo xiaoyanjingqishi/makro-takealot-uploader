@@ -19,6 +19,7 @@ EXTENSION_DIR = ROOT_DIR / "extension"
 
 CONFIG_PY = BACKEND_DIR / "app" / "config.py"
 INDEX_HTML = BACKEND_DIR / "app" / "templates" / "index.html"
+TAB_MANAGEMENT_HTML = BACKEND_DIR / "app" / "templates" / "views" / "tab_management.html"
 MANIFEST_JSON = EXTENSION_DIR / "manifest.json"
 POPUP_HTML = EXTENSION_DIR / "popup" / "popup.html"
 FRONTEND_PKG = ROOT_DIR / "frontend" / "package.json"
@@ -84,19 +85,20 @@ def update_versions(new_sys_ver: str, new_ext_ver: str):
         POPUP_HTML.write_text(content, encoding="utf-8")
         print(f"  [√] 更新 {POPUP_HTML.relative_to(ROOT_DIR)}")
 
-    # 4. 更新 backend/app/templates/index.html
-    if INDEX_HTML.exists():
-        content = INDEX_HTML.read_text(encoding="utf-8")
-        # 系统版本徽标
-        content = re.sub(r'(<span class="font-bold text-white text-xs tracking-tight">Makro 搬品</span>\s*<span class="[^"]*">)v[^<]+(</span>)', rf'\g<1>v{new_sys_ver}\g<2>', content)
-        # 插件版本徽标
-        content = re.sub(r'(<span class="text-sm font-bold text-slate-900">Makro 搬品插件安装包</span>\s*<span class="[^"]*">)v[^<]+(</span>)', rf'\g<1>v{new_ext_ver}\g<2>', content)
-        # 下载文件名
-        content = re.sub(r'download="makro-extension-v[^"]+\.zip"', f'download="makro-extension-v{new_ext_ver}.zip"', content)
-        # 指引文本里的文件夹名
-        content = re.sub(r'makro-extension-v[0-9.]+', f'makro-extension-v{new_ext_ver}', content)
-        INDEX_HTML.write_text(content, encoding="utf-8")
-        print(f"  [√] 更新 {INDEX_HTML.relative_to(ROOT_DIR)}")
+    # 4. 更新 backend/app/templates/index.html 与 views/tab_management.html
+    for html_p in [INDEX_HTML, TAB_MANAGEMENT_HTML]:
+        if html_p.exists():
+            content = html_p.read_text(encoding="utf-8")
+            # 系统版本徽标
+            content = re.sub(r'(<span class="font-bold text-white text-xs tracking-tight">Makro 搬品</span>\s*<span class="[^"]*">)v[^<]+(</span>)', rf'\g<1>v{new_sys_ver}\g<2>', content)
+            # 插件版本徽标
+            content = re.sub(r'(<span class="text-sm font-bold text-slate-900">Makro 搬品插件安装包</span>\s*<span class="[^"]*">)v[^<]+(</span>)', rf'\g<1>v{new_ext_ver}\g<2>', content)
+            # 指引文本里的文件夹名
+            content = re.sub(r'makro-extension-v\d+\.\d+\.\d+', f'makro-extension-v{new_ext_ver}', content)
+            # 下载文件名
+            content = re.sub(r'download="makro-extension-v[^"]*?\.zip"', f'download="makro-extension-v{new_ext_ver}.zip"', content)
+            html_p.write_text(content, encoding="utf-8")
+            print(f"  [√] 更新 {html_p.relative_to(ROOT_DIR)}")
 
     # 5. 更新 frontend/package.json
     if FRONTEND_PKG.exists():

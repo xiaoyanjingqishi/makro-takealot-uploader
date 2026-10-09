@@ -43,6 +43,12 @@ async def lifespan(app: FastAPI):
             auto_reprice_scheduler.start()
         except Exception as e:
             logger.warning(f"[LIFESPAN] 启动自动跟价调度器失败: {e}")
+
+        try:
+            from app.services.piggyback_collect_service import piggyback_collect_service
+            piggyback_collect_service.recover_pending_fetching()
+        except Exception as e:
+            logger.warning(f"[LIFESPAN] 恢复未完成的静默采集任务失败: {e}")
     else:
         logger.info("[LIFESPAN] 检测到调度器禁用标识 (ENABLE_BACKGROUND_SCHEDULERS=false)，跳过后台调度器自启")
 

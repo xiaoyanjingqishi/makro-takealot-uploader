@@ -199,28 +199,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 5. Makro 官网买家端一键采集跟品
   if (request.action === "COLLECT_MAKRO_PIGGYBACK") {
-    getBackendUrl().then((backendUrl) => {
+    Promise.all([
+      getBackendUrl(),
+      new Promise(resolve => chrome.storage.local.get(["makro_collector_user"], res => resolve(res ? res.makro_collector_user : null)))
+    ]).then(([backendUrl, collectorUser]) => {
       const urlOrFsn = request.fsn || request.url;
+      const payload = {
+        url_or_fsn: urlOrFsn,
+        item_id: request.item_id || null,
+        store_id: request.store_id || null,
+        title: request.title || null,
+        brand: request.brand || null,
+        vertical: request.vertical || null,
+        price: request.price || null,
+        mrp: request.mrp || null,
+        image_url: request.image_url || null,
+        seller_name: request.seller_name || null,
+        seller_count: request.seller_count || 1,
+        model_number: request.model_number || null,
+        barcode: request.barcode || null,
+        variant_name: request.variant_name || null,
+        variant_attributes: request.variant_attributes || null
+      };
+
+      // 注入采集归属员工标识
+      if (collectorUser && collectorUser.id) {
+        payload.user_id = collectorUser.id;
+        payload.collector_username = collectorUser.username;
+      }
+
       fetch(`${backendUrl}/api/piggyback/collect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url_or_fsn: urlOrFsn,
-          item_id: request.item_id || null,
-          store_id: request.store_id || null,
-          title: request.title || null,
-          brand: request.brand || null,
-          vertical: request.vertical || null,
-          price: request.price || null,
-          mrp: request.mrp || null,
-          image_url: request.image_url || null,
-          seller_name: request.seller_name || null,
-          seller_count: request.seller_count || 1,
-          model_number: request.model_number || null,
-          barcode: request.barcode || null,
-          variant_name: request.variant_name || null,
-          variant_attributes: request.variant_attributes || null
-        })
+        body: JSON.stringify(payload)
       })
         .then(async (res) => {
           if (!res.ok) {
@@ -240,16 +251,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 5.1 Makro 官网买家端批量采集跟品 (搜索页批量 / 多变体批量采集)
   if (request.action === "COLLECT_MAKRO_PIGGYBACK_BATCH") {
-    getBackendUrl().then((backendUrl) => {
+    Promise.all([
+      getBackendUrl(),
+      new Promise(resolve => chrome.storage.local.get(["makro_collector_user"], res => resolve(res ? res.makro_collector_user : null)))
+    ]).then(([backendUrl, collectorUser]) => {
+      const payload = {
+        rich_items: request.rich_items || [],
+        store_id: request.store_id || null,
+        price_strategy: request.price_strategy || "MINUS_1",
+        min_price_floor: request.min_price_floor || 0.0
+      };
+
+      // 注入采集归属员工标识
+      if (collectorUser && collectorUser.id) {
+        payload.user_id = collectorUser.id;
+        payload.collector_username = collectorUser.username;
+      }
+
       fetch(`${backendUrl}/api/piggyback/batch-collect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rich_items: request.rich_items || [],
-          store_id: request.store_id || null,
-          price_strategy: request.price_strategy || "MINUS_1",
-          min_price_floor: request.min_price_floor || 0.0
-        })
+        body: JSON.stringify(payload)
       })
         .then(async (res) => {
           if (!res.ok) {

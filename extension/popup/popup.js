@@ -423,6 +423,43 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         );
       };
+    } else if (url.includes("makro.co.za")) {
+      const isPdp = url.includes("/p/") || /[?&](pid|fsn)=/i.test(url);
+      pageInfo.innerText = currentTab.title || (isPdp ? "Makro 买家详情页" : "Makro 搜索/类目页");
+
+      if (isPdp) {
+        actionBtn.innerText = "🎯 立即采集当前跟品";
+        actionBtn.disabled = false;
+        actionBtn.onclick = () => {
+          actionBtn.innerText = "⏳ 采集处理中...";
+          actionBtn.disabled = true;
+
+          chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
+            const storeId = sRes?.makro_target_store_id || null;
+            chrome.runtime.sendMessage({
+              action: "COLLECT_MAKRO_PIGGYBACK",
+              url: url,
+              store_id: storeId
+            }, (res) => {
+              if (res && res.success) {
+                actionBtn.innerText = res.already_exists ? "💡 已在跟品库" : "✅ 跟品入库成功！";
+              } else {
+                actionBtn.innerText = "❌ 采集失败: " + ((res && res.error) || "未知错误");
+              }
+              setTimeout(() => {
+                actionBtn.innerText = "🎯 立即采集当前跟品";
+                actionBtn.disabled = false;
+              }, 2500);
+            });
+          });
+        };
+      } else {
+        actionBtn.innerText = "🎯 在页面中使用批量跟品条";
+        actionBtn.disabled = false;
+        actionBtn.onclick = () => {
+          window.close();
+        };
+      }
     } else {
       pageInfo.innerText = "未在 Takealot 或 Makro 页面";
       actionBtn.innerText = "访问 Takealot 选品";

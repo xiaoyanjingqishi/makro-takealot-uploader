@@ -26,6 +26,8 @@ class CollectPiggybackRequest(BaseModel):
     variant_name: Optional[str] = Field(None, description="变体展示名 (如 Pack of 10)")
     auto_reprice: Optional[bool] = Field(True, description="是否开启自动跟价")
     max_price_ceiling: Optional[float] = Field(0.0, description="最高保护价")
+    user_id: Optional[int] = Field(None, description="操作/归属员工用户 ID")
+    collector_username: Optional[str] = Field(None, description="操作员工用户名")
 
 class BatchCollectPiggybackRequest(BaseModel):
     items: Optional[List[str]] = Field(None, description="多个 Makro 链接或 FSN 字符串列表")
@@ -34,6 +36,8 @@ class BatchCollectPiggybackRequest(BaseModel):
     price_strategy: Optional[str] = Field("MINUS_15", description="比价策略")
     min_price_floor: Optional[float] = Field(0.0, description="保本底价")
     auto_compliance: Optional[bool] = Field(None, description="是否自动执行合规检测")
+    user_id: Optional[int] = Field(None, description="操作/归属员工用户 ID")
+    collector_username: Optional[str] = Field(None, description="操作员工用户名")
 
 class PiggybackItemUpdate(BaseModel):
     seller_sku: Optional[str] = None

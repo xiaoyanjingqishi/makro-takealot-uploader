@@ -99,6 +99,7 @@ def get_settings(
         piggyback_default_floor_value=_get_float("piggyback_default_floor_value", 70.0),
         piggyback_default_inventory=_get_int("piggyback_default_inventory", 500),
         piggyback_cruise_concurrency=_get_int("piggyback_cruise_concurrency", 3),
+        piggyback_collect_concurrency=_get_int("piggyback_collect_concurrency", 5),
     )
 
 @router.post("", summary="保存或更新系统配置 (仅限系统管理员)")
