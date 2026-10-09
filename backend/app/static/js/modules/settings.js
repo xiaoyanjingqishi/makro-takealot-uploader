@@ -28,6 +28,11 @@ export const settingsMethods = {
         if (isNaN(colConc) || colConc < 1) colConc = 5;
         if (colConc > 50) colConc = 50;
         this.settings.piggyback_collect_concurrency = colConc;
+
+        let compConc = parseInt(this.settings.piggyback_compliance_concurrency, 10);
+        if (isNaN(compConc) || compConc < 1) compConc = 100;
+        if (compConc > 100) compConc = 100;
+        this.settings.piggyback_compliance_concurrency = compConc;
       }
       const res = await fetch('/api/settings', {
         method: 'POST',
@@ -42,7 +47,8 @@ export const settingsMethods = {
       if (res.ok) {
         const conc = this.settings?.piggyback_cruise_concurrency || 3;
         const colConc = this.settings?.piggyback_collect_concurrency || 5;
-        this.showToast(`✅ 全局配置已成功保存！(巡检并发: ${conc} 线程 · 采集并发: ${colConc} 线程)`, 'success');
+        const compConc = this.settings?.piggyback_compliance_concurrency || 100;
+        this.showToast(`✅ 全局配置已成功保存！(质检并发: ${compConc} 线程 · 巡检并发: ${conc} 线程 · 采集并发: ${colConc} 线程)`, 'success');
       } else {
         const errData = await res.json().catch(() => ({}));
         this.showToast(`保存失败: ${errData.detail || res.statusText}`, 'error');

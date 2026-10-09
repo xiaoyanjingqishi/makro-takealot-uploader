@@ -2,6 +2,8 @@ import re
 import json
 import base64
 import logging
+import time
+import random
 import requests
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -428,60 +430,70 @@ class ComplianceService:
             f"You are a fast, decisive ecommerce IP compliance auditor for {ai_name}. "
             "Do NOT write long thinking essays. Output the final valid JSON object immediately. Reply ONLY with valid JSON."
         ) if is_deepseek else f"You are a professional ecommerce IP compliance auditor for {ai_name}. Reply ONLY with valid JSON."
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": sys_msg},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=tok_limit
-            )
-            choice = resp.choices[0]
-            content = choice.message.content or ""
-            parsed = self._robust_parse_json(content)
-            if not parsed and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
-                parsed = self._robust_parse_json(choice.message.reasoning_content)
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=tok_limit
+                )
+                choice = resp.choices[0]
+                content = choice.message.content or ""
+                parsed = self._robust_parse_json(content)
+                if not parsed and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
+                    parsed = self._robust_parse_json(choice.message.reasoning_content)
 
-            if not parsed:
-                parsed = {"has_risk": False, "risk_level": "SAFE", "reasons": [], "detected_brands_or_ips": []}
+                if not parsed:
+                    parsed = {"has_risk": False, "risk_level": "SAFE", "reasons": [], "detected_brands_or_ips": []}
 
-            has_risk = bool(parsed.get("has_risk", False))
-            risk_level = str(parsed.get("risk_level", "SAFE")).upper()
-            if risk_level not in ["SAFE", "RISK", "PROHIBITED"]:
-                risk_level = "RISK" if has_risk else "SAFE"
+                has_risk = bool(parsed.get("has_risk", False))
+                risk_level = str(parsed.get("risk_level", "SAFE")).upper()
+                if risk_level not in ["SAFE", "RISK", "PROHIBITED"]:
+                    risk_level = "RISK" if has_risk else "SAFE"
 
-            detected = parsed.get("detected_brands_or_ips", [])
-            reasons = parsed.get("reasons", [])
-            rec_title = parsed.get("recommended_title")
+                detected = parsed.get("detected_brands_or_ips", [])
+                reasons = parsed.get("reasons", [])
+                rec_title = parsed.get("recommended_title")
 
-            return {
-                "tested": True,
-                "ai_name": ai_name,
-                "model": model,
-                "has_risk": has_risk or (risk_level != "SAFE"),
-                "risk_level": risk_level,
-                "detected_brands_or_ips": detected,
-                "violation_type": parsed.get("violation_type", "NONE"),
-                "reasons": reasons,
-                "recommended_title": rec_title,
-                "summary": "；".join(reasons) if reasons else ("未发现知识产权侵权" if risk_level == "SAFE" else "存在知识产权风险")
-            }
-        except Exception as e:
-            logger.warning(f"[{ai_name}] 文本合规调用异常: {e}")
-            return {
-                "tested": False,
-                "ai_name": ai_name,
-                "model": model,
-                "has_risk": False,
-                "risk_level": "SAFE",
-                "detected_brands_or_ips": [],
-                "violation_type": "NONE",
-                "reasons": [f"{ai_name} 审查跳过: {str(e)[:50]}"],
-                "recommended_title": target_title,
-                "summary": f"{ai_name} 调用跳过 ({str(e)[:40]})"
-            }
+                return {
+                    "tested": True,
+                    "ai_name": ai_name,
+                    "model": model,
+                    "has_risk": has_risk or (risk_level != "SAFE"),
+                    "risk_level": risk_level,
+                    "detected_brands_or_ips": detected,
+                    "violation_type": parsed.get("violation_type", "NONE"),
+                    "reasons": reasons,
+                    "recommended_title": rec_title,
+                    "summary": "；".join(reasons) if reasons else ("未发现知识产权侵权" if risk_level == "SAFE" else "存在知识产权风险")
+                }
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = any(k in err_str for k in ["429", "rate limit", "too many requests", "rate_limit", "quota"])
+                is_transient = is_rate_limit or any(k in err_str for k in ["timeout", "connection", "connecterror", "reset", "502", "503", "504"])
+                if attempt < max_retries and is_transient:
+                    backoff = (0.5 * (2 ** attempt)) + random.uniform(0.1, 0.4)
+                    logger.warning(f"[{ai_name}] 触发瞬时限流或网络抖动 ({e})，将在 {backoff:.2f}s 后进行第 {attempt + 1} 次重试...")
+                    time.sleep(backoff)
+                    continue
+                logger.warning(f"[{ai_name}] 文本合规调用异常: {e}")
+                return {
+                    "tested": False,
+                    "ai_name": ai_name,
+                    "model": model,
+                    "has_risk": False,
+                    "risk_level": "SAFE",
+                    "detected_brands_or_ips": [],
+                    "violation_type": "NONE",
+                    "reasons": [f"{ai_name} 审查跳过: {str(e)[:50]}"],
+                    "recommended_title": target_title,
+                    "summary": f"{ai_name} 调用跳过 ({str(e)[:40]})"
+                }
 
     # =========================================================================
     # 第二轮: 主图视觉与运输合规多模态风控 (双 AI 并发视觉审查)
@@ -640,63 +652,73 @@ class ComplianceService:
         """向指定多模态视觉模型发送图像审查请求 (严格限流 max_tokens)"""
         is_deepseek = "deepseek" in ai_name.lower() or "deepseek" in model.lower()
         tok_limit = 350 if is_deepseek else 180
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": data_uri}}
-                        ]
-                    }
-                ],
-                temperature=0.1,
-                max_tokens=tok_limit
-            )
-            choice = response.choices[0]
-            content = choice.message.content or ""
-            parsed = self._robust_parse_json(content)
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": data_uri}}
+                            ]
+                        }
+                    ],
+                    temperature=0.1,
+                    max_tokens=tok_limit
+                )
+                choice = response.choices[0]
+                content = choice.message.content or ""
+                parsed = self._robust_parse_json(content)
 
-            if not parsed and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
-                parsed = self._robust_parse_json(choice.message.reasoning_content)
+                if not parsed and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
+                    parsed = self._robust_parse_json(choice.message.reasoning_content)
 
-            if not parsed:
-                parsed = {"has_brand_logo": False, "is_transport_prohibited": False, "risk_level": "SAFE", "summary": f"{ai_name} 视觉未检出异常"}
+                if not parsed:
+                    parsed = {"has_brand_logo": False, "is_transport_prohibited": False, "risk_level": "SAFE", "summary": f"{ai_name} 视觉未检出异常"}
 
-            has_logo = bool(parsed.get("has_brand_logo", False))
-            is_prohib = bool(parsed.get("is_transport_prohibited", False))
-            risk_level = str(parsed.get("risk_level", "SAFE")).upper()
-            if risk_level not in ["SAFE", "RISK", "PROHIBITED"]:
-                risk_level = "PROHIBITED" if is_prohib else ("RISK" if has_logo else "SAFE")
+                has_logo = bool(parsed.get("has_brand_logo", False))
+                is_prohib = bool(parsed.get("is_transport_prohibited", False))
+                risk_level = str(parsed.get("risk_level", "SAFE")).upper()
+                if risk_level not in ["SAFE", "RISK", "PROHIBITED"]:
+                    risk_level = "PROHIBITED" if is_prohib else ("RISK" if has_logo else "SAFE")
 
-            return {
-                "tested": True,
-                "ai_name": ai_name,
-                "model": model,
-                "image_url": image_url,
-                "has_brand_logo": has_logo,
-                "logo_names": parsed.get("detected_logos", []),
-                "is_transport_prohibited": is_prohib,
-                "prohibited_types": parsed.get("prohibited_types", []),
-                "risk_level": risk_level,
-                "summary": parsed.get("summary", f"{ai_name} 视觉检测完成")
-            }
-        except Exception as e:
-            logger.warning(f"[{ai_name}] 视觉检测调用异常: {e}")
-            return {
-                "tested": False,
-                "ai_name": ai_name,
-                "model": model,
-                "image_url": image_url,
-                "has_brand_logo": False,
-                "logo_names": [],
-                "is_transport_prohibited": False,
-                "prohibited_types": [],
-                "risk_level": "SAFE",
-                "summary": f"{ai_name} 视觉检测跳过 ({str(e)[:40]})"
-            }
+                return {
+                    "tested": True,
+                    "ai_name": ai_name,
+                    "model": model,
+                    "image_url": image_url,
+                    "has_brand_logo": has_logo,
+                    "logo_names": parsed.get("detected_logos", []),
+                    "is_transport_prohibited": is_prohib,
+                    "prohibited_types": parsed.get("prohibited_types", []),
+                    "risk_level": risk_level,
+                    "summary": parsed.get("summary", f"{ai_name} 视觉检测完成")
+                }
+            except Exception as e:
+                err_str = str(e).lower()
+                is_rate_limit = any(k in err_str for k in ["429", "rate limit", "too many requests", "rate_limit", "quota"])
+                is_transient = is_rate_limit or any(k in err_str for k in ["timeout", "connection", "connecterror", "reset", "502", "503", "504"])
+                if attempt < max_retries and is_transient:
+                    backoff = (0.5 * (2 ** attempt)) + random.uniform(0.1, 0.4)
+                    logger.warning(f"[{ai_name}] 视觉审查触发瞬时限流或网络抖动 ({e})，将在 {backoff:.2f}s 后进行第 {attempt + 1} 次重试...")
+                    time.sleep(backoff)
+                    continue
+                logger.warning(f"[{ai_name}] 视觉检测调用异常: {e}")
+                return {
+                    "tested": False,
+                    "ai_name": ai_name,
+                    "model": model,
+                    "image_url": image_url,
+                    "has_brand_logo": False,
+                    "logo_names": [],
+                    "is_transport_prohibited": False,
+                    "prohibited_types": [],
+                    "risk_level": "SAFE",
+                    "summary": f"{ai_name} 视觉检测跳过 ({str(e)[:40]})"
+                }
 
     # =========================================================================
     # 会审聚合与分歧裁决器 (Reconciliation Engine)

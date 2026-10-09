@@ -434,7 +434,8 @@ const app = createApp({
             piggyback_default_floor_value: 70.0,
             piggyback_default_inventory: 500,
             piggyback_cruise_concurrency: 3,
-            piggyback_collect_concurrency: 5
+            piggyback_collect_concurrency: 5,
+            piggyback_compliance_concurrency: 100
           },
           batchCleanMode: 'text',
           searchQuery: '',

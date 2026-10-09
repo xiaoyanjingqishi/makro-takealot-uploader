@@ -420,6 +420,25 @@
                 </div>
                 <span class="text-[10px] text-emerald-600/80 mt-1 block">插件点击采集入库后，后台静默拉取完整详情与竞对数据的并发线程数 (默认 5，支持 1~50)</span>
               </div>
+              <div class="p-3 bg-purple-50/60 rounded-xl border border-purple-200/80">
+                <label class="block text-xs font-semibold text-purple-900 mb-1 flex items-center justify-between">
+                  <span>🛡️ AI质检并发线程数</span>
+                  <span class="text-[10px] text-purple-600 font-mono font-bold">{{ settings.piggyback_compliance_concurrency || 100 }} 线程</span>
+                </label>
+                <div class="relative">
+                  <input type="number" min="1" max="100" v-model.number="settings.piggyback_compliance_concurrency" placeholder="如: 100" class="w-full text-xs p-2 border border-purple-200 rounded-lg bg-white font-bold text-purple-700 focus:ring-2 focus:ring-purple-500/20 pr-16">
+                  <span class="absolute right-3 top-2 text-xs font-semibold text-purple-400 pointer-events-none">线程 (1~100)</span>
+                </div>
+                <!-- 快捷预设标签 -->
+                <div class="flex items-center space-x-1.5 mt-2">
+                  <span class="text-[10px] text-purple-600/80">快捷设置:</span>
+                  <button type="button" @click="settings.piggyback_compliance_concurrency = 10" class="px-1.5 py-0.5 text-[10px] bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 cursor-pointer font-medium">10 平稳</button>
+                  <button type="button" @click="settings.piggyback_compliance_concurrency = 20" class="px-1.5 py-0.5 text-[10px] bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 cursor-pointer font-medium">20 加速</button>
+                  <button type="button" @click="settings.piggyback_compliance_concurrency = 50" class="px-1.5 py-0.5 text-[10px] bg-white border border-purple-200 rounded hover:bg-purple-100 text-purple-700 cursor-pointer font-medium">50 高速</button>
+                  <button type="button" @click="settings.piggyback_compliance_concurrency = 100" class="px-1.5 py-0.5 text-[10px] bg-purple-600 text-white rounded hover:bg-purple-700 cursor-pointer font-medium shadow-2xs">100 极速并发</button>
+                </div>
+                <span class="text-[10px] text-purple-600/80 mt-1 block">批量执行跟品 AI 侵权与合规检测时的并发工作线程数 (默认 100 线程，支持 1~100 自由调节)</span>
+              </div>
             </div>
           </div>
 

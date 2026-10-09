@@ -85,7 +85,8 @@ class JevService:
         }
 
         t0 = time.time()
-        for attempt in range(2):
+        max_retries = 3
+        for attempt in range(max_retries + 1):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
                 latency_ms = round((time.time() - t0) * 1000, 1)
@@ -101,6 +102,9 @@ class JevService:
                     }
                 else:
                     err_text = resp.text[:300]
+                    if attempt < max_retries and resp.status_code in [429, 500, 502, 503, 504]:
+                        time.sleep(0.5 * (attempt + 1))
+                        continue
                     logger.warning(f"Jev API 返回非 200 异常 (HTTP {resp.status_code}): {err_text}")
                     return {
                         "success": False,
@@ -109,11 +113,11 @@ class JevService:
                         "latency_ms": latency_ms
                     }
             except Exception as e:
-                if attempt == 0:
-                    time.sleep(0.6)
+                if attempt < max_retries:
+                    time.sleep(0.5 * (attempt + 1))
                     continue
                 latency_ms = round((time.time() - t0) * 1000, 1)
-                logger.error(f"调用 Jev API 网络异常 (重试后失败): {e}")
+                logger.error(f"调用 Jev API 网络异常 (重试3次后失败): {e}")
                 return {
                     "success": False,
                     "error": str(e),

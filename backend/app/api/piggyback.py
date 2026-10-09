@@ -887,9 +887,20 @@ def batch_check_compliance(
     u_id = current_user.id if current_user else None
     op_name = (current_user.nickname or current_user.username) if current_user else "系统"
 
+    # 读取管理员配置的跟品质检并发线程数 (默认 100 并发，支持 1~100)
+    cfg_workers = 100
+    try:
+        setting_concurrency = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_compliance_concurrency").first()
+        if setting_concurrency and setting_concurrency.value:
+            cfg_workers = int(setting_concurrency.value)
+    except Exception:
+        cfg_workers = 100
+
+    concurrency = max(1, min(100, cfg_workers, len(items)))
+
     task = task_manager.create_task(
         task_type="PIGGYBACK_COMPLIANCE",
-        name=f"批量跟品AI合规质检 ({len(items)} 件)",
+        name=f"批量跟品AI合规质检 ({concurrency}线程并发 · 共 {len(items)} 件)",
         total=len(items),
         product_ids=req.ids
     )
@@ -898,20 +909,10 @@ def batch_check_compliance(
     def _worker(tm: TaskManager, tid: str):
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
+        import time
+        import random
         from ..database import SessionLocal
-        from ..models.setting import SystemSetting
 
-        init_db = SessionLocal()
-        try:
-            setting_concurrency = init_db.query(SystemSetting).filter(SystemSetting.key == "publish_concurrency").first()
-            try:
-                cfg_workers = int(setting_concurrency.value) if (setting_concurrency and setting_concurrency.value) else 3
-            except Exception:
-                cfg_workers = 3
-        finally:
-            init_db.close()
-
-        concurrency = max(1, min(5, cfg_workers, len(items)))
         done = 0
         success_cnt = 0
         risk_or_fail = 0
@@ -922,41 +923,62 @@ def batch_check_compliance(
             nonlocal done, success_cnt, risk_or_fail
             if tm.is_cancelled(tid):
                 return
-            thread_db = SessionLocal()
-            try:
-                it = thread_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == it_id).first()
-                if not it:
+
+            max_retries = 3
+            last_err = None
+            for attempt in range(max_retries + 1):
+                if tm.is_cancelled(tid):
                     return
-                r = MakroPiggybackService.check_compliance_for_item(it, thread_db)
-                with progress_lock:
-                    done += 1
-                    status = it.compliance_status
-                    results[it.id] = {"status": status, "summary": r.get("summary")}
-                    if status == "SAFE":
-                        success_cnt += 1
-                    else:
-                        risk_or_fail += 1
-                    tm.update_progress(
-                        tid,
-                        current=done,
-                        current_title=f"[{status}] {it.title[:30]}",
-                        success_inc=1 if status == "SAFE" else 0,
-                        fail_inc=1 if status != "SAFE" else 0
-                    )
-            except Exception as e:
-                with progress_lock:
-                    done += 1
-                    risk_or_fail += 1
-                    results[it_id] = {"status": "ERROR", "error": str(e)}
-                    tm.update_progress(
-                        tid,
-                        current=done,
-                        current_title=f"检测异常: {str(e)[:30]}",
-                        fail_inc=1,
-                        error=str(e)
-                    )
-            finally:
-                thread_db.close()
+                thread_db = SessionLocal()
+                try:
+                    it = thread_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == it_id).first()
+                    if not it:
+                        return
+                    r = MakroPiggybackService.check_compliance_for_item(it, thread_db)
+
+                    # 若因大模型服务抖动或网络超时返回了异常，且仍在重试次数内，则退避重试
+                    if r.get("compliance_status") == "RISK" and "合规检测接口异常" in r.get("summary", ""):
+                        if attempt < max_retries and not tm.is_cancelled(tid):
+                            time.sleep(0.8 * (attempt + 1) + random.uniform(0.1, 0.4))
+                            continue
+
+                    with progress_lock:
+                        done += 1
+                        status = it.compliance_status
+                        results[it.id] = {"status": status, "summary": r.get("summary")}
+                        if status == "SAFE":
+                            success_cnt += 1
+                        else:
+                            risk_or_fail += 1
+                        retry_tip = f" (第{attempt}次重试成功)" if attempt > 0 else ""
+                        tm.update_progress(
+                            tid,
+                            current=done,
+                            current_title=f"[{status}] {it.title[:30]}{retry_tip}",
+                            success_inc=1 if status == "SAFE" else 0,
+                            fail_inc=1 if status != "SAFE" else 0
+                        )
+                    return
+                except Exception as e:
+                    last_err = e
+                    if attempt < max_retries and not tm.is_cancelled(tid):
+                        time.sleep(0.8 * (attempt + 1) + random.uniform(0.1, 0.4))
+                        continue
+                finally:
+                    thread_db.close()
+
+            # 3 次重试全部耗尽后仍异常
+            with progress_lock:
+                done += 1
+                risk_or_fail += 1
+                results[it_id] = {"status": "ERROR", "error": f"重试3次后仍失败: {str(last_err)}"}
+                tm.update_progress(
+                    tid,
+                    current=done,
+                    current_title=f"检测异常(已重试3次): {str(last_err)[:25]}",
+                    fail_inc=1,
+                    error=str(last_err)
+                )
 
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
             futures = [executor.submit(_check_one, it.id) for it in items]
@@ -971,14 +993,14 @@ def batch_check_compliance(
             tm.finish_task(
                 tid,
                 status="SUCCESS",
-                message=f"跟品合规检测完成: 共 {len(items)} 件 (安全 {success_cnt} 件, 风险/拦截 {risk_or_fail} 件)",
+                message=f"跟品合规检测完成: 共 {len(items)} 件 ({concurrency}线程并发, 安全 {success_cnt} 件, 风险/拦截 {risk_or_fail} 件)",
                 success_count=success_cnt,
                 fail_count=risk_or_fail
             )
             record_audit_log(
                 task_type="PIGGYBACK_COMPLIANCE",
                 status="SUCCESS",
-                message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查 (安全 {success_cnt}, 风险 {risk_or_fail})",
+                message=f"批量跟品合规检测: 完成 {len(items)} 件商品排查 ({concurrency}线程并发, 安全 {success_cnt}, 风险 {risk_or_fail})",
                 detail_logs={"total": len(items), "concurrency": concurrency, "results": results},
                 user_id=u_id,
                 operator_name=op_name,
@@ -992,8 +1014,10 @@ def batch_check_compliance(
     return {
         "success": True,
         "task_id": task_id,
+        "task_name": task["name"],
+        "concurrency": concurrency,
         "total_requested": len(items),
-        "message": f"已成功启动 {len(items)} 件商品的异步合规检测任务"
+        "message": f"已成功启动 {len(items)} 件商品的异步合规检测任务 ({concurrency}线程并发)"
     }
 
 @router.post("/arbitrate/{item_id}", summary="人工终审仲裁跟品合规判定")

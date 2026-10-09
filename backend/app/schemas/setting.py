@@ -66,6 +66,7 @@ class SystemSettingsSchema(BaseModel):
     piggyback_default_inventory: int = 500         # 默认上架库存 (默认 500)
     piggyback_cruise_concurrency: int = 3          # 跟品巡检巡航并发线程数 (管理员自定义配置，默认 3 线程，推荐 2~5)
     piggyback_collect_concurrency: int = 5         # 跟品采集静默抓取并发线程数 (管理员自定义配置，默认 5 线程，支持 1~50)
+    piggyback_compliance_concurrency: int = 100    # 跟品批量AI质检并发线程数 (管理员自定义配置，默认 100 线程，支持 1~100)
 
 
 class CostPricingCalculateRequest(BaseModel):

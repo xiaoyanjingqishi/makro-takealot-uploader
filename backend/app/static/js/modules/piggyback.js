@@ -529,19 +529,20 @@ export const piggybackMethods = {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || '批量检测启动失败');
       if (data.task_id) {
+        const conc = data.concurrency || 100;
         this.addOrUpdateBgTask({
           id: data.task_id,
-          name: `批量跟品AI合规质检 (${count} 件)`,
+          name: data.task_name || `批量跟品AI合规质检 (${conc}线程并发 · 共 ${count} 件)`,
           task_type: 'PIGGYBACK_COMPLIANCE',
           status: 'RUNNING',
           progress: 0,
           current: 0,
           total: count,
-          current_title: '正在初始化AI合规质检多线程引擎...'
+          current_title: `正在以 ${conc} 线程并发初始化AI合规质检引擎...`
         });
         this.showFullTasksBanner = true;
         this.ensureBgTasksPolling();
-        this.showToast(`🛡️ ${data.message || '已启动批量AI合规质检任务，顶部进度条正在实时推进'}`, 'success');
+        this.showToast(`🛡️ ${data.message || `已启动批量AI合规质检任务 (${conc} 线程并发)，顶部进度条正在实时推进`}`, 'success');
       } else {
         this.showToast(data.message || '质检完成', 'success');
         this.loadPiggybackItems(this.piggyback.page);

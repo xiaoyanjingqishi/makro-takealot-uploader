@@ -210,6 +210,10 @@ class MakroPiggybackService:
             return res
         except Exception as e:
             logger.error(f"跟品商品 (ID: {item.id}) AI 合规检测异常: {e}", exc_info=True)
+            try:
+                db.rollback()
+            except Exception:
+                pass
             item.compliance_status = "RISK"
             err_res = {
                 "compliance_status": "RISK",
@@ -219,7 +223,10 @@ class MakroPiggybackService:
                 "reconciliation_summary": f"AI 检测调用异常: {str(e)}"
             }
             item.compliance_details = json.dumps(err_res, ensure_ascii=False)
-            db.commit()
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
             return err_res
 
     @classmethod

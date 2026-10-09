@@ -497,35 +497,46 @@ def batch_check_compliance(
     def _worker(tm: TaskManager, tid: str):
 
         def _do_one(pid: int):
-            if tm.is_cancelled(tid):
-                return pid, False, "任务已取消", ""
-            local_db = SessionLocal()
-            try:
-                prod = local_db.query(Product).filter(Product.id == pid).first()
-                if not prod:
-                    return pid, False, f"商品 {pid} 不存在", ""
-                p_title = prod.takealot_title
+            max_retries = 3
+            last_err = ""
+            for attempt in range(max_retries + 1):
+                if tm.is_cancelled(tid):
+                    return pid, False, "任务已取消", ""
+                local_db = SessionLocal()
+                try:
+                    prod = local_db.query(Product).filter(Product.id == pid).first()
+                    if not prod:
+                        return pid, False, f"商品 {pid} 不存在", ""
+                    p_title = prod.takealot_title
 
-                specs = json.loads(prod.takealot_specs) if prod.takealot_specs else {}
-                comp_res = cs.check_product({
-                    "takealot_title": prod.takealot_title,
-                    "makro_title": prod.makro_title,
-                    "takealot_brand": prod.takealot_brand,
-                    "takealot_category": prod.takealot_category,
-                    "takealot_specs": specs,
-                    "takealot_description": prod.takealot_description,
-                    "makro_brand": prod.makro_brand,
-                    "raw_images": prod.raw_images
-                }, check_image=True, check_ai_title=True)
+                    specs = json.loads(prod.takealot_specs) if prod.takealot_specs else {}
+                    comp_res = cs.check_product({
+                        "takealot_title": prod.takealot_title,
+                        "makro_title": prod.makro_title,
+                        "takealot_brand": prod.takealot_brand,
+                        "takealot_category": prod.takealot_category,
+                        "takealot_specs": specs,
+                        "takealot_description": prod.takealot_description,
+                        "makro_brand": prod.makro_brand,
+                        "raw_images": prod.raw_images
+                    }, check_image=True, check_ai_title=True)
 
-                prod.compliance_status = comp_res.get("compliance_status", "SAFE")
-                prod.compliance_details = json.dumps(comp_res, ensure_ascii=False)
-                local_db.commit()
-                return pid, True, None, p_title
-            except Exception as e:
-                return pid, False, f"商品 {pid} 合规检测异常: {str(e)}", ""
-            finally:
-                local_db.close()
+                    prod.compliance_status = comp_res.get("compliance_status", "SAFE")
+                    prod.compliance_details = json.dumps(comp_res, ensure_ascii=False)
+                    local_db.commit()
+                    return pid, True, None, p_title
+                except Exception as e:
+                    last_err = str(e)
+                    try:
+                        local_db.rollback()
+                    except Exception:
+                        pass
+                    if attempt < max_retries and not tm.is_cancelled(tid):
+                        time.sleep(0.8 * (attempt + 1))
+                        continue
+                    return pid, False, f"商品 {pid} 合规检测异常(重试3次后仍失败): {last_err}", ""
+                finally:
+                    local_db.close()
 
         max_workers = min(concurrency_limit, max(1, total))
         completed_count = 0

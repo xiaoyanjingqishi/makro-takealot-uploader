@@ -100,6 +100,7 @@ def get_settings(
         piggyback_default_inventory=_get_int("piggyback_default_inventory", 500),
         piggyback_cruise_concurrency=_get_int("piggyback_cruise_concurrency", 3),
         piggyback_collect_concurrency=_get_int("piggyback_collect_concurrency", 5),
+        piggyback_compliance_concurrency=_get_int("piggyback_compliance_concurrency", getattr(settings, "DEFAULT_PIGGYBACK_COMPLIANCE_CONCURRENCY", 100)),
     )
 
 @router.post("", summary="保存或更新系统配置 (仅限系统管理员)")
