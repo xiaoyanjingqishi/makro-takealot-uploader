@@ -113,7 +113,7 @@ def download_extension():
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard(request: Request):
     if (TEMPLATES_DIR / "index.html").exists():
-        resp = templates.TemplateResponse("index.html", {"request": request})
+        resp = templates.TemplateResponse(request=request, name="index.html")
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
