@@ -400,7 +400,7 @@ class AutoRepriceService:
         except Exception:
             pass
 
-        actual_workers = max(1, min(sys_concurrency, total, 30))
+        actual_workers = max(1, min(sys_concurrency, total, 100))
         logger.info(f"店铺 [{store.name}] 启动平稳安全自动跟价巡航：共 {total} 件商品，工作线程数: {actual_workers}")
 
         def _cruise_worker(iid: int) -> Dict[str, Any]:
@@ -560,7 +560,7 @@ class AutoRepriceService:
             finally:
                 worker_db.close()
 
-        actual_workers = max(1, min(concurrency, total, 30))
+        actual_workers = max(1, min(concurrency, total, 100))
         logger.info(f"全量巡检巡航任务 [{task_id}] 启动: 目标 {total} 件，并发线程数: {actual_workers}")
 
         with ThreadPoolExecutor(max_workers=actual_workers) as executor:

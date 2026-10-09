@@ -174,6 +174,7 @@ export const coreMethods = {
         this.loadProducts(1);
         this.loadPiggybackItems(1);
         this.loadStores();
+        this.loadSettings();
         if (this.currentTab === 'piggyback') this.loadPiggybackItems(1);
         if (this.currentTab === 'store_products') this.loadStoreProducts(1);
         if (this.currentTab === 'orders') this.loadStoreOrders(1);

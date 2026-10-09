@@ -18,6 +18,12 @@ export const settingsMethods = {
 
   async saveSettings() {
     try {
+      if (this.settings) {
+        let conc = parseInt(this.settings.piggyback_cruise_concurrency, 10);
+        if (isNaN(conc) || conc < 1) conc = 3;
+        if (conc > 100) conc = 100;
+        this.settings.piggyback_cruise_concurrency = conc;
+      }
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -28,9 +34,15 @@ export const settingsMethods = {
         this.showLoginModal = true;
         return;
       }
-      alert('配置已成功保存！');
+      if (res.ok) {
+        const conc = this.settings?.piggyback_cruise_concurrency || 3;
+        this.showToast(`✅ 全局配置已成功保存！巡检并发已设为 ${conc} 线程`, 'success');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        this.showToast(`保存失败: ${errData.detail || res.statusText}`, 'error');
+      }
     } catch (e) {
-      alert('保存失败: ' + e);
+      this.showToast('保存失败: ' + e, 'error');
     }
   },
 

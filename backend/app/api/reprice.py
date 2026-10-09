@@ -125,15 +125,15 @@ def trigger_full_cruise_reprice(
         except Exception:
             pass
 
-    # 若请求显式传入则优先采用，否则使用系统配置值 (安全限制 1~30)
+    # 若请求显式传入有效数值则优先采用，否则使用系统配置值 (支持管理员自定义 1~100)
     raw_concurrency = None
-    if req and req.concurrency is not None:
+    if req and req.concurrency is not None and req.concurrency > 0:
         raw_concurrency = req.concurrency
-    elif isinstance(concurrency, int):
+    elif isinstance(concurrency, int) and concurrency > 0:
         raw_concurrency = concurrency
 
     chosen_concurrency = raw_concurrency if raw_concurrency is not None else system_concurrency
-    target_concurrency = max(1, min(chosen_concurrency, 30))
+    target_concurrency = max(1, min(chosen_concurrency, 100))
 
     store_name = "全店铺"
     if target_store_id:

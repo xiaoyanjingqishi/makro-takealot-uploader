@@ -914,7 +914,16 @@ export const piggybackMethods = {
       if (foundStore) storeName = foundStore.name;
     }
 
-    const currentConcurrency = this.settings?.piggyback_cruise_concurrency || 3;
+    // 确保系统设置已加载就绪
+    if (!this.settings || !this.settings.piggyback_cruise_concurrency) {
+      try {
+        await this.loadSettings();
+      } catch (e) {
+        console.warn('加载系统设置失败:', e);
+      }
+    }
+
+    const currentConcurrency = parseInt(this.settings?.piggyback_cruise_concurrency, 10) || 3;
     const promptText = `确定立即对【${storeName}】的所有在售跟品发起全量巡检巡航吗？\n\n系统将按照系统设置中管理员设定的【${currentConcurrency} 线程并发】启动受控巡检，抓取买家前台最新竞对报价、重新评定 Buybox 黄金购物车赢车归属，并对已开启自动跟价的商品执行智能调价。`;
     if (!confirm(promptText)) return;
 

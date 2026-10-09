@@ -432,7 +432,8 @@ const app = createApp({
             piggyback_default_strategy: 'MINUS_15',
             piggyback_default_floor_mode: 'PERCENT',
             piggyback_default_floor_value: 70.0,
-            piggyback_default_inventory: 500
+            piggyback_default_inventory: 500,
+            piggyback_cruise_concurrency: 3
           },
           batchCleanMode: 'text',
           searchQuery: '',
@@ -680,7 +681,7 @@ const app = createApp({
           this.loadProducts(1);
           this.loadPiggybackItems(1);
           this.loadOperators();
-          this.loadSettings();
+          await this.loadSettings();
           this.loadStores();
           this.loadTasks();
           this.checkActiveTasks();
