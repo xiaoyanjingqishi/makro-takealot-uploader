@@ -7,6 +7,7 @@ from app.database import SessionLocal, engine, Base
 from app.models.store import Store
 from app.models.user import User
 from app.models.makro_piggyback import MakroPiggybackItem
+from app.models.makro_listing import MakroListing
 from app.utils.auth import create_access_token
 
 class TestPiggybackAPI(unittest.TestCase):
@@ -30,6 +31,20 @@ class TestPiggybackAPI(unittest.TestCase):
             self.db.add(self.store)
             self.db.commit()
             self.db.refresh(self.store)
+        else:
+            changed = False
+            if not self.store.default_location_id:
+                self.store.default_location_id = "LOC_TEST"
+                changed = True
+            if not self.store.fk_csrf_token:
+                self.store.fk_csrf_token = "test_token"
+                changed = True
+            if not self.store.cookie:
+                self.store.cookie = "test_cookie"
+                changed = True
+            if changed:
+                self.db.commit()
+                self.db.refresh(self.store)
 
         # 准备管理员用户 Token
         self.user = self.db.query(User).filter(User.username == "admin").first()
@@ -201,12 +216,13 @@ class TestPiggybackAPI(unittest.TestCase):
 
     @patch("app.services.compliance_service.ComplianceService._invoke_text_model")
     @patch("app.services.compliance_service.ComplianceService._invoke_vision_model")
-    @patch("requests.get")
+    @patch("app.services.compliance_service._vision_image_session.get")
     def test_compliance_check_and_arbitration(self, mock_get, mock_vision, mock_text):
         # 1. 模拟图片下载成功
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.content = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRtest"
+        mock_resp.headers = {"content-type": "image/png"}
         mock_get.return_value = mock_resp
 
         # 2. 模拟第一轮文本审查 (白牌 HYinjin 判定为 SAFE)
@@ -548,6 +564,308 @@ class TestPiggybackAPI(unittest.TestCase):
         self.assertEqual(call_count_all_fail, 4) # 初始 1 次 + 重试 3 次 = 4 次
         print("[OK] Test 5.2: Model retried exactly 3 times (4 attempts total) before graceful fallback!")
 
+    @patch("app.services.compliance_service.ComplianceService._invoke_text_model")
+    @patch("app.services.compliance_service._vision_image_session.get")
+    def test_image_download_failure_verdict_must_be_risk(self, mock_get, mock_text):
+        """测试 6: 首图下载异常时必须判定为 RISK 而绝不能默认 SAFE"""
+        # 模拟下载异常 (例如 404 或超时)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.content = b""
+        mock_get.return_value = mock_resp
+
+        # 模拟文本审查为 SAFE
+        mock_text.return_value = {
+            "tested": True,
+            "risk_level": "SAFE",
+            "violation_type": "NONE",
+            "reasons": ["中性商品标题合规"],
+            "summary": "文本合规",
+            "detected_brands_or_ips": []
+        }
+
+        from app.services.compliance_service import ComplianceService
+        service = ComplianceService()
+        result = service.check_product({
+            "title": "Universal Case Protective Cover",
+            "brand": "GenericWhite",
+            "raw_images": ["https://www.makro.co.za/broken-image.jpg"],
+            "is_piggyback": True
+        })
+
+        # 验证首图下载异常绝不能判定为 SAFE，必须为 RISK
+        self.assertEqual(result["compliance_status"], "RISK")
+        self.assertTrue(result["image_inspection"]["download_error"])
+        self.assertEqual(result["round_2_status"]["status"], "RISK")
+        self.assertTrue(result["round_2_status"]["download_error"])
+        self.assertIn("首图下载", result["round_2_status"]["summary"])
+        self.assertTrue(any("首图下载" in r for r in result["risk_reasons"]))
+        print("[OK] Test 6: Image download failure correctly judged as RISK and not SAFE!")
+
+    def test_abandon_active_item_dual_delisting(self):
+        """测试 7: 在售跟品商品弃用时双重下架保障 (create-update-listings 改 INACTIVE + updateListingsInventory 清零库存)"""
+        # 1. 创建在线在售的跟品条目与 Listing 快照
+        sku = "GP_TEST_ACTIVE_DELIST_01"
+        fsn = "FSN_ACTIVE_DELIST_01"
+        item = MakroPiggybackItem(
+            store_id=self.store.id,
+            user_id=self.user.id,
+            makro_product_id=fsn,
+            title="Active Dual Delist Test Item",
+            seller_sku=sku,
+            target_price=150.0,
+            target_mrp=250.0,
+            inventory=100,
+            status="ACTIVE",
+            compliance_status="SAFE"
+        )
+        self.db.add(item)
+
+        listing = MakroListing(
+            store_id=self.store.id,
+            seller_id=self.store.seller_id,
+            sku_id=sku,
+            product_id=fsn,
+            title="Active Dual Delist Test Item",
+            internal_state="ACTIVE",
+            inventory=100,
+            ssp=150.0,
+            mrp=250.0
+        )
+        self.db.add(listing)
+        self.db.commit()
+        self.db.refresh(item)
+        self.db.refresh(listing)
+        item_id = item.id
+
+        try:
+            # 2. 模拟 requests.post 捕获调用载荷
+            captured_calls = []
+
+            def mock_requests_post(url, *args, **kwargs):
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                captured_calls.append({"url": url, "kwargs": kwargs})
+                if "create-update-listings" in url:
+                    mock_resp.json.return_value = {
+                        "result": {
+                            "status": "success",
+                            "bulkResponse": [
+                                {
+                                    "skuID": sku,
+                                    "status": "updated",
+                                    "globalErrors": [],
+                                    "attributeErrors": {}
+                                }
+                            ]
+                        }
+                    }
+                elif "updateListingsInventory" in url:
+                    mock_resp.json.return_value = {
+                        sku: {"status": "SUCCESS"}
+                    }
+                else:
+                    mock_resp.json.return_value = {"status": "success"}
+                return mock_resp
+
+            with patch("requests.post", side_effect=mock_requests_post):
+                resp = self.client.post(
+                    f"/api/piggyback/items/{item_id}/abandon",
+                    headers=self.headers,
+                    json={"reason": "下架弃用双重测试"}
+                )
+                self.assertEqual(resp.status_code, 200)
+                resp_data = resp.json()
+                self.assertTrue(resp_data["success"])
+                self.assertIn("Inactive", resp_data["message"])
+
+            # 3. 验证接口调用细节
+            cul_call = next((c for c in captured_calls if "create-update-listings" in c["url"]), None)
+            self.assertIsNotNone(cul_call, "必须调用 create-update-listings 接口")
+            bulk_reqs = cul_call["kwargs"]["json"]["bulkRequests"]
+            self.assertEqual(len(bulk_reqs), 1)
+            # 核心验证: listing_status 必须为 INACTIVE
+            self.assertEqual(
+                bulk_reqs[0]["attributeValues"]["listing_status"][0]["value"],
+                "INACTIVE"
+            )
+
+            inv_call = next((c for c in captured_calls if "updateListingsInventory" in c["url"]), None)
+            self.assertIsNotNone(inv_call, "必须调用 updateListingsInventory 接口")
+            inv_payload = inv_call["kwargs"]["json"]
+            self.assertIn(sku, inv_payload)
+            self.assertEqual(inv_payload[sku]["locations"][0]["inventory"], 0)
+
+            # 4. 验证本地数据库同步更新
+            self.db.refresh(listing)
+            self.assertEqual(listing.internal_state, "INACTIVE")
+            self.assertEqual(listing.inventory, 0)
+
+            self.db.refresh(item)
+            self.assertEqual(item.status, "INACTIVE")
+            self.assertTrue(item.is_abandoned)
+            self.assertEqual(item.abandoned_reason, "下架弃用双重测试")
+
+            # 5. 验证单品恢复接口 (移回待处理池，状态重置为 PENDING)
+            restore_resp = self.client.post(f"/api/piggyback/items/{item_id}/restore", headers=self.headers)
+            self.assertEqual(restore_resp.status_code, 200)
+            self.db.refresh(item)
+            self.assertFalse(item.is_abandoned)
+            self.assertEqual(item.status, "PENDING")
+            print("[OK] Test 7: Active item single abandon dual delisting and restore passed!")
+
+        finally:
+            del_it = self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == item_id).first()
+            if del_it:
+                self.db.delete(del_it)
+            del_lst = self.db.query(MakroListing).filter(MakroListing.sku_id == sku).first()
+            if del_lst:
+                self.db.delete(del_lst)
+            self.db.commit()
+
+    def test_batch_abandon_and_batch_restore_dual_delisting(self):
+        """测试 8: 批量弃用多件在售商品聚合双重下架与批量恢复重置为 PENDING"""
+        sku1, fsn1 = "GP_BATCH_ACTIVE_01", "FSN_BATCH_ACTIVE_01"
+        sku2, fsn2 = "GP_BATCH_ACTIVE_02", "FSN_BATCH_ACTIVE_02"
+
+        it1 = MakroPiggybackItem(
+            store_id=self.store.id,
+            user_id=self.user.id,
+            makro_product_id=fsn1,
+            title="Batch Active Item 1",
+            seller_sku=sku1,
+            target_price=200.0,
+            target_mrp=300.0,
+            inventory=50,
+            status="ACTIVE"
+        )
+        it2 = MakroPiggybackItem(
+            store_id=self.store.id,
+            user_id=self.user.id,
+            makro_product_id=fsn2,
+            title="Batch Active Item 2",
+            seller_sku=sku2,
+            target_price=210.0,
+            target_mrp=310.0,
+            inventory=50,
+            status="ACTIVE"
+        )
+        self.db.add_all([it1, it2])
+
+        lst1 = MakroListing(
+            store_id=self.store.id,
+            seller_id=self.store.seller_id,
+            sku_id=sku1,
+            product_id=fsn1,
+            title="Batch Active Item 1",
+            internal_state="ACTIVE",
+            inventory=50
+        )
+        lst2 = MakroListing(
+            store_id=self.store.id,
+            seller_id=self.store.seller_id,
+            sku_id=sku2,
+            product_id=fsn2,
+            title="Batch Active Item 2",
+            internal_state="ACTIVE",
+            inventory=50
+        )
+        self.db.add_all([lst1, lst2])
+        self.db.commit()
+        self.db.refresh(it1)
+        self.db.refresh(it2)
+        it1_id, it2_id = it1.id, it2.id
+
+        try:
+            captured_calls = []
+
+            def mock_requests_post(url, *args, **kwargs):
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                captured_calls.append({"url": url, "kwargs": kwargs})
+                if "create-update-listings" in url:
+                    mock_resp.json.return_value = {
+                        "result": {
+                            "status": "success",
+                            "bulkResponse": [
+                                {"skuID": sku1, "status": "updated"},
+                                {"skuID": sku2, "status": "updated"}
+                            ]
+                        }
+                    }
+                elif "updateListingsInventory" in url:
+                    mock_resp.json.return_value = {
+                        sku1: {"status": "SUCCESS"},
+                        sku2: {"status": "SUCCESS"}
+                    }
+                else:
+                    mock_resp.json.return_value = {"status": "success"}
+                return mock_resp
+
+            with patch("requests.post", side_effect=mock_requests_post):
+                resp = self.client.post(
+                    "/api/piggyback/batch-abandon",
+                    headers=self.headers,
+                    json={"ids": [it1_id, it2_id], "reason": "批量测试弃用"}
+                )
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertTrue(data["success"])
+                self.assertEqual(data["abandoned_count"], 2)
+                self.assertEqual(data["delisted_count"], 2)
+
+            # 验证批量下架聚合请求包含两个商品的 INACTIVE 状态与库存为 0
+            cul_call = next((c for c in captured_calls if "create-update-listings" in c["url"]), None)
+            self.assertIsNotNone(cul_call)
+            bulk_reqs = cul_call["kwargs"]["json"]["bulkRequests"]
+            self.assertEqual(len(bulk_reqs), 2)
+            for req_item in bulk_reqs:
+                self.assertEqual(req_item["attributeValues"]["listing_status"][0]["value"], "INACTIVE")
+
+            inv_call = next((c for c in captured_calls if "updateListingsInventory" in c["url"]), None)
+            self.assertIsNotNone(inv_call)
+            inv_payload = inv_call["kwargs"]["json"]
+            self.assertEqual(inv_payload[sku1]["locations"][0]["inventory"], 0)
+            self.assertEqual(inv_payload[sku2]["locations"][0]["inventory"], 0)
+
+            # 验证数据库状态更新
+            self.db.refresh(lst1)
+            self.db.refresh(lst2)
+            self.assertEqual(lst1.internal_state, "INACTIVE")
+            self.assertEqual(lst1.inventory, 0)
+            self.assertEqual(lst2.internal_state, "INACTIVE")
+            self.assertEqual(lst2.inventory, 0)
+
+            self.db.refresh(it1)
+            self.db.refresh(it2)
+            self.assertEqual(it1.status, "INACTIVE")
+            self.assertTrue(it1.is_abandoned)
+            self.assertEqual(it2.status, "INACTIVE")
+            self.assertTrue(it2.is_abandoned)
+
+            # 批量恢复测试
+            b_restore_resp = self.client.post(
+                "/api/piggyback/batch-restore",
+                headers=self.headers,
+                json={"ids": [it1_id, it2_id]}
+            )
+            self.assertEqual(b_restore_resp.status_code, 200)
+            self.assertEqual(b_restore_resp.json()["restored_count"], 2)
+
+            self.db.refresh(it1)
+            self.db.refresh(it2)
+            self.assertFalse(it1.is_abandoned)
+            self.assertEqual(it1.status, "PENDING")
+            self.assertFalse(it2.is_abandoned)
+            self.assertEqual(it2.status, "PENDING")
+            print("[OK] Test 8: Batch abandon dual delisting and batch restore passed!")
+
+        finally:
+            self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_([it1_id, it2_id])).delete(synchronize_session=False)
+            self.db.query(MakroListing).filter(MakroListing.sku_id.in_([sku1, sku2])).delete(synchronize_session=False)
+            self.db.commit()
+
 if __name__ == "__main__":
     unittest.main()
+
 

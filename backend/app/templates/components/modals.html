@@ -733,21 +733,33 @@
                   <div class="text-[11px] space-y-1.5">
                     <div>
                       <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
-                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.logo_names?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.download_error" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                        ⚠️ 图片下载失败，未完成排查
+                      </span>
+                      <span v-else-if="!currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.tested" class="text-slate-400 font-normal ml-1">
+                        未测试 / 未配置
+                      </span>
+                      <span v-else-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.logo_names?.length" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
                         {{ currentComplianceItem.compliance_details.qwen_verdict.image_audit.logo_names.join(', ') }}
                       </span>
                       <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
                     </div>
                     <div>
                       <span class="text-slate-500 font-medium">运输违禁排查:</span>
-                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                      <span v-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.download_error" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                        ⚠️ 图片下载失败，未完成排查
+                      </span>
+                      <span v-else-if="!currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.tested" class="text-slate-400 font-normal ml-1">
+                        未测试 / 未配置
+                      </span>
+                      <span v-else-if="currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
                         {{ currentComplianceItem.compliance_details.qwen_verdict.image_audit.prohibited_types.join(', ') }}
                       </span>
                       <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
                     </div>
                     <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-blue-100">
                       <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
-                      <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.summary || '无异常' }}</div>
+                      <div class="mt-0.5" :class="{'text-amber-800 font-medium': currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.download_error}">{{ currentComplianceItem.compliance_details?.qwen_verdict?.image_audit?.summary || '无异常' }}</div>
                     </div>
                   </div>
                 </div>
@@ -765,21 +777,33 @@
                   <div class="text-[11px] space-y-1.5">
                     <div>
                       <span class="text-slate-500 font-medium">画面 Logo / 标识:</span>
-                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.logo_names?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded ml-1">
+                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.download_error" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                        ⚠️ 图片下载失败，未完成排查
+                      </span>
+                      <span v-else-if="!currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.tested" class="text-slate-400 font-normal ml-1">
+                        未测试 / 未配置
+                      </span>
+                      <span v-else-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.logo_names?.length" class="font-bold text-indigo-900 bg-indigo-100 px-1.5 py-0.5 rounded ml-1">
                         {{ currentComplianceItem.compliance_details.deepseek_verdict.image_audit.logo_names.join(', ') }}
                       </span>
                       <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无知名品牌 Logo</span>
                     </div>
                     <div>
                       <span class="text-slate-500 font-medium">运输违禁排查:</span>
-                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
+                      <span v-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.download_error" class="font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded ml-1">
+                        ⚠️ 图片下载失败，未完成排查
+                      </span>
+                      <span v-else-if="!currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.tested" class="text-slate-400 font-normal ml-1">
+                        未测试 / 未配置
+                      </span>
+                      <span v-else-if="currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.prohibited_types?.length" class="font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded ml-1">
                         {{ currentComplianceItem.compliance_details.deepseek_verdict.image_audit.prohibited_types.join(', ') }}
                       </span>
                       <span v-else class="text-emerald-700 font-semibold ml-1">✓ 无液体/电池/航空禁运特征</span>
                     </div>
                     <div class="pt-1.5 text-slate-700 leading-relaxed border-t border-indigo-100">
                       <div class="text-slate-400 font-semibold text-[10px]">视觉分析说明:</div>
-                      <div class="mt-0.5">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.summary || '无异常' }}</div>
+                      <div class="mt-0.5" :class="{'text-amber-800 font-medium': currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.download_error}">{{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.summary || '无异常' }}</div>
                     </div>
                   </div>
                 </div>

@@ -229,6 +229,53 @@ class MakroPiggybackService:
                 db.rollback()
             return err_res
 
+    @staticmethod
+    def _build_listing_bulk_request(item: MakroPiggybackItem, store: Store, listing_status: str = "ACTIVE") -> Dict[str, Any]:
+        """构建单个商品提交至 create-update-listings 的 bulkRequest 载荷项"""
+        ssp_f = float(item.target_price or 199.0)
+        mrp_f = float(item.target_mrp or 0.0)
+        if mrp_f < ssp_f:
+            mrp_f = round(max(ssp_f * 1.5, ssp_f + 30.0), 2)
+
+        safe_mrp_f = max(mrp_f, round(ssp_f * 1.5, 2), ssp_f + 10.0)
+        ssp_val = str(int(ssp_f)) if ssp_f.is_integer() else str(round(ssp_f, 2))
+        mrp_val = str(int(safe_mrp_f)) if safe_mrp_f.is_integer() else str(round(safe_mrp_f, 2))
+        lead_time = str(item.lead_time_days or 14)
+        pkg_len = str(int(item.length)) if item.length and item.length.is_integer() else str(item.length or 15)
+        pkg_brd = str(int(item.breadth)) if item.breadth and item.breadth.is_integer() else str(item.breadth or 10)
+        pkg_hgt = str(int(item.height)) if item.height and item.height.is_integer() else str(item.height or 5)
+        pkg_wgt = str(item.weight or 0.2)
+
+        return {
+            "attributeValues": {
+                "sku_id": [{"value": item.seller_sku, "qualifier": ""}],
+                "listing_status": [{"value": listing_status, "qualifier": ""}],
+                "mrp": [{"value": mrp_val, "qualifier": "INR"}],
+                "flipkart_selling_price": [{"value": ssp_val, "qualifier": "INR"}],
+                "service_profile": [{"value": "NON_FBF", "qualifier": ""}],
+                "shipping_days": [{"value": lead_time, "qualifier": "DAY"}],
+                "forbid_shipping": [{"qualifier": "", "value": "none"}],
+                "country_of_origin": [{"value": "CN", "qualifier": ""}],
+                "manufacturer_details": [{"value": "General", "qualifier": ""}],
+                "packer_details": [{"value": store.default_brand or "Generic", "qualifier": ""}]
+            },
+            "context": {
+                "ignore_warnings": False
+            },
+            "productId": item.makro_product_id,
+            "skuId": item.seller_sku,
+            "packages": [
+                {
+                    "id": {"value": "packages-0"},
+                    "length": {"value": pkg_len, "qualifier": "CM"},
+                    "breadth": {"value": pkg_brd, "qualifier": "CM"},
+                    "height": {"value": pkg_hgt, "qualifier": "CM"},
+                    "weight": {"value": pkg_wgt, "qualifier": "KG"},
+                    "sku_id": {"value": item.seller_sku, "qualifier": ""}
+                }
+            ]
+        }
+
     @classmethod
     def publish_piggyback_listing(
         cls,
@@ -283,46 +330,9 @@ class MakroPiggybackService:
             item.target_mrp = mrp_f
             db.commit()
 
-        safe_mrp_f = max(mrp_f, round(ssp_f * 1.5, 2), ssp_f + 10.0)
-        ssp_val = str(int(ssp_f)) if ssp_f.is_integer() else str(round(ssp_f, 2))
-        mrp_val = str(int(safe_mrp_f)) if safe_mrp_f.is_integer() else str(round(safe_mrp_f, 2))
-        lead_time = str(item.lead_time_days or 14)
-        pkg_len = str(int(item.length)) if item.length and item.length.is_integer() else str(item.length or 15)
-        pkg_brd = str(int(item.breadth)) if item.breadth and item.breadth.is_integer() else str(item.breadth or 10)
-        pkg_hgt = str(int(item.height)) if item.height and item.height.is_integer() else str(item.height or 5)
-        pkg_wgt = str(item.weight or 0.2)
-
         payload = {
             "bulkRequests": [
-                {
-                    "attributeValues": {
-                        "sku_id": [{"value": item.seller_sku, "qualifier": ""}],
-                        "listing_status": [{"value": "ACTIVE", "qualifier": ""}],
-                        "mrp": [{"value": mrp_val, "qualifier": "INR"}],
-                        "flipkart_selling_price": [{"value": ssp_val, "qualifier": "INR"}],
-                        "service_profile": [{"value": "NON_FBF", "qualifier": ""}],
-                        "shipping_days": [{"value": lead_time, "qualifier": "DAY"}],
-                        "forbid_shipping": [{"qualifier": "", "value": "none"}],
-                        "country_of_origin": [{"value": "CN", "qualifier": ""}],
-                        "manufacturer_details": [{"value": "General", "qualifier": ""}],
-                        "packer_details": [{"value": store.default_brand or "Generic", "qualifier": ""}]
-                    },
-                    "context": {
-                        "ignore_warnings": False
-                    },
-                    "productId": item.makro_product_id,
-                    "skuId": item.seller_sku,
-                    "packages": [
-                        {
-                            "id": {"value": "packages-0"},
-                            "length": {"value": pkg_len, "qualifier": "CM"},
-                            "breadth": {"value": pkg_brd, "qualifier": "CM"},
-                            "height": {"value": pkg_hgt, "qualifier": "CM"},
-                            "weight": {"value": pkg_wgt, "qualifier": "KG"},
-                            "sku_id": {"value": item.seller_sku, "qualifier": ""}
-                        }
-                    ]
-                }
+                cls._build_listing_bulk_request(item, store, listing_status="ACTIVE")
             ],
             "sellerId": store.seller_id
         }
@@ -420,3 +430,139 @@ class MakroPiggybackService:
             item.error_message = str(e)
             db.commit()
             raise e
+
+    @classmethod
+    def deactivate_piggyback_listing(
+        cls,
+        item: MakroPiggybackItem,
+        store: Store,
+        db: Session
+    ) -> Dict[str, Any]:
+        """
+        下架单个跟品商品：
+        1. 调用 create-update-listings 将 listing_status 设为 INACTIVE
+        2. 调用 updateListingsInventory 将库存清零为 0 (双重保障)
+        3. 联动同步本地 MakroListing 记录 (internal_state='INACTIVE', inventory=0)
+        """
+        res = cls.batch_deactivate_piggyback_listings([item], store, db, chunk_size=20)
+        if res.get("failed_count", 0) > 0 and res.get("success_count", 0) == 0:
+            err = res.get("errors", ["下架失败"])[0] if res.get("errors") else "下架失败"
+            raise Exception(err)
+        return res
+
+    @classmethod
+    def batch_deactivate_piggyback_listings(
+        cls,
+        items: List[MakroPiggybackItem],
+        store: Store,
+        db: Session,
+        chunk_size: int = 20
+    ) -> Dict[str, Any]:
+        """
+        批量下架跟品商品 (20个一组聚合调用 create-update-listings + 批量清零库存)
+        双重保障:
+        1. 官方 listing_status: "INACTIVE"
+        2. 官方 updateListingsInventory: 0
+        3. 联动更新本地 MakroListing (internal_state='INACTIVE', inventory=0)
+        """
+        if not items:
+            return {"success": True, "success_count": 0, "failed_count": 0, "errors": [], "results": {}}
+
+        if not store.seller_id or not store.fk_csrf_token or not store.cookie:
+            raise ValueError(f"店铺「{store.name}」凭据未配置完整 (缺少 seller_id/fk_csrf_token/cookie)，无法下架商品。")
+
+        from .makro_portal_service import MakroPortalService
+
+        headers = cls._build_headers(store)
+        create_url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
+        target_loc = getattr(store, "default_location_id", None)
+        if not target_loc and items:
+            for it in items:
+                if getattr(it, "location_id", None):
+                    target_loc = it.location_id
+                    break
+
+        total_success = 0
+        total_failed = 0
+        all_errors = []
+        results = {}
+
+        for i in range(0, len(items), chunk_size):
+            chunk = items[i:i + chunk_size]
+            bulk_requests = [
+                cls._build_listing_bulk_request(it, store, listing_status="INACTIVE")
+                for it in chunk
+            ]
+            payload = {
+                "bulkRequests": bulk_requests,
+                "sellerId": store.seller_id
+            }
+
+            # 1. 官方 listing 状态变更为 INACTIVE
+            try:
+                resp = requests.post(create_url, headers=headers, json=payload, timeout=30)
+                if resp.status_code != 200:
+                    raise Exception(f"Makro create-update-listings 下架接口响应 HTTP {resp.status_code}: {resp.text[:300]}")
+                res_json = resp.json()
+                bulk_res = res_json.get("result", {}).get("bulkResponse", [])
+                res_by_sku = {}
+                for r in bulk_res:
+                    sku = r.get("skuID") or r.get("skuId")
+                    if sku:
+                        res_by_sku[sku] = r
+
+                for idx, it in enumerate(chunk):
+                    r = res_by_sku.get(it.seller_sku) or (bulk_res[idx] if idx < len(bulk_res) else {})
+                    st = r.get("status")
+                    global_errs = r.get("globalErrors", [])
+                    attr_errs = r.get("attributeErrors", {})
+                    if st in ["created", "updated", "success"] or (st and not global_errs and not attr_errs):
+                        total_success += 1
+                        results[it.seller_sku] = {"status": "SUCCESS"}
+                    else:
+                        total_failed += 1
+                        err_msg = "; ".join(global_errs) if global_errs else str(attr_errs)
+                        all_errors.append(f"SKU {it.seller_sku}: {err_msg}")
+                        results[it.seller_sku] = {"status": "FAILED", "error": err_msg}
+            except Exception as req_err:
+                logger.error(f"批量下架 create-update-listings 调用异常: {req_err}")
+                for it in chunk:
+                    total_failed += 1
+                    all_errors.append(f"SKU {it.seller_sku}: {str(req_err)}")
+                    results[it.seller_sku] = {"status": "FAILED", "error": str(req_err)}
+
+            # 2. 联动将库存清零 (双重兜底保障)
+            if target_loc:
+                try:
+                    inv_items = [{"sku_id": it.seller_sku, "product_id": it.makro_product_id, "inventory": 0} for it in chunk]
+                    MakroPortalService.batch_update_inventory(store=store, items=inv_items, location_id=target_loc)
+                except Exception as inv_err:
+                    logger.warning(f"店铺 {store.name} 批量下架库存清零异常: {inv_err}")
+
+            # 3. 联动同步本地 MakroListing 记录 (internal_state='INACTIVE', inventory=0) 以及跟品记录状态
+            for it in chunk:
+                try:
+                    m_listing = db.query(MakroListing).filter(
+                        MakroListing.store_id == store.id,
+                        MakroListing.sku_id == it.seller_sku
+                    ).first()
+                    if m_listing:
+                        m_listing.internal_state = "INACTIVE"
+                        m_listing.inventory = 0
+                        m_listing.synced_at = datetime.now()
+                    it.status = "INACTIVE"
+                    db.commit()
+                except Exception as ml_err:
+                    logger.warning(f"更新本地 MakroListing 记录失败 [{it.seller_sku}]: {ml_err}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+
+        return {
+            "success": total_success > 0 or total_failed == 0,
+            "success_count": total_success,
+            "failed_count": total_failed,
+            "errors": all_errors,
+            "results": results
+        }

@@ -1414,25 +1414,17 @@ def abandon_piggyback_item(
         raise HTTPException(status_code=404, detail="未找到该跟品商品")
 
     delist_msg = ""
-    # 若商品已在线上架在售，联动调用 Makro 网关清空库存并下架
+    # 若商品已在线上架在售，联动调用 Makro 网关修改状态为 Inactive 并清空库存
     if item.status in ["ACTIVE", "PUBLISHED"]:
         try:
             store = item.store or _get_target_store(db, item.store_id)
             if store and store.seller_id and store.cookie:
-                MakroPortalService.update_inventory(
+                MakroPiggybackService.deactivate_piggyback_listing(
+                    item=item,
                     store=store,
-                    sku_id=item.seller_sku,
-                    product_id=item.makro_product_id,
-                    new_inventory=0
+                    db=db
                 )
-                delist_msg = "，且已在 Makro 店铺后台将库存清零下架"
-                m_listing = db.query(MakroListing).filter(
-                    MakroListing.store_id == store.id,
-                    MakroListing.sku_id == item.seller_sku
-                ).first()
-                if m_listing:
-                    m_listing.internal_state = "INACTIVE"
-                    m_listing.inventory = 0
+                delist_msg = "，且已在 Makro 店铺后台修改为 Inactive 下架并清零库存"
         except Exception as delist_err:
             logger.warning(f"跟品商品 [{item.seller_sku}] 弃用下架官方接口调用异常: {delist_err}")
             delist_msg = f" (注意: 店铺后台自动下架提示: {str(delist_err)[:60]})"
@@ -1471,28 +1463,30 @@ def batch_abandon_piggyback(
     now = datetime.now()
     reason_txt = req.reason or "批量弃用/侵权拦截"
 
+    # 按店铺聚合在线商品，批量调用官方下架接口 (20个一组聚合分批)
+    from collections import defaultdict
+    store_active_items = defaultdict(list)
     for it in items:
         if it.status in ["ACTIVE", "PUBLISHED"]:
-            try:
-                store = it.store or _get_target_store(db, it.store_id)
-                if store and store.seller_id and store.cookie:
-                    MakroPortalService.update_inventory(
-                        store=store,
-                        sku_id=it.seller_sku,
-                        product_id=it.makro_product_id,
-                        new_inventory=0
-                    )
-                    delisted_count += 1
-                    m_listing = db.query(MakroListing).filter(
-                        MakroListing.store_id == store.id,
-                        MakroListing.sku_id == it.seller_sku
-                    ).first()
-                    if m_listing:
-                        m_listing.internal_state = "INACTIVE"
-                        m_listing.inventory = 0
-            except Exception as e:
-                logger.warning(f"批量弃用下架失败 [{it.seller_sku}]: {e}")
+            s_id = it.store_id
+            if s_id:
+                store_active_items[s_id].append(it)
 
+    for store_id, s_items in store_active_items.items():
+        try:
+            store = _get_target_store(db, store_id)
+            if store and store.seller_id and store.cookie:
+                res = MakroPiggybackService.batch_deactivate_piggyback_listings(
+                    items=s_items,
+                    store=store,
+                    db=db,
+                    chunk_size=20
+                )
+                delisted_count += res.get("success_count", 0)
+        except Exception as e:
+            logger.warning(f"店铺 ID {store_id} 批量下架跟品异常: {e}")
+
+    for it in items:
         it.is_abandoned = True
         it.abandoned_reason = reason_txt
         it.abandoned_at = now
@@ -1503,7 +1497,7 @@ def batch_abandon_piggyback(
 
     db.commit()
 
-    delist_note = f"，其中 {delisted_count} 件在线商品已同步在 Makro 店铺后台下架清零库存" if delisted_count > 0 else ""
+    delist_note = f"，其中 {delisted_count} 件在线商品已同步在 Makro 店铺后台修改为 Inactive 并清零库存" if delisted_count > 0 else ""
     record_audit_log(
         task_type="PIGGYBACK_ABANDON",
         status="SUCCESS",
@@ -1558,6 +1552,8 @@ def batch_restore_piggyback(
         it.is_abandoned = False
         it.abandoned_reason = None
         it.abandoned_at = None
+        if it.status == "INACTIVE":
+            it.status = "PENDING"
         count += 1
     db.commit()
 
@@ -1571,4 +1567,5 @@ def batch_restore_piggyback(
         db=db
     )
     return {"success": True, "restored_count": count}
+
 

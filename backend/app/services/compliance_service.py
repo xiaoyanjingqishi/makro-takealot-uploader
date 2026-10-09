@@ -4,7 +4,10 @@ import base64
 import logging
 import time
 import random
+import os
+import hashlib
 import requests
+from urllib3.util import Retry
 from typing import Dict, Any, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
@@ -14,6 +17,25 @@ from ..models.compliance_log import ComplianceArbitrationLog
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+# 本地首图持久化缓存目录 (复用全局 .image_cache)
+IMAGE_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".image_cache")
+os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+
+# 专属视觉多模态图片下载长连接池 (针对 100 并发场景预设 150 容量，支持指数退避重试)
+_vision_image_session = requests.Session()
+_vision_image_adapter = requests.adapters.HTTPAdapter(
+    pool_connections=50,
+    pool_maxsize=150,
+    max_retries=Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        raise_on_status=False
+    )
+)
+_vision_image_session.mount("https://", _vision_image_adapter)
+_vision_image_session.mount("http://", _vision_image_adapter)
 
 from ..constants.brands import (
     LUXURY_BRANDS,
@@ -205,7 +227,9 @@ class ComplianceService:
         # ----------------------------------------------------
         first_img_url = None
         if isinstance(raw_images, list) and len(raw_images) > 0 and isinstance(raw_images[0], str) and raw_images[0].startswith("http"):
-            first_img_url = raw_images[0]
+            first_img_url = raw_images[0].strip()
+            if "{size}" in first_img_url:
+                first_img_url = first_img_url.replace("{size}", "pdpxl")
 
         qwen_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "SAFE", "summary": "未执行视觉审查"}
         deepseek_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "SAFE", "summary": "未执行视觉审查"}
@@ -506,38 +530,100 @@ class ComplianceService:
         original_seller: str = ""
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """并发运行千问 (Qwen-VL) 与 DeepSeek-Flash 视觉多模态审查"""
-        qwen_img_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "Qwen 视觉未配置"}
-        deepseek_img_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "DeepSeek 视觉未配置"}
+        if not image_url or not isinstance(image_url, str) or not image_url.startswith("http"):
+            empty_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "未提供有效图片URL"}
+            return empty_res, empty_res
 
-        # 1. 统一下载图片并转换为 Base64 Data URI (支持 Makro 与 Takealot 防盗链动态 Referer，下载一次供两个 AI 复用)
-        try:
-            is_makro_img = any(k in image_url.lower() for k in ["makro", "fkcloud", "rukmini"])
+        clean_url = image_url.replace("{size}", "pdpxl") if "{size}" in image_url else image_url
+        qwen_img_res = {"tested": False, "image_url": clean_url, "risk_level": "SAFE", "summary": "Qwen 视觉未配置"}
+        deepseek_img_res = {"tested": False, "image_url": clean_url, "risk_level": "SAFE", "summary": "DeepSeek 视觉未配置"}
+
+        # 1. 统一下载图片并转换为 Base64 Data URI (支持本地磁盘缓存 + 专用长连接会话池)
+        cache_key = hashlib.md5(clean_url.encode("utf-8")).hexdigest()
+        cache_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.img")
+        content_type_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.type")
+
+        img_bytes = None
+        mime = "image/jpeg"
+
+        # 1.1 命中本地持久化缓存直接流式复用 (0ms，跳过网络抓取)
+        if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+            try:
+                with open(cache_path, "rb") as f:
+                    img_bytes = f.read()
+                if os.path.exists(content_type_path):
+                    with open(content_type_path, "r", encoding="utf-8") as f:
+                        mime = f.read().strip() or "image/jpeg"
+            except Exception as ce:
+                logger.warning(f"读取首图本地磁盘缓存失败 ({cache_key}): {ce}")
+                img_bytes = None
+
+        # 1.2 未命中缓存则通过高并发长连接 Session 抓取远程图片 (自动 Referer + 重试 3 次)
+        if not img_bytes:
+            is_makro_img = any(k in clean_url.lower() for k in ["makro.co.za", "flixcart.com", "fkcloud", "rukmini"])
             img_referer = "https://www.makro.co.za/" if is_makro_img else "https://www.takealot.com/"
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
                 "Referer": img_referer
             }
-            resp = requests.get(image_url, headers=headers, timeout=12)
-            if resp.status_code != 200:
-                msg = f"图片下载失败 (HTTP {resp.status_code})"
-                qwen_img_res["summary"] = msg
-                deepseek_img_res["summary"] = msg
-                return qwen_img_res, deepseek_img_res
+            dl_err = None
+            for dl_attempt in range(3):
+                try:
+                    resp = _vision_image_session.get(clean_url, headers=headers, timeout=12)
+                    if resp.status_code == 200 and resp.content:
+                        img_bytes = resp.content
+                        ct = resp.headers.get("content-type", "").split(";")[0].strip()
+                        if ct and ct.startswith("image/"):
+                            mime = ct
+                        elif img_bytes.startswith(b'\x89PNG'):
+                            mime = "image/png"
+                        elif img_bytes.startswith(b'RIFF') and b'WEBP' in img_bytes[:16]:
+                            mime = "image/webp"
+                        elif img_bytes.startswith(b'GIF'):
+                            mime = "image/gif"
+                        else:
+                            mime = "image/jpeg"
 
-            b64_data = base64.b64encode(resp.content).decode("utf-8")
-            mime = "image/jpeg"
-            if resp.content.startswith(b'\x89PNG'):
-                mime = "image/png"
-            elif resp.content.startswith(b'RIFF') and b'WEBP' in resp.content[:16]:
-                mime = "image/webp"
-            elif resp.content.startswith(b'GIF'):
-                mime = "image/gif"
-            data_uri = f"data:{mime};base64,{b64_data}"
-        except Exception as dl_e:
-            msg = f"图片下载异常: {str(dl_e)[:50]}"
-            qwen_img_res["summary"] = msg
-            deepseek_img_res["summary"] = msg
-            return qwen_img_res, deepseek_img_res
+                        # 异步落盘缓存供后续全流程复用
+                        try:
+                            with open(cache_path, "wb") as f:
+                                f.write(img_bytes)
+                            with open(content_type_path, "w", encoding="utf-8") as f:
+                                f.write(mime)
+                        except Exception:
+                            pass
+                        break
+                    else:
+                        dl_err = f"HTTP {resp.status_code}"
+                        if dl_attempt < 2:
+                            time.sleep(0.4 * (dl_attempt + 1))
+                except Exception as ex:
+                    dl_err = str(ex)
+                    if dl_attempt < 2:
+                        time.sleep(0.4 * (dl_attempt + 1))
+
+        # 1.3 绝不默认 SAFE！下载失败直接判出 RISK，阻断漏判静默放行
+        if not img_bytes:
+            err_msg = f"首图下载失败 (重试3次仍异常: {dl_err or '连接超时或网络阻断'})"
+            err_reason = f"【首图下载异常】{err_msg}，无法排查潜在图片商标侵权与禁运品，需人工复核"
+            logger.warning(f"首图下载失败: {clean_url} -> {err_msg}")
+            fail_res = {
+                "tested": False,
+                "download_error": True,
+                "image_url": clean_url,
+                "risk_level": "RISK",
+                "has_brand_logo": False,
+                "logo_names": [],
+                "is_transport_prohibited": False,
+                "prohibited_types": [],
+                "reasons": [err_reason],
+                "summary": err_msg
+            }
+            return dict(fail_res), dict(fail_res)
+
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        data_uri = f"data:{mime};base64,{b64_data}"
 
         vision_prompt = self._build_vision_prompt(known_brands, is_piggyback=is_piggyback)
 
@@ -550,7 +636,7 @@ class ComplianceService:
                 ai_name="Qwen-VL",
                 prompt=vision_prompt,
                 data_uri=data_uri,
-                image_url=image_url
+                image_url=clean_url
             )
 
         def _call_deepseek_vl():
@@ -562,7 +648,7 @@ class ComplianceService:
                 ai_name="DeepSeek-Flash-Vision",
                 prompt=vision_prompt,
                 data_uri=data_uri,
-                image_url=image_url
+                image_url=clean_url
             )
 
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -572,12 +658,12 @@ class ComplianceService:
                 qwen_img_res = fut_qv.result(timeout=45.0)
             except Exception as e:
                 logger.warning(f"Qwen-VL 视觉审查异常: {e}")
-                qwen_img_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": f"Qwen-VL 异常: {str(e)[:40]}"}
+                qwen_img_res = {"tested": False, "image_url": clean_url, "risk_level": "RISK", "summary": f"Qwen-VL 异常: {str(e)[:40]}"}
             try:
                 deepseek_img_res = fut_dv.result(timeout=45.0)
             except Exception as e:
                 logger.warning(f"DeepSeek 视觉审查异常: {e}")
-                deepseek_img_res = {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": f"DeepSeek 视觉异常: {str(e)[:40]}"}
+                deepseek_img_res = {"tested": False, "image_url": clean_url, "risk_level": "RISK", "summary": f"DeepSeek 视觉异常: {str(e)[:40]}"}
 
         return qwen_img_res, deepseek_img_res
 
@@ -716,7 +802,7 @@ class ComplianceService:
                     "logo_names": [],
                     "is_transport_prohibited": False,
                     "prohibited_types": [],
-                    "risk_level": "SAFE",
+                    "risk_level": "RISK",
                     "summary": f"{ai_name} 视觉检测跳过 ({str(e)[:40]})"
                 }
 
@@ -744,14 +830,33 @@ class ComplianceService:
         4. 细粒度归因分析与分歧根因溯源
         5. 本地规则硬性兜底防护
         """
-        # 千问单方综合
+        # 检查首图下载状态 (异常绝不能默认 SAFE)
+        has_dl_error = bool(qwen_image.get("download_error") or deepseek_image.get("download_error"))
+
+        # 千问文本与视觉评级
         qwen_text_level = qwen_title.get("risk_level", "SAFE") if qwen_title.get("tested") else "SAFE"
-        qwen_img_level = qwen_image.get("risk_level", "SAFE") if qwen_image.get("tested") else "SAFE"
+        if has_dl_error:
+            qwen_img_level = "RISK"
+        elif qwen_image.get("tested"):
+            qwen_img_level = qwen_image.get("risk_level", "SAFE")
+        elif deepseek_image.get("tested"):
+            # 若千问视觉未测试但 DeepSeek 视觉已测试，继承已测试模型结论，避免虚假分歧
+            qwen_img_level = deepseek_image.get("risk_level", "SAFE")
+        else:
+            qwen_img_level = "SAFE"
         qwen_overall = get_higher_risk(qwen_text_level, qwen_img_level)
 
-        # DeepSeek 单方综合
+        # DeepSeek 文本与视觉评级
         deepseek_text_level = deepseek_title.get("risk_level", "SAFE") if deepseek_title.get("tested") else "SAFE"
-        deepseek_img_level = deepseek_image.get("risk_level", "SAFE") if deepseek_image.get("tested") else "SAFE"
+        if has_dl_error:
+            deepseek_img_level = "RISK"
+        elif deepseek_image.get("tested"):
+            deepseek_img_level = deepseek_image.get("risk_level", "SAFE")
+        elif qwen_image.get("tested"):
+            # 若 DeepSeek 视觉未测试但千问视觉已测试 (如 DeepSeek 官方无 Vision API)，继承千问结论，避免虚假分歧
+            deepseek_img_level = qwen_image.get("risk_level", "SAFE")
+        else:
+            deepseek_img_level = "SAFE"
         deepseek_overall = get_higher_risk(deepseek_text_level, deepseek_img_level)
 
         # Jev 评级与违规分 (System 1 独立裁判)
@@ -875,17 +980,56 @@ class ComplianceService:
             "summary": f"双方一致判定为 [{qwen_text_level}]" if round_1_match else f"分歧: 千问 [{qwen_text_level}] vs DeepSeek [{deepseek_text_level}]"
         }
 
-        round_2_status = {
-            "match": round_2_match,
-            "qwen_level": qwen_img_level,
-            "deepseek_level": deepseek_img_level,
-            "status": qwen_img_level if round_2_match else "DISPUTED",
-            "summary": f"双方一致判定为 [{qwen_img_level}]" if round_2_match else f"分歧: 千问 [{qwen_img_level}] vs DeepSeek [{deepseek_img_level}]"
-        }
+        if has_dl_error:
+            round_2_status = {
+                "match": True,
+                "download_error": True,
+                "qwen_level": "RISK",
+                "deepseek_level": "RISK",
+                "status": "RISK",
+                "summary": "⚠️ 首图下载失败 (未完成视觉排查，需人工复核)"
+            }
+        elif qwen_image.get("tested") and not deepseek_image.get("tested"):
+            round_2_status = {
+                "match": True,
+                "qwen_level": qwen_img_level,
+                "deepseek_level": deepseek_img_level,
+                "status": qwen_img_level,
+                "summary": f"通义千问视觉审查完成: [{qwen_img_level}] (DeepSeek 视觉未配置/未测试)"
+            }
+        elif deepseek_image.get("tested") and not qwen_image.get("tested"):
+            round_2_status = {
+                "match": True,
+                "qwen_level": qwen_img_level,
+                "deepseek_level": deepseek_img_level,
+                "status": deepseek_img_level,
+                "summary": f"DeepSeek 视觉审查完成: [{deepseek_img_level}] (千问视觉未配置/未测试)"
+            }
+        elif not qwen_image.get("tested") and not deepseek_image.get("tested"):
+            round_2_status = {
+                "match": True,
+                "qwen_level": "SAFE",
+                "deepseek_level": "SAFE",
+                "status": "SAFE",
+                "summary": "未执行首图视觉审查"
+            }
+        else:
+            round_2_status = {
+                "match": round_2_match,
+                "qwen_level": qwen_img_level,
+                "deepseek_level": deepseek_img_level,
+                "status": qwen_img_level if round_2_match else "DISPUTED",
+                "summary": f"双方一致判定为 [{qwen_img_level}]" if round_2_match else f"分歧: 千问 [{qwen_img_level}] vs DeepSeek [{deepseek_img_level}]"
+            }
 
         prohibited_items = []
         risk_reasons = []
         suggestions = []
+
+        if has_dl_error:
+            dl_err_reason = "【首图下载异常】首图下载失败 (网络连接受限或重试超时)，未完成潜在图片商标与违禁特征排查，已标记为 RISK 待人工复核"
+            risk_reasons.append(dl_err_reason)
+            suggestions.append("人工核验首图: 请在跟卖前点击首图缩略图手动核实画面是否含有原卖家品牌Logo或侵权元素")
 
         if image_logos:
             risk_reasons.append(f"【首图 Logo 识别】画面检出商标/标志: [{', '.join(image_logos)}]")
@@ -1112,15 +1256,22 @@ class ComplianceService:
         if recommended_title:
             brand_info["recommended_title"] = recommended_title
 
+        # 首图下载失败安全兜底：绝不能默认 SAFE！
+        if has_dl_error:
+            final_status = get_higher_risk(final_status, "RISK")
+            if final_status == "RISK" and not is_disputed:
+                reconciliation_summary = "文本审查正常，但首图下载失败未完成视觉排查，安全兜底判定为 [RISK] (需人工核实首图)"
+
         # 首图聚合卡片
         merged_image_inspection = {
             "tested": bool(qwen_image.get("tested") or deepseek_image.get("tested")),
+            "download_error": has_dl_error,
             "image_url": first_img_url,
             "has_brand_logo": bool(qwen_image.get("has_brand_logo") or deepseek_image.get("has_brand_logo")),
             "is_prohibited": bool(qwen_image.get("is_transport_prohibited") or deepseek_image.get("is_transport_prohibited")),
             "logo_names": image_logos,
             "prohibited_types": image_prohibs,
-            "summary": f"千问: {qwen_image.get('summary', '无')} | DeepSeek: {deepseek_image.get('summary', '无')}"
+            "summary": "首图下载失败 (重试超时)，未完成视觉排查" if has_dl_error else f"千问: {qwen_image.get('summary', '无')} | DeepSeek: {deepseek_image.get('summary', '无')}"
         }
 
         return {
