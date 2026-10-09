@@ -241,13 +241,201 @@ class MakroScraperService:
         cls._buyer_local.session = None
 
     @classmethod
+    def fetch_buyer_page_api(
+        cls,
+        page_uri: str,
+        cookie_dict: Optional[Dict[str, str]] = None,
+        proxy: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        调用 Makro 前台官方原生异步接口 /fccng/api/4/page/fetch 获取纯净结构化商品详情与竞争行情
+        返回原生提取的详情字典，若解析失败或被拦截返回 None
+        """
+        api_url = "https://www.makro.co.za/fccng/api/4/page/fetch"
+        if not page_uri.startswith("/"):
+            page_uri = f"/{page_uri}"
+
+        headers = {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "content-type": "text/plain;charset=UTF-8",
+            "origin": "https://www.makro.co.za",
+            "priority": "u=1, i",
+            "referer": f"https://www.makro.co.za{page_uri}",
+            "sec-ch-ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+            "x-user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 FKUA/website/42/website/Desktop",
+        }
+
+        payload = json.dumps({
+            "pageUri": page_uri,
+            "pageContext": {"fetchSeoData": True},
+            "isReloadRequest": True
+        })
+
+        session = cls.get_buyer_session()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+
+        try:
+            kwargs = {
+                "headers": headers,
+                "data": payload,
+                "timeout": 15
+            }
+            if cookie_dict:
+                kwargs["cookies"] = cookie_dict
+            if proxies:
+                kwargs["proxies"] = proxies
+
+            resp = session.post(api_url, **kwargs)
+            if resp.status_code != 200:
+                logger.warning(f"Makro fccng API 响应 HTTP {resp.status_code}: {resp.text[:120]}")
+                return None
+
+            try:
+                data = resp.json()
+            except Exception:
+                logger.warning(f"Makro fccng API 返回非 JSON 格式: {resp.text[:150]}")
+                return None
+
+            response_data = data.get("RESPONSE", {})
+            page_data = response_data.get("pageData", {})
+            page_context = page_data.get("pageContext", {})
+
+            if not page_context:
+                return None
+
+            # 1. 提取商品价格
+            price = 0.0
+            pricing = page_context.get("pricing") or {}
+            final_p = pricing.get("finalPrice") or {}
+            if final_p.get("decimalValue"):
+                try:
+                    price = float(re.sub(r'[^0-9.]', '', str(final_p["decimalValue"])))
+                except Exception:
+                    pass
+            elif final_p.get("value") is not None:
+                try:
+                    price = float(final_p["value"])
+                except Exception:
+                    pass
+
+            if price <= 0 and pricing.get("fsp"):
+                try:
+                    val = float(pricing["fsp"])
+                    price = val / 100.0 if val >= 5000 else val
+                except Exception:
+                    pass
+
+            # 2. 提取 MRP
+            mrp = 0.0
+            for p_item in pricing.get("prices", []):
+                if p_item.get("priceType") == "MRP":
+                    if p_item.get("decimalValue"):
+                        try:
+                            mrp = float(re.sub(r'[^0-9.]', '', str(p_item["decimalValue"])))
+                        except Exception:
+                            pass
+                    elif p_item.get("value") is not None:
+                        try:
+                            mrp = float(p_item["value"])
+                        except Exception:
+                            pass
+                    break
+
+            if mrp <= 0 and pricing.get("mrp"):
+                try:
+                    val = float(pricing["mrp"])
+                    mrp = val / 100.0 if val >= 5000 else val
+                except Exception:
+                    pass
+
+            if mrp <= 0 and price > 0:
+                mrp = round(price * 1.5, 2)
+
+            # 3. 提取卖家与 Buybox 竞争情报
+            tracking = page_context.get("trackingDataV2") or {}
+            seller_name = tracking.get("sellerName") or ""
+            seller_id = str(tracking.get("sellerId") or "").strip()
+            seller_count = int(tracking.get("sellerCount") if tracking.get("sellerCount") is not None else 1)
+            brand = tracking.get("brand") or page_context.get("brand") or ""
+            vertical = tracking.get("vertical") or ""
+
+            # 4. 提取标题与主图
+            title = ""
+            titles = page_context.get("titles") or {}
+            if titles.get("title"):
+                title = str(titles["title"]).strip()
+            elif titles.get("subtitle"):
+                title = str(titles["subtitle"]).strip()
+
+            raw_image = page_context.get("imageUrl") or ""
+            image_url = raw_image.replace("{@width}", "600").replace("{@height}", "600").replace("{@quality}", "80") if raw_image else ""
+
+            item_id = str(page_context.get("itemId") or "").lower()
+
+            # 价格单位归一化防踩坑 (分转元)
+            if price >= 5000 and (price % 100 == 0):
+                price = round(price / 100.0, 2)
+            if mrp >= 5000 and (mrp % 100 == 0):
+                mrp = round(mrp / 100.0, 2)
+
+            return {
+                "price": price,
+                "mrp": mrp,
+                "seller_name": seller_name,
+                "seller_id": seller_id,
+                "seller_count": seller_count,
+                "image_url": image_url,
+                "title": title,
+                "brand": brand,
+                "vertical": vertical,
+                "item_id": item_id,
+                "blocked": False
+            }
+        except Exception as e:
+            logger.warning(f"请求 Makro fccng API 异常: {e}")
+            return None
+
+    @classmethod
     def scrape_buyer_frontend(cls, url_or_fsn: str, proxy: Optional[str] = None) -> Dict[str, Any]:
         """
         强化抓取 Makro 前台买家商城 (makro.co.za) 详情页获取当前售价、MRP 与竞争情报
-        采用国内清洁 IP 与携趣动态代理池多候选轮转破防，杜绝 Windows curl_cffi 代理挂起问题。
+        采用官方原生 fccng AJAX API 优先秒级提取，备用 HTML 与浏览器内核兜底。
         """
         fsn, item_id = cls.extract_identifiers(url_or_fsn)
-        
+
+        # 优先提取用于 fccng API 的 pageUri
+        target_page_uri = None
+        if url_or_fsn.startswith("http"):
+            from urllib.parse import urlparse
+            p_res = urlparse(url_or_fsn)
+            target_page_uri = p_res.path + (f"?{p_res.query}" if p_res.query else "")
+        elif fsn:
+            target_page_uri = f"/-/p/{item_id or fsn}?pid={fsn}"
+
+        # 第一主力通道：调用官方原生 fccng API 秒级抓取
+        if target_page_uri:
+            api_data = cls.fetch_buyer_page_api(target_page_uri, proxy=proxy)
+            if api_data and (api_data.get("price") or 0.0) > 0:
+                api_data["url"] = f"https://www.makro.co.za{target_page_uri}"
+                return api_data
+
+            # 备用：若 target_page_uri 带特定后缀失败，尝试标准 pid URI
+            if fsn:
+                std_uri = f"/-/p/{fsn}?pid={fsn}"
+                if std_uri != target_page_uri:
+                    alt_api = cls.fetch_buyer_page_api(std_uri, proxy=proxy)
+                    if alt_api and (alt_api.get("price") or 0.0) > 0:
+                        alt_api["url"] = f"https://www.makro.co.za{std_uri}"
+                        return alt_api
+
+        # 第二备用通道：HTML 页面解析与正则保底
         candidate_urls = []
         if url_or_fsn.startswith("http"):
             candidate_urls.append(url_or_fsn)
