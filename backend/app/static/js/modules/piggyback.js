@@ -7,6 +7,16 @@ export const piggybackMethods = {
     try {
       const params = new URLSearchParams();
       if (this.piggyback.store_id) params.append('store_id', this.piggyback.store_id);
+      if (this.piggyback.user_id) params.append('user_id', this.piggyback.user_id);
+      if (this.piggyback.search) params.append('search', this.piggyback.search.trim());
+      if (this.piggyback.vertical && this.piggyback.vertical !== 'ALL') params.append('vertical', this.piggyback.vertical);
+      if (this.piggyback.inventory_status && this.piggyback.inventory_status !== 'ALL') params.append('inventory_status', this.piggyback.inventory_status);
+      if (this.piggyback.auto_reprice && this.piggyback.auto_reprice !== 'ALL') params.append('auto_reprice', this.piggyback.auto_reprice);
+      if (this.piggyback.has_floor_price && this.piggyback.has_floor_price !== 'ALL') params.append('has_floor_price', this.piggyback.has_floor_price);
+      if (this.piggyback.min_price !== '' && !isNaN(this.piggyback.min_price)) params.append('min_price', this.piggyback.min_price);
+      if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) params.append('max_price', this.piggyback.max_price);
+      if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') params.append('date_range', this.piggyback.date_range);
+
       const res = await fetch(`/api/piggyback/kpi-stats?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
@@ -202,12 +212,39 @@ export const piggybackMethods = {
       if (this.piggyback.search) {
         params.append('search', this.piggyback.search.trim());
       }
+      if (this.piggyback.vertical && this.piggyback.vertical !== 'ALL') {
+        params.append('vertical', this.piggyback.vertical);
+      }
+      if (this.piggyback.inventory_status && this.piggyback.inventory_status !== 'ALL') {
+        params.append('inventory_status', this.piggyback.inventory_status);
+      }
+      if (this.piggyback.auto_reprice && this.piggyback.auto_reprice !== 'ALL') {
+        params.append('auto_reprice', this.piggyback.auto_reprice);
+      }
+      if (this.piggyback.has_floor_price && this.piggyback.has_floor_price !== 'ALL') {
+        params.append('has_floor_price', this.piggyback.has_floor_price);
+      }
+      if (this.piggyback.min_price !== '' && !isNaN(this.piggyback.min_price)) {
+        params.append('min_price', this.piggyback.min_price);
+      }
+      if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) {
+        params.append('max_price', this.piggyback.max_price);
+      }
+      if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') {
+        params.append('date_range', this.piggyback.date_range);
+      }
+      if (this.piggyback.sort_by) {
+        params.append('sort_by', this.piggyback.sort_by);
+      }
 
       const res = await fetch(`/api/piggyback/items?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       this.piggyback.items = data.items || [];
       this.piggyback.total = data.total || 0;
+      if (data.kpi) {
+        this.piggyback.kpi = data.kpi;
+      }
       if (data.stats) {
         this.piggyback.stats = data.stats;
       }
@@ -219,8 +256,6 @@ export const piggybackMethods = {
         this.piggyback.selectAll = false;
         this.piggyback.isAllFilteredSelected = false;
       }
-      // 同步刷新顶部 KPI 指标
-      this.loadPiggybackKpi();
     } catch (e) {
       console.error('加载跟品列表异常:', e);
       this.showToast('加载跟品商品列表失败: ' + e.message, 'error');
@@ -300,6 +335,13 @@ export const piggybackMethods = {
       if (this.piggyback.store_id) params.append('store_id', this.piggyback.store_id);
       if (this.piggyback.user_id) params.append('user_id', this.piggyback.user_id);
       if (this.piggyback.search) params.append('search', this.piggyback.search.trim());
+      if (this.piggyback.vertical && this.piggyback.vertical !== 'ALL') params.append('vertical', this.piggyback.vertical);
+      if (this.piggyback.inventory_status && this.piggyback.inventory_status !== 'ALL') params.append('inventory_status', this.piggyback.inventory_status);
+      if (this.piggyback.auto_reprice && this.piggyback.auto_reprice !== 'ALL') params.append('auto_reprice', this.piggyback.auto_reprice);
+      if (this.piggyback.has_floor_price && this.piggyback.has_floor_price !== 'ALL') params.append('has_floor_price', this.piggyback.has_floor_price);
+      if (this.piggyback.min_price !== '' && !isNaN(this.piggyback.min_price)) params.append('min_price', this.piggyback.min_price);
+      if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) params.append('max_price', this.piggyback.max_price);
+      if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') params.append('date_range', this.piggyback.date_range);
 
       const res = await fetch(`/api/piggyback/ids?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1067,6 +1109,170 @@ export const piggybackMethods = {
     } catch (e) {
       this.showToast('批量重试失败: ' + e.message, 'error');
     }
+  },
+
+  async loadPiggybackVerticals() {
+    try {
+      const params = new URLSearchParams();
+      if (this.piggyback.store_id) params.append('store_id', this.piggyback.store_id);
+      const res = await fetch(`/api/piggyback/verticals?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        this.piggyback.verticalsList = data.verticals || [];
+      }
+    } catch (e) {
+      console.warn('获取类目列表异常:', e);
+    }
+  },
+
+  resetPiggybackFilters() {
+    this.piggyback.search = '';
+    this.piggyback.vertical = 'ALL';
+    this.piggyback.inventory_status = 'ALL';
+    this.piggyback.auto_reprice = 'ALL';
+    this.piggyback.has_floor_price = 'ALL';
+    this.piggyback.min_price = '';
+    this.piggyback.max_price = '';
+    this.piggyback.date_range = 'ALL';
+    this.piggyback.sort_by = 'ID_DESC';
+    this.piggyback.compliance_status = 'ALL';
+    this.piggyback.stage = 'ALL';
+    this.piggyback.buybox_status = 'ALL';
+    this.piggyback.isAllFilteredSelected = false;
+    this.loadPiggybackItems(1);
+    this.showToast('已重置所有过滤条件', 'info');
+  },
+
+  changePiggybackPageSize(size) {
+    this.piggyback.pageSize = parseInt(size);
+    this.loadPiggybackItems(1);
+  },
+
+  openBatchPriceAdjustModal() {
+    if (this.piggyback.selectedIds.length === 0) {
+      this.showToast('请先勾选需要改价的商品', 'warning');
+      return;
+    }
+    this.batchPriceAdjustForm = {
+      mode: 'DELTA',
+      value: 0.0,
+      sync_to_makro: false,
+      enforce_floor: true
+    };
+    this.showBatchPriceAdjustModal = true;
+  },
+
+  async handleBatchAdjustPrice() {
+    if (this.piggyback.selectedIds.length === 0) return;
+    this.isBatchAdjustingPrice = true;
+    try {
+      const res = await fetch('/api/piggyback/batch-adjust-price', {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          ids: this.piggyback.selectedIds,
+          mode: this.batchPriceAdjustForm.mode,
+          value: parseFloat(this.batchPriceAdjustForm.value || 0),
+          sync_to_makro: Boolean(this.batchPriceAdjustForm.sync_to_makro),
+          enforce_floor: Boolean(this.batchPriceAdjustForm.enforce_floor)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '批量改价失败');
+      this.showToast(data.message || `已成功批量调整 ${data.updated_count} 件商品价格`, 'success');
+      this.showBatchPriceAdjustModal = false;
+      this.loadPiggybackItems(this.piggyback.page);
+    } catch (e) {
+      this.showToast('批量改价失败: ' + e.message, 'error');
+    } finally {
+      this.isBatchAdjustingPrice = false;
+    }
+  },
+
+  async handleBatchToggleAutoReprice(enable) {
+    if (this.piggyback.selectedIds.length === 0) {
+      this.showToast('请先勾选需要操作的商品', 'warning');
+      return;
+    }
+    try {
+      const res = await fetch('/api/piggyback/batch-toggle-auto-reprice', {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        body: JSON.stringify({
+          ids: this.piggyback.selectedIds,
+          auto_reprice: Boolean(enable)
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '批量修改跟价状态失败');
+      this.showToast(data.message || '操作成功！', 'success');
+      this.loadPiggybackItems(this.piggyback.page);
+    } catch (e) {
+      this.showToast('批量操作失败: ' + e.message, 'error');
+    }
+  },
+
+  exportPiggybackData(mode = 'current') {
+    const params = new URLSearchParams();
+    if (mode === 'selected') {
+      if (this.piggyback.selectedIds.length === 0) {
+        this.showToast('请先勾选需要导出的商品', 'warning');
+        return;
+      }
+      params.append('ids', this.piggyback.selectedIds.join(','));
+    } else {
+      if (this.piggyback.status && this.piggyback.status !== 'ALL') params.append('status', this.piggyback.status);
+      if (this.piggyback.stage && this.piggyback.stage !== 'ALL') params.append('stage', this.piggyback.stage);
+      if (this.piggyback.buybox_status && this.piggyback.buybox_status !== 'ALL') params.append('buybox_status', this.piggyback.buybox_status);
+      if (this.piggyback.compliance_status && this.piggyback.compliance_status !== 'ALL') params.append('compliance_status', this.piggyback.compliance_status);
+      if (this.piggyback.store_id) params.append('store_id', this.piggyback.store_id);
+      if (this.piggyback.user_id) params.append('user_id', this.piggyback.user_id);
+      if (this.piggyback.search) params.append('search', this.piggyback.search.trim());
+      if (this.piggyback.vertical && this.piggyback.vertical !== 'ALL') params.append('vertical', this.piggyback.vertical);
+      if (this.piggyback.inventory_status && this.piggyback.inventory_status !== 'ALL') params.append('inventory_status', this.piggyback.inventory_status);
+      if (this.piggyback.auto_reprice && this.piggyback.auto_reprice !== 'ALL') params.append('auto_reprice', this.piggyback.auto_reprice);
+      if (this.piggyback.has_floor_price && this.piggyback.has_floor_price !== 'ALL') params.append('has_floor_price', this.piggyback.has_floor_price);
+      if (this.piggyback.min_price !== '' && !isNaN(this.piggyback.min_price)) params.append('min_price', this.piggyback.min_price);
+      if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) params.append('max_price', this.piggyback.max_price);
+      if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') params.append('date_range', this.piggyback.date_range);
+      if (this.piggyback.sort_by) params.append('sort_by', this.piggyback.sort_by);
+    }
+
+    this.showToast('正在生成并下载 Excel/CSV 报表...', 'info');
+    window.location.href = `/api/piggyback/export?${params.toString()}`;
+  },
+
+  copyToClipboard(text, label = '内容') {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        this.showToast(`已复制 ${label}: ${text}`, 'success');
+      }).catch(() => {
+        this._fallbackCopy(text, label);
+      });
+    } else {
+      this._fallbackCopy(text, label);
+    }
+  },
+
+  _fallbackCopy(text, label) {
+    const el = document.createElement('textarea');
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    this.showToast(`已复制 ${label}: ${text}`, 'success');
+  },
+
+  batchToggleAutoReprice(enable) {
+    return this.handleBatchToggleAutoReprice(enable);
+  },
+
+  getStoreName(storeId) {
+    if (!storeId) return '';
+    const st = (this.stores || []).find(s => s.id === storeId);
+    return st ? st.name : `店铺#${storeId}`;
   },
 };
 

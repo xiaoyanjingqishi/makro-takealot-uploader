@@ -865,6 +865,174 @@ class TestPiggybackAPI(unittest.TestCase):
             self.db.query(MakroListing).filter(MakroListing.sku_id.in_([sku1, sku2])).delete(synchronize_session=False)
             self.db.commit()
 
+    def test_advanced_piggyback_features(self):
+        # 1. 准备测试数据
+        it1 = MakroPiggybackItem(
+            makro_product_id="TEST_FSN_ADV_1",
+            seller_sku="ADV_SKU_1",
+            store_id=self.store.id,
+            user_id=self.user.id,
+            title="Advanced Filter Product 1",
+            brand="BrandA",
+            vertical="electronics_audio",
+            target_price=200.0,
+            original_price=250.0,
+            min_price_floor=150.0,
+            inventory=20,
+            auto_reprice=True,
+            status="ACTIVE",
+            buybox_status="WINNING",
+            compliance_status="SAFE"
+        )
+        it2 = MakroPiggybackItem(
+            makro_product_id="TEST_FSN_ADV_2",
+            seller_sku="ADV_SKU_2",
+            store_id=self.store.id,
+            user_id=self.user.id,
+            title="Advanced Filter Product 2",
+            brand="BrandB",
+            vertical="home_kitchen",
+            target_price=100.0,
+            original_price=120.0,
+            min_price_floor=0.0,
+            inventory=0,
+            auto_reprice=False,
+            status="ACTIVE",
+            buybox_status="LOSING",
+            compliance_status="RISK"
+        )
+        self.db.add_all([it1, it2])
+        self.db.commit()
+        self.db.refresh(it1)
+        self.db.refresh(it2)
+
+        try:
+            # 2. 测试获取类目列表 /api/piggyback/verticals
+            vert_resp = self.client.get(f"/api/piggyback/verticals?store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(vert_resp.status_code, 200)
+            verts = vert_resp.json().get("verticals", [])
+            self.assertIn("electronics_audio", verts)
+            self.assertIn("home_kitchen", verts)
+
+            # 3. 测试高级过滤及同步 KPI / Stats
+            # 按类目过滤
+            f_vert_resp = self.client.get(f"/api/piggyback/items?vertical=electronics_audio&store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(f_vert_resp.status_code, 200)
+            f_vert_data = f_vert_resp.json()
+            self.assertTrue(all(item["vertical"] == "electronics_audio" for item in f_vert_data["items"]))
+            self.assertIn("kpi", f_vert_data)
+            self.assertIn("stats", f_vert_data)
+
+            # 按库存状态过滤 (缺货 OUT_OF_STOCK)
+            f_inv_resp = self.client.get(f"/api/piggyback/items?inventory_status=OUT_OF_STOCK&store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(f_inv_resp.status_code, 200)
+            self.assertTrue(all(item["inventory"] == 0 for item in f_inv_resp.json()["items"]))
+
+            # 按自动跟价状态过滤 (开启 auto_reprice=true)
+            f_rep_resp = self.client.get(f"/api/piggyback/items?auto_reprice=true&store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(f_rep_resp.status_code, 200)
+            self.assertTrue(all(item["auto_reprice"] is True for item in f_rep_resp.json()["items"]))
+
+            # 按保本底价过滤 (有底价 HAS_FLOOR)
+            f_flr_resp = self.client.get(f"/api/piggyback/items?has_floor_price=HAS_FLOOR&store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(f_flr_resp.status_code, 200)
+            self.assertTrue(all(item["min_price_floor"] > 0 for item in f_flr_resp.json()["items"]))
+
+            # 按价格区间过滤 (min_price=150, max_price=250)
+            f_prc_resp = self.client.get(f"/api/piggyback/items?min_price=150&max_price=250&store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(f_prc_resp.status_code, 200)
+            self.assertTrue(all(150 <= item["target_price"] <= 250 for item in f_prc_resp.json()["items"]))
+
+            # 按排序规则过滤 (价格降序 PRICE_DESC)
+            f_srt_resp = self.client.get(f"/api/piggyback/items?sort_by=PRICE_DESC&store_id={self.store.id}", headers=self.headers)
+            self.assertEqual(f_srt_resp.status_code, 200)
+            prices = [it["target_price"] for it in f_srt_resp.json()["items"]]
+            self.assertEqual(prices, sorted(prices, reverse=True))
+
+            # 4. 测试批量改价 (DELTA + 保本底价保护)
+            # it1 target_price=200, min_price_floor=150. 下调 100 兰特，由于底价保护，应截断至 150
+            adj_resp = self.client.post(
+                "/api/piggyback/batch-adjust-price",
+                headers=self.headers,
+                json={
+                    "ids": [it1.id],
+                    "mode": "DELTA",
+                    "value": -100.0,
+                    "sync_to_makro": False,
+                    "enforce_floor": True
+                }
+            )
+            self.assertEqual(adj_resp.status_code, 200)
+            self.assertEqual(adj_resp.json()["updated_count"], 1)
+            self.db.refresh(it1)
+            self.assertEqual(it1.target_price, 150.0)
+
+            # 测试批量改价 (PERCENT +10%)
+            # 150 * 1.10 = 165
+            adj_pct_resp = self.client.post(
+                "/api/piggyback/batch-adjust-price",
+                headers=self.headers,
+                json={
+                    "ids": [it1.id],
+                    "mode": "PERCENT",
+                    "value": 10.0,
+                    "sync_to_makro": False,
+                    "enforce_floor": True
+                }
+            )
+            self.assertEqual(adj_pct_resp.status_code, 200)
+            self.db.refresh(it1)
+            self.assertEqual(it1.target_price, 165.0)
+
+            # 测试批量改价 (FIXED)
+            adj_fix_resp = self.client.post(
+                "/api/piggyback/batch-adjust-price",
+                headers=self.headers,
+                json={
+                    "ids": [it2.id],
+                    "mode": "FIXED",
+                    "value": 188.0,
+                    "sync_to_makro": False,
+                    "enforce_floor": True
+                }
+            )
+            self.assertEqual(adj_fix_resp.status_code, 200)
+            self.db.refresh(it2)
+            self.assertEqual(it2.target_price, 188.0)
+
+            # 5. 测试批量开关自动跟价
+            toggle_resp = self.client.post(
+                "/api/piggyback/batch-toggle-auto-reprice",
+                headers=self.headers,
+                json={
+                    "ids": [it1.id, it2.id],
+                    "auto_reprice": True
+                }
+            )
+            self.assertEqual(toggle_resp.status_code, 200)
+            self.assertEqual(toggle_resp.json()["updated_count"], 2)
+            self.db.refresh(it1)
+            self.db.refresh(it2)
+            self.assertTrue(it1.auto_reprice)
+            self.assertTrue(it2.auto_reprice)
+
+            # 6. 测试数据导出 CSV (包含 UTF-8 BOM \ufeff)
+            exp_resp = self.client.get(
+                f"/api/piggyback/export?ids={it1.id},{it2.id}",
+                headers=self.headers
+            )
+            self.assertEqual(exp_resp.status_code, 200)
+            csv_content = exp_resp.content.decode("utf-8-sig")
+            self.assertIn("Makro FSN", csv_content)
+            self.assertIn("TEST_FSN_ADV_1", csv_content)
+            self.assertIn("TEST_FSN_ADV_2", csv_content)
+
+            print("[OK] Test 9: Advanced Piggyback features (filters, KPI sync, batch price adjust, auto reprice toggle, CSV export) passed!")
+
+        finally:
+            self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_([it1.id, it2.id])).delete(synchronize_session=False)
+            self.db.commit()
+
 if __name__ == "__main__":
     unittest.main()
 

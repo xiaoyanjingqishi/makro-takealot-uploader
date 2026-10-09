@@ -94,248 +94,506 @@
             </div>
           </div>
 
-          <!-- 漏斗阶段与操作栏 -->
-          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-3 flex items-center justify-between flex-wrap gap-2.5">
-            <!-- 左侧: 漏斗阶段 Tab 与风控筛选 -->
-            <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
-              <!-- 漏斗三阶段标签组 -->
-              <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
-                <button 
-                  v-for="stg in [
-                    { key: 'ALL', label: '全部', count: piggyback.kpi.total_count },
-                    { key: 'STAGING', label: '待处理池', count: piggyback.kpi.staging_count },
-                    { key: 'ACTIVE_MONITOR', label: '在售跟价监控', count: piggyback.kpi.active_count },
-                    { key: 'BLOCKED_FAILED', label: '异常拦截', count: piggyback.kpi.blocked_count },
-                    { key: 'ABANDONED', label: '🗑️ 已弃用 (防重采池)', count: piggyback.kpi.abandoned_count }
-                  ]"
-                  :key="stg.key"
-                  @click="changePiggybackStage(stg.key)"
-                  :class="piggyback.stage === stg.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
-                  class="px-2.5 py-1 text-xs rounded-md transition-all flex items-center space-x-1 cursor-pointer select-none"
+          <!-- 漏斗阶段与操作栏 (Tier 1: 常驻控制栏) -->
+          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-3 space-y-2.5">
+            <div class="flex items-center justify-between flex-wrap gap-2.5">
+              <!-- 左侧: 漏斗阶段 Tab 与风控筛选 -->
+              <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
+                <!-- 漏斗阶段标签组 -->
+                <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
+                  <button 
+                    v-for="stg in [
+                      { key: 'ALL', label: '全部', count: piggyback.kpi.total_count },
+                      { key: 'STAGING', label: '待处理池', count: piggyback.kpi.staging_count },
+                      { key: 'ACTIVE_MONITOR', label: '在售跟价监控', count: piggyback.kpi.active_count },
+                      { key: 'BLOCKED_FAILED', label: '异常拦截', count: piggyback.kpi.blocked_count },
+                      { key: 'ABANDONED', label: '🗑️ 已弃用 (防重采池)', count: piggyback.kpi.abandoned_count }
+                    ]"
+                    :key="stg.key"
+                    @click="changePiggybackStage(stg.key)"
+                    :class="piggyback.stage === stg.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
+                    class="px-2.5 py-1 text-xs rounded-md transition-all flex items-center space-x-1 cursor-pointer select-none"
+                  >
+                    <span>{{ stg.label }}</span>
+                    <span class="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 text-[10px] rounded-full font-mono">{{ stg.count }}</span>
+                  </button>
+                </div>
+
+                <!-- 合规状态筛选 (带实时动态徽章) -->
+                <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
+                  <button 
+                    v-for="cst in [
+                      { key: 'ALL', label: '全部风控' },
+                      { key: 'PENDING_CHECK', label: '⏳ 待检测', count: piggyback.stats.pending_check_count },
+                      { key: 'SAFE', label: '🟢 合规', count: piggyback.stats.safe_count },
+                      { key: 'RISK', label: '🟡 风险', count: piggyback.stats.risk_count },
+                      { key: 'PROHIBITED', label: '🔴 禁售', count: piggyback.stats.prohibited_count }
+                    ]"
+                    :key="cst.key"
+                    @click="changePiggybackCompliance(cst.key)"
+                    :class="piggyback.compliance_status === cst.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
+                    class="px-2 py-1 text-xs rounded-md transition-all cursor-pointer select-none flex items-center space-x-1"
+                  >
+                    <span>{{ cst.label }}</span>
+                    <span v-if="cst.count !== undefined" class="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[9.5px] rounded-full font-mono font-bold">{{ cst.count }}</span>
+                  </button>
+                </div>
+
+                <!-- 采品员工筛选下拉 (管理员专属) -->
+                <select 
+                  v-if="currentUser && currentUser.role === 'ADMIN'"
+                  v-model="piggyback.user_id" 
+                  @change="loadPiggybackItems(1)"
+                  class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
+                  title="按采集员工过滤跟品商品"
                 >
-                  <span>{{ stg.label }}</span>
-                  <span class="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 text-[10px] rounded-full font-mono">{{ stg.count }}</span>
-                </button>
+                  <option :value="null">👤 全部采品人</option>
+                  <option v-for="op in operatorsList" :key="op.id" :value="op.id">
+                    👤 {{ op.nickname || op.username }} ({{ op.role === 'ADMIN' ? '管理员' : '员工' }})
+                  </option>
+                </select>
+
+                <!-- 店铺筛选下拉 -->
+                <select 
+                  v-model="piggyback.store_id" 
+                  @change="loadPiggybackItems(1); loadPiggybackVerticals()"
+                  class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
+                >
+                  <option :value="null">🏪 全部店铺</option>
+                  <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
+                </select>
+
+                <!-- 采集自动AI检测开关 -->
+                <label class="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100/80 rounded-lg border border-slate-200/80 cursor-pointer select-none text-[11px] text-slate-700 transition" title="开启后每次采集商品将自动调用双AI合规检测；关闭则入库为待检测，支持勾选后手动批量质检">
+                  <input 
+                    type="checkbox" 
+                    v-model="piggyback.autoCompliance" 
+                    @change="savePiggybackAutoCompliance"
+                    class="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span :class="piggyback.autoCompliance ? 'font-bold text-indigo-700' : 'text-slate-600'">采集自动AI检测</span>
+                </label>
               </div>
 
-              <!-- 合规状态筛选 (支持独立的待检测商品筛选与实时数量徽章) -->
-              <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
+              <!-- 右侧: 搜索、高级筛选折叠、导出与批量操作 -->
+              <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
+                <!-- 搜索框 -->
+                <div class="relative w-44 sm:w-52">
+                  <input 
+                    type="text" 
+                    v-model="piggyback.search" 
+                    @keyup.enter="loadPiggybackItems(1)"
+                    placeholder="搜索标题/FSN/SKU..."
+                    class="w-full pl-7 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 focus:bg-white text-slate-800 placeholder-slate-400"
+                  />
+                  <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
+                  <button v-if="piggyback.search" @click="piggyback.search = ''; loadPiggybackItems(1)" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                </div>
+
+                <!-- 刷新按钮 -->
                 <button 
-                  v-for="cst in [
-                    { key: 'ALL', label: '全部风控' },
-                    { key: 'PENDING_CHECK', label: '⏳ 待检测', count: piggyback.stats.pending_check_count },
-                    { key: 'SAFE', label: '🟢 合规', count: piggyback.stats.safe_count },
-                    { key: 'RISK', label: '🟡 风险', count: piggyback.stats.risk_count },
-                    { key: 'PROHIBITED', label: '🔴 禁售', count: piggyback.stats.prohibited_count }
-                  ]"
-                  :key="cst.key"
-                  @click="changePiggybackCompliance(cst.key)"
-                  :class="piggyback.compliance_status === cst.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
-                  class="px-2 py-1 text-xs rounded-md transition-all cursor-pointer select-none flex items-center space-x-1"
+                  @click="loadPiggybackItems(piggyback.page)" 
+                  :disabled="loadingPiggyback"
+                  class="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-200/80 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                  title="刷新列表"
                 >
-                  <span>{{ cst.label }}</span>
-                  <span v-if="cst.count !== undefined" class="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[9.5px] rounded-full font-mono font-bold">{{ cst.count }}</span>
+                  <span :class="{'inline-block animate-spin': loadingPiggyback}">🔄</span>
+                </button>
+
+                <!-- 高级筛选折叠展开按钮 (带激活数量徽章) -->
+                <button 
+                  @click="piggyback.showAdvancedFilters = !piggyback.showAdvancedFilters"
+                  :class="piggyback.showAdvancedFilters || activePiggybackFilterCount > 0 ? 'bg-sky-50 text-sky-700 border-sky-300 font-bold' : 'bg-white text-slate-700 border-slate-200 font-medium hover:bg-slate-50'"
+                  class="px-2.5 py-1.5 text-xs border rounded-lg transition-all flex items-center space-x-1.5 shadow-2xs cursor-pointer select-none"
+                  title="展开/收起类目、库存、价格区间、日期与排序等高级筛选"
+                >
+                  <span>⚡ 高级筛选</span>
+                  <span v-if="activePiggybackFilterCount > 0" class="px-1.5 py-0.2 bg-sky-600 text-white text-[10px] rounded-full font-bold font-mono">{{ activePiggybackFilterCount }}</span>
+                  <span class="text-[9px]">{{ piggyback.showAdvancedFilters ? '▲' : '▼' }}</span>
+                </button>
+
+                <!-- 重置筛选按钮 -->
+                <button 
+                  v-if="hasActivePiggybackFilters"
+                  @click="resetPiggybackFilters"
+                  class="px-2.5 py-1.5 text-xs bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
+                  title="清空当前所有筛选条件"
+                >
+                  <span>✕ 重置</span>
+                </button>
+
+                <!-- 导出报表下拉 -->
+                <div class="relative group/export">
+                  <button 
+                    class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
+                    title="导出 Excel/CSV 报表"
+                  >
+                    <span>📥 导出</span>
+                    <span class="text-[8px] text-slate-400">▼</span>
+                  </button>
+                  <div class="hidden group-hover/export:block absolute right-0 top-full pt-1 z-30 min-w-[170px]">
+                    <div class="bg-white rounded-xl shadow-xl border border-slate-200 p-1.5 space-y-1 text-xs">
+                      <button 
+                        @click="exportPiggybackData('current')"
+                        class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 hover:text-slate-900 font-medium flex items-center justify-between cursor-pointer"
+                      >
+                        <span>📊 导出当前筛选 ({{ piggyback.total }})</span>
+                      </button>
+                      <button 
+                        @click="exportPiggybackData('selected')"
+                        :disabled="piggyback.selectedIds.length === 0"
+                        class="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 hover:text-slate-900 font-medium flex items-center justify-between cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <span>📑 导出选中 ({{ piggyback.selectedIds.length }})</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 单个录入 -->
+                <button 
+                  @click="showCollectPiggybackModal = true"
+                  class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
+                >
+                  <span>🔗</span>
+                  <span>单个采集</span>
+                </button>
+
+                <!-- 批量导入 -->
+                <button 
+                  @click="showBatchCollectPiggybackModal = true"
+                  class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
+                >
+                  <span>📑</span>
+                  <span>批量导入</span>
+                </button>
+
+                <!-- 批量改价 -->
+                <button 
+                  @click="openBatchPriceAdjustModal"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="批量调整售价 (固定差额/百分比/统一价，带防破发保护与官方同步)"
+                >
+                  <span>💰</span>
+                  <span>批量改价 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 公式算底价 -->
+                <button 
+                  @click="openBatchFloorModal"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="按比例或固定差额公式批量配置保本底价"
+                >
+                  <span>🛡️</span>
+                  <span>公式算底价 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 批量跟价公式 -->
+                <button 
+                  @click="openBatchPricingModal"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="批量为选中的商品配置跟价计算公式 (如 -R0.50, -R1.00, -2%)"
+                >
+                  <span>⚡</span>
+                  <span>跟价公式 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 全量立刻巡检 -->
+                <button 
+                  @click="triggerFullCruiseReprice"
+                  :disabled="runningFullCruise"
+                  class="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40"
+                  title="立刻在后台发起全量平稳巡航：智能防反爬流控抖动，精准抓取在售商品最新前台竞价、重新评定 Buybox 赢车状态并自动执行跟价调价"
+                >
+                  <span :class="{'inline-block animate-spin': runningFullCruise}">⚡</span>
+                  <span>{{ runningFullCruise ? '全量巡检中...' : '全量立刻巡检' }}</span>
+                </button>
+
+                <!-- 批量自动跟价巡检 (对选中商品) -->
+                <button 
+                  @click="triggerBatchReprice"
+                  :disabled="runningBatchReprice || piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="立即对选中的在售跟品巡检前台竞对价格并执行自动调价"
+                >
+                  <span>🤖</span>
+                  <span>{{ runningBatchReprice ? '跟价中...' : `跟价选中 (${piggyback.selectedIds.length})` }}</span>
+                </button>
+
+                <!-- 调价审计日志 -->
+                <button 
+                  @click="openRepriceLogsModal"
+                  class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
+                  title="查看历史自动调价与防破发日志"
+                >
+                  <span>📜</span>
+                  <span>调价日志</span>
+                </button>
+
+                <!-- 批量合规检测 -->
+                <button 
+                  @click="handleBatchCheckCompliance"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <span>🛡️</span>
+                  <span>AI质检 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 批量改店铺 -->
+                <button 
+                  @click="openBatchSetStoreModal" 
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="一键批量将选中的跟品商品转移归属到指定店铺"
+                >
+                  <span>🏪</span>
+                  <span>改店铺 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 批量挂靠跟品 (支持选定目标店铺) -->
+                <button 
+                  v-if="piggyback.stage !== 'ABANDONED'"
+                  @click="openBatchPublishPiggybackModal" 
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-3 py-1.5 text-xs bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <span>🚀</span>
+                  <span>一键跟品 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 批量弃用按钮 (常规池下显示，防止重复采集) -->
+                <button 
+                  v-if="piggyback.stage !== 'ABANDONED'"
+                  @click="handleBatchAbandonPiggyback"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="批量将选中的侵权/废弃商品移入弃用黑名单，防止后续重复采集"
+                >
+                  <span>🚫</span>
+                  <span>批量弃用 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 批量恢复按钮 (仅在已弃用池下显示) -->
+                <button 
+                  v-if="piggyback.stage === 'ABANDONED'"
+                  @click="handleBatchRestorePiggyback"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="批量将选中的弃用商品恢复至正常活跃池"
+                >
+                  <span>🔄</span>
+                  <span>批量恢复 ({{ piggyback.selectedIds.length }})</span>
+                </button>
+
+                <!-- 批量彻底删除按钮 (支持任何阶段选中项物理清除) -->
+                <button 
+                  @click="handleBatchDeletePiggyback"
+                  :disabled="piggyback.selectedIds.length === 0"
+                  class="px-2.5 py-1.5 text-xs bg-red-50 text-red-700 hover:bg-red-100 border border-red-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="批量从跟品库中彻底删除选中的商品"
+                >
+                  <span>🗑️</span>
+                  <span>批量删除 ({{ piggyback.selectedIds.length }})</span>
                 </button>
               </div>
-
-              <!-- 采品员工筛选下拉 (管理员专属) -->
-              <select 
-                v-if="currentUser && currentUser.role === 'ADMIN'"
-                v-model="piggyback.user_id" 
-                @change="loadPiggybackItems(1)"
-                class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
-                title="按采集员工过滤跟品商品"
-              >
-                <option :value="null">👤 全部采品人</option>
-                <option v-for="op in operatorsList" :key="op.id" :value="op.id">
-                  👤 {{ op.nickname || op.username }} ({{ op.role === 'ADMIN' ? '管理员' : '员工' }})
-                </option>
-              </select>
-
-              <!-- 店铺筛选下拉 -->
-              <select 
-                v-model="piggyback.store_id" 
-                @change="loadPiggybackItems(1)"
-                class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
-              >
-                <option :value="null">🏪 全部店铺</option>
-                <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }}</option>
-              </select>
-
-              <!-- 采集自动AI检测开关 (借鉴选品箱模式，默认关闭，支持手动批量质检) -->
-              <label class="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100/80 rounded-lg border border-slate-200/80 cursor-pointer select-none text-[11px] text-slate-700 transition" title="开启后每次采集商品将自动调用双AI合规检测；关闭则入库为待检测，支持勾选后手动批量质检">
-                <input 
-                  type="checkbox" 
-                  v-model="piggyback.autoCompliance" 
-                  @change="savePiggybackAutoCompliance"
-                  class="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
-                />
-                <span :class="piggyback.autoCompliance ? 'font-bold text-indigo-700' : 'text-slate-600'">采集自动AI检测</span>
-              </label>
             </div>
 
-            <!-- 右侧: 操作按钮组 -->
-            <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
-              <!-- 搜索框 -->
-              <div class="relative w-44 sm:w-56">
-                <input 
-                  type="text" 
-                  v-model="piggyback.search" 
-                  @keyup.enter="loadPiggybackItems(1)"
-                  placeholder="搜索标题/FSN/SKU..."
-                  class="w-full pl-7 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 focus:bg-white text-slate-800 placeholder-slate-400"
-                />
-                <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
-                <button v-if="piggyback.search" @click="piggyback.search = ''; loadPiggybackItems(1)" class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>
+            <!-- Tier 2: 折叠式高级筛选抽屉面板 -->
+            <div 
+              v-if="piggyback.showAdvancedFilters" 
+              class="pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs bg-slate-50/70 p-3 rounded-xl border border-slate-200/60 animate-in fade-in duration-200"
+            >
+              <!-- 1. 所属类目 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🏷️ 所属类目 (Vertical)</label>
+                <select 
+                  v-model="piggyback.vertical" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部类目 ({{ piggyback.verticalsList.length }}个)</option>
+                  <option v-for="v in piggyback.verticalsList" :key="v" :value="v">
+                    {{ getVerticalZh(v) || v }} ({{ v }})
+                  </option>
+                </select>
               </div>
 
-              <!-- 刷新按钮 -->
-              <button 
-                @click="loadPiggybackItems(piggyback.page)" 
-                :disabled="loadingPiggyback"
-                class="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg border border-slate-200/80 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
-                title="刷新列表"
-              >
-                <span :class="{'inline-block animate-spin': loadingPiggyback}">🔄</span>
-              </button>
+              <!-- 2. 库存状态 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">📦 库存状态</label>
+                <select 
+                  v-model="piggyback.inventory_status" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部库存状态</option>
+                  <option value="IN_STOCK">🟢 充足在库 (>10)</option>
+                  <option value="LOW_STOCK">🟡 低库存预警 (1~10)</option>
+                  <option value="OUT_OF_STOCK">🔴 缺货售罄 (0)</option>
+                </select>
+              </div>
 
-              <!-- 单个录入 -->
-              <button 
-                @click="showCollectPiggybackModal = true"
-                class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
-              >
-                <span>🔗</span>
-                <span>单个采集</span>
-              </button>
+              <!-- 3. 自动跟价状态 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🤖 自动跟价状态</label>
+                <select 
+                  v-model="piggyback.auto_reprice" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部跟价状态</option>
+                  <option value="true">🟢 已开启自动跟价</option>
+                  <option value="false">⚪ 未开启/暂停跟价</option>
+                </select>
+              </div>
 
-              <!-- 批量导入 -->
-              <button 
-                @click="showBatchCollectPiggybackModal = true"
-                class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
-              >
-                <span>📑</span>
-                <span>批量导入</span>
-              </button>
+              <!-- 4. 保本底价状态 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🛡️ 保本底价状态</label>
+                <select 
+                  v-model="piggyback.has_floor_price" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部底价状态</option>
+                  <option value="HAS_FLOOR">🛡️ 已设保本底价</option>
+                  <option value="MISSING_FLOOR">⚠️ 缺底价高危</option>
+                </select>
+              </div>
 
-              <!-- 公式算底价 -->
-              <button 
-                @click="openBatchFloorModal"
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="按比例或固定差额公式批量配置保本底价"
-              >
-                <span>🛡️</span>
-                <span>公式算底价 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+              <!-- 5. 售价区间 (R) -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">💰 售价区间 (兰特)</label>
+                <div class="flex items-center space-x-1">
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    v-model="piggyback.min_price" 
+                    @change="loadPiggybackItems(1)"
+                    @keyup.enter="loadPiggybackItems(1)"
+                    placeholder="Min" 
+                    class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs font-mono"
+                  />
+                  <span class="text-slate-400">~</span>
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    v-model="piggyback.max_price" 
+                    @change="loadPiggybackItems(1)"
+                    @keyup.enter="loadPiggybackItems(1)"
+                    placeholder="Max" 
+                    class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs font-mono"
+                  />
+                </div>
+              </div>
 
-              <!-- 批量跟价公式 -->
-              <button 
-                @click="openBatchPricingModal"
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="批量为选中的商品配置跟价计算公式 (如 -R0.50, -R1.00, -2%)"
-              >
-                <span>⚡</span>
-                <span>跟价公式 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+              <!-- 6. 排序与入库时间 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🔄 排序规则</label>
+                <select 
+                  v-model="piggyback.sort_by" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs font-medium"
+                >
+                  <option value="ID_DESC">最新入库优先</option>
+                  <option value="PRICE_ASC">售价从低到高 ↑</option>
+                  <option value="PRICE_DESC">售价从高到低 ↓</option>
+                  <option value="INVENTORY_DESC">库存从多到少 ↓</option>
+                  <option value="COMPETITORS_DESC">竞对数量最多优先</option>
+                  <option value="LAST_REPRICE_DESC">最近调价优先</option>
+                </select>
+              </div>
+            </div>
 
-              <!-- 全量立刻巡检 -->
-              <button 
-                @click="triggerFullCruiseReprice"
-                :disabled="runningFullCruise"
-                class="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40"
-                title="立刻在后台发起全量平稳巡航：智能防反爬流控抖动，精准抓取在售商品最新前台竞价、重新评定 Buybox 赢车状态并自动执行跟价调价"
+            <!-- 活跃筛选标签栏 (Active Filter Pills Bar) -->
+            <div 
+              v-if="hasActivePiggybackFilters" 
+              class="flex items-center space-x-1.5 flex-wrap gap-y-1 pt-1 text-[11px] border-t border-slate-100"
+            >
+              <span class="text-slate-400 font-medium">当前过滤:</span>
+              
+              <!-- 类目 pill -->
+              <span 
+                v-if="piggyback.vertical && piggyback.vertical !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-sky-50 text-sky-700 rounded-full border border-sky-200 font-medium"
               >
-                <span :class="{'inline-block animate-spin': runningFullCruise}">⚡</span>
-                <span>{{ runningFullCruise ? '全量巡检中...' : '全量立刻巡检' }}</span>
-              </button>
+                <span>类目: {{ getVerticalZh(piggyback.vertical) || piggyback.vertical }}</span>
+                <button @click="piggyback.vertical = 'ALL'; loadPiggybackItems(1)" class="hover:text-sky-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量自动跟价巡检 (对选中商品) -->
-              <button 
-                @click="triggerBatchReprice"
-                :disabled="runningBatchReprice || piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="立即对选中的在售跟品巡检前台竞对价格并执行自动调价"
+              <!-- 库存 pill -->
+              <span 
+                v-if="piggyback.inventory_status && piggyback.inventory_status !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full border border-slate-200 font-medium"
               >
-                <span>🤖</span>
-                <span>{{ runningBatchReprice ? '跟价中...' : `跟价选中 (${piggyback.selectedIds.length})` }}</span>
-              </button>
+                <span>库存: {{ piggyback.inventory_status === 'IN_STOCK' ? '充足在库' : piggyback.inventory_status === 'LOW_STOCK' ? '低库存预警' : '缺货售罄' }}</span>
+                <button @click="piggyback.inventory_status = 'ALL'; loadPiggybackItems(1)" class="hover:text-slate-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 调价审计日志 -->
-              <button 
-                @click="openRepriceLogsModal"
-                class="px-2.5 py-1.5 text-xs bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer"
-                title="查看历史自动调价与防破发日志"
+              <!-- 自动跟价 pill -->
+              <span 
+                v-if="piggyback.auto_reprice && piggyback.auto_reprice !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200 font-medium"
               >
-                <span>📜</span>
-                <span>调价日志</span>
-              </button>
+                <span>跟价: {{ piggyback.auto_reprice === 'true' ? '开启' : '关闭' }}</span>
+                <button @click="piggyback.auto_reprice = 'ALL'; loadPiggybackItems(1)" class="hover:text-emerald-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量合规检测 -->
-              <button 
-                @click="handleBatchCheckCompliance"
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              <!-- 保本底价 pill -->
+              <span 
+                v-if="piggyback.has_floor_price && piggyback.has_floor_price !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full border border-amber-200 font-medium"
               >
-                <span>🛡️</span>
-                <span>AI质检 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+                <span>底价: {{ piggyback.has_floor_price === 'HAS_FLOOR' ? '已设底价' : '缺底价高危' }}</span>
+                <button @click="piggyback.has_floor_price = 'ALL'; loadPiggybackItems(1)" class="hover:text-amber-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量改店铺 -->
-              <button 
-                @click="openBatchSetStoreModal" 
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-slate-50 text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-slate-200/90 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="一键批量将选中的跟品商品转移归属到指定店铺"
+              <!-- 价格区间 pill -->
+              <span 
+                v-if="(piggyback.min_price !== '' && piggyback.min_price !== null) || (piggyback.max_price !== '' && piggyback.max_price !== null)"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full border border-teal-200 font-medium"
               >
-                <span>🏪</span>
-                <span>改店铺 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+                <span>价格: R{{ piggyback.min_price || '0' }} ~ R{{ piggyback.max_price || '∞' }}</span>
+                <button @click="piggyback.min_price = ''; piggyback.max_price = ''; loadPiggybackItems(1)" class="hover:text-teal-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量挂靠跟品 (支持选定目标店铺) -->
-              <button 
-                v-if="piggyback.stage !== 'ABANDONED'"
-                @click="openBatchPublishPiggybackModal" 
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-3 py-1.5 text-xs bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-all flex items-center space-x-1 shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              <!-- 排序 pill -->
+              <span 
+                v-if="piggyback.sort_by && piggyback.sort_by !== 'ID_DESC'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full border border-purple-200 font-medium"
               >
-                <span>🚀</span>
-                <span>一键跟品 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+                <span>排序: {{ piggyback.sort_by === 'PRICE_ASC' ? '售价从低到高' : piggyback.sort_by === 'PRICE_DESC' ? '售价从高到低' : piggyback.sort_by === 'INVENTORY_DESC' ? '库存最多优先' : piggyback.sort_by === 'COMPETITORS_DESC' ? '竞对最多优先' : '最近调价优先' }}</span>
+                <button @click="piggyback.sort_by = 'ID_DESC'; loadPiggybackItems(1)" class="hover:text-purple-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量弃用按钮 (常规池下显示，防止重复采集) -->
-              <button 
-                v-if="piggyback.stage !== 'ABANDONED'"
-                @click="handleBatchAbandonPiggyback"
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="批量将选中的侵权/废弃商品移入弃用黑名单，防止后续重复采集"
+              <!-- 店铺 pill -->
+              <span 
+                v-if="piggyback.store_id !== null"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200 font-medium"
               >
-                <span>🚫</span>
-                <span>批量弃用 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+                <span>店铺: {{ getStoreName(piggyback.store_id) }}</span>
+                <button @click="piggyback.store_id = null; loadPiggybackItems(1); loadPiggybackVerticals()" class="hover:text-indigo-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量恢复按钮 (仅在已弃用池下显示) -->
-              <button 
-                v-if="piggyback.stage === 'ABANDONED'"
-                @click="handleBatchRestorePiggyback"
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="批量将选中的弃用商品恢复至正常活跃池"
+              <!-- 搜索词 pill -->
+              <span 
+                v-if="piggyback.search"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-slate-100 text-slate-800 rounded-full border border-slate-300 font-medium"
               >
-                <span>🔄</span>
-                <span>批量恢复 ({{ piggyback.selectedIds.length }})</span>
-              </button>
+                <span>关键词: "{{ piggyback.search }}"</span>
+                <button @click="piggyback.search = ''; loadPiggybackItems(1)" class="hover:text-slate-900 cursor-pointer">✕</button>
+              </span>
 
-              <!-- 批量彻底删除按钮 (支持任何阶段选中项物理清除) -->
+              <!-- 全部清空按钮 -->
               <button 
-                @click="handleBatchDeletePiggyback"
-                :disabled="piggyback.selectedIds.length === 0"
-                class="px-2.5 py-1.5 text-xs bg-red-50 text-red-700 hover:bg-red-100 border border-red-200/80 rounded-lg font-medium transition-all flex items-center space-x-1 shadow-2xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="批量从跟品库中彻底删除选中的商品"
+                @click="resetPiggybackFilters"
+                class="text-rose-600 hover:text-rose-800 underline font-semibold ml-2 cursor-pointer"
               >
-                <span>🗑️</span>
-                <span>批量删除 ({{ piggyback.selectedIds.length }})</span>
+                清空全部筛选
               </button>
             </div>
           </div>
@@ -455,23 +713,25 @@
                       <!-- 文本信息 -->
                       <div class="flex-1 min-w-0 space-y-1">
                         <div class="flex items-center space-x-1.5 flex-wrap gap-y-0.5">
-                          <span class="px-1.5 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-mono rounded font-semibold">
-                            FSN: {{ item.makro_product_id }}
+                          <span class="px-1.5 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-mono rounded font-semibold inline-flex items-center space-x-1">
+                            <span>FSN: {{ item.makro_product_id }}</span>
+                            <button @click.stop="copyToClipboard(item.makro_product_id, 'FSN')" class="text-sky-600 hover:text-sky-900 cursor-pointer ml-0.5" title="点击复制 FSN 编号">📋</button>
                           </span>
                           <span v-if="item.brand" class="px-1.5 py-0.5 bg-slate-100 text-slate-700 text-[10px] rounded font-medium">
                             {{ item.brand }}
                           </span>
-                          <span v-if="item.vertical" class="px-1.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
-                            {{ item.vertical }}
+                          <span v-if="item.vertical" class="px-1.5 py-0.5 bg-slate-100 text-slate-700 text-[10px] rounded font-medium" :title="'类目代码: ' + item.vertical">
+                            🏷️ {{ getVerticalZh(item.vertical) || item.vertical }}
                           </span>
                         </div>
                         <a 
                           :href="getMakroProductUrl(item)" 
                           target="_blank"
-                          class="font-medium text-slate-900 hover:text-sky-600 line-clamp-1 block transition-colors leading-snug"
+                          class="font-medium text-slate-900 hover:text-sky-600 line-clamp-1 block transition-colors leading-snug group/link"
                           :title="item.title"
                         >
-                          {{ item.title }}
+                          <span>{{ item.title }}</span>
+                          <span class="inline-block ml-1 text-slate-400 group-hover/link:text-sky-500 text-[11px]" title="前往 Makro 官方买家前台页面">↗</span>
                         </a>
                         <p v-if="item.title_zh" class="text-[11px] text-slate-500 line-clamp-1">
                           🇨🇳 {{ item.title_zh }}
@@ -695,8 +955,9 @@
                         <span>🏪</span>
                         <span class="truncate">{{ item.store_name }}</span>
                       </div>
-                      <div class="text-[11px] font-mono text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200/60 truncate" :title="item.seller_sku">
-                        {{ item.seller_sku }}
+                      <div class="text-[11px] font-mono text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200/60 truncate flex items-center justify-between" :title="item.seller_sku">
+                        <span class="truncate">{{ item.seller_sku }}</span>
+                        <button @click.stop="copyToClipboard(item.seller_sku, 'SKU')" class="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer shrink-0" title="点击复制 SKU">📋</button>
                       </div>
                       <div class="text-[10px] text-slate-400 flex items-center space-x-2">
                         <span>库存: {{ item.inventory }}</span>
@@ -857,15 +1118,33 @@
           </div>
 
           <!-- 分页栏 -->
-          <div class="p-2.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
-            <div>
-              共 <span class="font-semibold text-slate-800 font-mono">{{ piggyback.total }}</span> 件跟品商品
+          <div class="p-2.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
+            <div class="flex items-center space-x-3">
+              <div>
+                共 <span class="font-semibold text-slate-800 font-mono">{{ piggyback.total }}</span> 件跟品商品
+              </div>
+              <div class="text-slate-400 font-mono">
+                (第 {{ piggyback.page }} / {{ Math.max(1, Math.ceil(piggyback.total / piggyback.pageSize)) }} 页)
+              </div>
+              <div class="flex items-center space-x-1">
+                <span>每页:</span>
+                <select 
+                  :value="piggyback.pageSize" 
+                  @change="changePiggybackPageSize($event.target.value)"
+                  class="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs text-slate-700 font-mono cursor-pointer shadow-2xs"
+                >
+                  <option :value="20">20 条/页</option>
+                  <option :value="50">50 条/页</option>
+                  <option :value="100">100 条/页</option>
+                  <option :value="200">200 条/页</option>
+                </select>
+              </div>
             </div>
             <div class="flex items-center space-x-1.5">
               <button 
                 @click="loadPiggybackItems(piggyback.page - 1)" 
                 :disabled="piggyback.page <= 1"
-                class="px-2 py-1 border border-slate-200 bg-white rounded hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                class="px-2 py-1 border border-slate-200 bg-white rounded hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shadow-2xs"
               >
                 上一页
               </button>
@@ -873,7 +1152,7 @@
               <button 
                 @click="loadPiggybackItems(piggyback.page + 1)" 
                 :disabled="piggyback.page * piggyback.pageSize >= piggyback.total"
-                class="px-2 py-1 border border-slate-200 bg-white rounded hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+                class="px-2 py-1 border border-slate-200 bg-white rounded hover:bg-slate-100 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed shadow-2xs"
               >
                 下一页
               </button>
@@ -910,6 +1189,16 @@
             >
               <span>🏪</span>
               <span>改店铺</span>
+            </button>
+
+            <!-- 批量改价 (差额/百分比/固定价) -->
+            <button 
+              @click="openBatchPriceAdjustModal"
+              class="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-semibold flex items-center space-x-1 shadow-sm transition cursor-pointer"
+              title="批量调整售价 (固定差额/百分比/固定价)"
+            >
+              <span>💰</span>
+              <span>批量改价</span>
             </button>
 
             <!-- 批量公式算底价 -->

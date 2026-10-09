@@ -37,6 +37,17 @@ const app = createApp({
             store_id: null,
             user_id: null,
             search: '',
+            // 高级过滤维度
+            vertical: 'ALL',
+            inventory_status: 'ALL',
+            auto_reprice: 'ALL',
+            has_floor_price: 'ALL',
+            min_price: '',
+            max_price: '',
+            date_range: 'ALL',
+            sort_by: 'ID_DESC',
+            showAdvancedFilters: false,
+            verticalsList: [],
             stats: {
               total_all: 0,
               pending_count: 0,
@@ -45,7 +56,8 @@ const app = createApp({
               pending_check_count: 0,
               safe_count: 0,
               risk_count: 0,
-              prohibited_count: 0
+              prohibited_count: 0,
+              abandoned_count: 0
             },
             kpi: {
               total_count: 0,
@@ -147,6 +159,14 @@ const app = createApp({
             { value: 'MANUAL', label: '🤝 平价跟卖 (与竞对持平)', short: '平价' },
           ],
           applyingBatchPricing: false,
+          showBatchPriceAdjustModal: false,
+          isBatchAdjustingPrice: false,
+          batchPriceAdjustForm: {
+            mode: 'DELTA',
+            value: 0.0,
+            sync_to_makro: false,
+            enforce_floor: true
+          },
           showEditPiggybackModal: false,
           editingPiggybackItem: null,
           showComplianceDetailModal: false,
@@ -503,6 +523,27 @@ const app = createApp({
           if (!this.storeProducts.items || this.storeProducts.items.length === 0) return false;
           return this.storeProducts.items.every(it => this.selectedStoreProductSkus.includes(it.sku_id));
         },
+        activePiggybackFilterCount() {
+          let count = 0;
+          if (this.piggyback.vertical && this.piggyback.vertical !== 'ALL') count++;
+          if (this.piggyback.inventory_status && this.piggyback.inventory_status !== 'ALL') count++;
+          if (this.piggyback.auto_reprice && this.piggyback.auto_reprice !== 'ALL') count++;
+          if (this.piggyback.has_floor_price && this.piggyback.has_floor_price !== 'ALL') count++;
+          if (this.piggyback.min_price !== '' && this.piggyback.min_price !== null && !isNaN(this.piggyback.min_price)) count++;
+          if (this.piggyback.max_price !== '' && this.piggyback.max_price !== null && !isNaN(this.piggyback.max_price)) count++;
+          if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') count++;
+          if (this.piggyback.sort_by && this.piggyback.sort_by !== 'ID_DESC') count++;
+          return count;
+        },
+        hasActivePiggybackFilters() {
+          return this.activePiggybackFilterCount > 0 || 
+                 Boolean(this.piggyback.search && this.piggyback.search.trim()) || 
+                 this.piggyback.store_id !== null || 
+                 this.piggyback.user_id !== null || 
+                 (this.piggyback.compliance_status && this.piggyback.compliance_status !== 'ALL') ||
+                 (this.piggyback.stage && this.piggyback.stage !== 'ALL') ||
+                 (this.piggyback.buybox_status && this.piggyback.buybox_status !== 'ALL');
+        },
         systemTabs() {
           const list = [
             { id: 'stores', name: '多店铺管理', icon: '🏪', badge: this.stores && this.stores.length ? `${this.stores.length}店` : null, desc: '多店铺授权凭据 · Cookie 与 CSRF 令牌巡检' },
@@ -682,6 +723,7 @@ const app = createApp({
         if (authed) {
           this.loadProducts(1);
           this.loadPiggybackItems(1);
+          this.loadPiggybackVerticals();
           this.loadOperators();
           await this.loadSettings();
           this.loadStores();
