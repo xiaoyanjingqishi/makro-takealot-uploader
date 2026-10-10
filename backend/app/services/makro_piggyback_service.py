@@ -337,11 +337,15 @@ class MakroPiggybackService:
             "sellerId": store.seller_id
         }
 
+        from .proxy_service import ProxyPoolService
+        proxy_url = ProxyPoolService.get_proxy()
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
         item.status = "SUBMITTING"
         db.commit()
 
         try:
-            resp = requests.post(create_url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(create_url, headers=headers, json=payload, timeout=30, proxies=proxies)
             if resp.status_code != 200:
                 raise Exception(f"Makro create-update-listings 挂靠接口响应 HTTP {resp.status_code}: {resp.text[:300]}")
 
@@ -375,7 +379,7 @@ class MakroPiggybackService:
                 }
             }
             try:
-                requests.post(inv_url, headers=inv_headers, json=inv_payload, timeout=20)
+                requests.post(inv_url, headers=inv_headers, json=inv_payload, timeout=20, proxies=proxies)
             except Exception as inv_e:
                 logger.warning(f"跟品后即时库存回写发生异常 (可由后台定时器补齐): {inv_e}")
 
@@ -472,6 +476,7 @@ class MakroPiggybackService:
             raise ValueError(f"店铺「{store.name}」凭据未配置完整 (缺少 seller_id/fk_csrf_token/cookie)，无法下架商品。")
 
         from .makro_portal_service import MakroPortalService
+        from .proxy_service import ProxyPoolService
 
         headers = cls._build_headers(store)
         create_url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
@@ -481,6 +486,9 @@ class MakroPiggybackService:
                 if getattr(it, "location_id", None):
                     target_loc = it.location_id
                     break
+
+        proxy_url = ProxyPoolService.get_proxy()
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
         total_success = 0
         total_failed = 0
@@ -500,7 +508,7 @@ class MakroPiggybackService:
 
             # 1. 官方 listing 状态变更为 INACTIVE
             try:
-                resp = requests.post(create_url, headers=headers, json=payload, timeout=30)
+                resp = requests.post(create_url, headers=headers, json=payload, timeout=35, proxies=proxies)
                 if resp.status_code != 200:
                     raise Exception(f"Makro create-update-listings 下架接口响应 HTTP {resp.status_code}: {resp.text[:300]}")
                 res_json = resp.json()

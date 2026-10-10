@@ -346,6 +346,10 @@ class MakroPortalService:
         total_failed = 0
         all_results = {}
 
+        from .proxy_service import ProxyPoolService
+        proxy_url = ProxyPoolService.get_proxy()
+        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
         for i in range(0, len(items), chunk_size):
             chunk = items[i:i + chunk_size]
             payload = {}
@@ -364,7 +368,7 @@ class MakroPortalService:
                 }
 
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=35)
+                resp = requests.post(url, headers=headers, json=payload, timeout=35, proxies=proxies)
                 if resp.status_code == 200:
                     res_data = resp.json()
                     for sku in payload:

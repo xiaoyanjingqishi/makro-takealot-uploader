@@ -12,6 +12,9 @@ export const coreMethods = {
         const data = await res.json();
         if (data && data.translations) {
           this.verticalZhMap = Object.assign({}, this.verticalZhMap, data.translations);
+          if (typeof this.sortPiggybackVerticals === 'function' && this.piggyback && Array.isArray(this.piggyback.verticalsList) && this.piggyback.verticalsList.length > 0) {
+            this.sortPiggybackVerticals();
+          }
         }
       }
     } catch (e) {

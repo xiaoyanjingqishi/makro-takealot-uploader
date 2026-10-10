@@ -434,7 +434,12 @@ def _build_piggyback_base_query(
     max_price: Optional[float] = None,
     date_range: Optional[str] = None,
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    brand_nature: Optional[str] = None,
+    is_white_label: Optional[str] = None,
+    has_image_logo: Optional[str] = None,
+    image_prohibited: Optional[str] = None,
+    violation_type: Optional[str] = None
 ):
     query = db.query(MakroPiggybackItem)
 
@@ -485,6 +490,60 @@ def _build_piggyback_base_query(
     if max_price is not None:
         query = query.filter(MakroPiggybackItem.target_price <= max_price)
 
+    # 质检与风控细分特征过滤
+    if brand_nature and brand_nature != "ALL":
+        query = query.filter(MakroPiggybackItem.compliance_details.like(f'%"brand_nature": "{brand_nature}"%'))
+
+    if is_white_label and is_white_label != "ALL":
+        if str(is_white_label).lower() in ["true", "1", "yes"]:
+            query = query.filter(MakroPiggybackItem.compliance_details.like('%"is_white_label": true%'))
+        elif str(is_white_label).lower() in ["false", "0", "no"]:
+            query = query.filter(
+                (MakroPiggybackItem.compliance_details.like('%"is_white_label": false%')) |
+                (~MakroPiggybackItem.compliance_details.like('%"is_white_label": true%'))
+            )
+
+    if has_image_logo and has_image_logo != "ALL":
+        if str(has_image_logo).lower() in ["true", "1", "yes"]:
+            query = query.filter(MakroPiggybackItem.compliance_details.like('%"has_brand_logo": true%'))
+        elif str(has_image_logo).lower() in ["false", "0", "no"]:
+            query = query.filter(
+                (MakroPiggybackItem.compliance_details.like('%"has_brand_logo": false%')) |
+                (~MakroPiggybackItem.compliance_details.like('%"has_brand_logo": true%'))
+            )
+
+    if image_prohibited and image_prohibited != "ALL":
+        if str(image_prohibited).lower() in ["true", "1", "yes"]:
+            query = query.filter(MakroPiggybackItem.compliance_details.like('%"is_prohibited": true%'))
+        elif str(image_prohibited).lower() in ["false", "0", "no"]:
+            query = query.filter(
+                (~MakroPiggybackItem.compliance_details.like('%"is_prohibited": true%'))
+            )
+
+    if violation_type and violation_type != "ALL":
+        if violation_type == "MISSING_COMPATIBILITY":
+            query = query.filter(
+                (MakroPiggybackItem.compliance_details.like('%缺少兼容词%')) |
+                (MakroPiggybackItem.compliance_details.like('%MISSING_COMPATIBILITY%'))
+            )
+        elif violation_type == "TRADEMARK":
+            query = query.filter(
+                (MakroPiggybackItem.compliance_details.like('%商标%')) |
+                (MakroPiggybackItem.compliance_details.like('%假冒%')) |
+                (MakroPiggybackItem.compliance_details.like('%侵权%')) |
+                (MakroPiggybackItem.compliance_details.like('%TRADEMARK%'))
+            )
+        elif violation_type == "PROHIBITED_GOODS":
+            query = query.filter(
+                (MakroPiggybackItem.compliance_details.like('%违禁%')) |
+                (MakroPiggybackItem.compliance_details.like('%禁售%')) |
+                (MakroPiggybackItem.compliance_details.like('%battery%')) |
+                (MakroPiggybackItem.compliance_details.like('%液体%')) |
+                (MakroPiggybackItem.compliance_details.like('%PROHIBITED%'))
+            )
+        else:
+            query = query.filter(MakroPiggybackItem.compliance_details.ilike(f'%{violation_type}%'))
+
     # 采集时间范围过滤
     now = datetime.now()
     if date_range and date_range != "ALL":
@@ -525,7 +584,12 @@ def get_piggyback_verticals(
     if isinstance(store_id, int):
         query = query.filter(MakroPiggybackItem.store_id == store_id)
     results = [v[0] for v in query.all() if v[0] and v[0].strip()]
-    results.sort()
+    from ..services.translation_service import TranslationService
+    results.sort(key=lambda v: (
+        len(TranslationService.get_vertical_zh(v) or v),
+        TranslationService.get_vertical_zh(v) or v,
+        v
+    ))
     return {"verticals": results}
 
 @router.get("/kpi-stats", summary="获取跟品与跟价运营驾驶舱 6 大核心 KPI 统计 (支持多维条件联动)")
@@ -542,6 +606,11 @@ def get_piggyback_kpi_stats(
     date_range: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    brand_nature: Optional[str] = None,
+    is_white_label: Optional[str] = None,
+    has_image_logo: Optional[str] = None,
+    image_prohibited: Optional[str] = None,
+    violation_type: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -559,7 +628,12 @@ def get_piggyback_kpi_stats(
         max_price=max_price,
         date_range=date_range,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        brand_nature=brand_nature,
+        is_white_label=is_white_label,
+        has_image_logo=has_image_logo,
+        image_prohibited=image_prohibited,
+        violation_type=violation_type
     )
 
     abandoned_count = base_query.filter(MakroPiggybackItem.is_abandoned == True).count()
@@ -570,6 +644,7 @@ def get_piggyback_kpi_stats(
     active_count = active_query.count()
 
     winning_count = active_query.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
+    no_competitor_count = active_query.filter(MakroPiggybackItem.buybox_status == "NO_COMPETITOR").count()
     losing_count = active_query.filter(MakroPiggybackItem.buybox_status == "LOSING").count()
     floor_hit_count = active_query.filter(MakroPiggybackItem.buybox_status == "FLOOR_HIT").count()
     missing_floor_count = active_query.filter(
@@ -586,6 +661,7 @@ def get_piggyback_kpi_stats(
         "total_count": total_count,
         "active_count": active_count,
         "winning_count": winning_count,
+        "no_competitor_count": no_competitor_count,
         "losing_count": losing_count,
         "floor_hit_count": floor_hit_count,
         "missing_floor_count": missing_floor_count,
@@ -697,6 +773,11 @@ def list_piggyback_ids(
     date_range: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    brand_nature: Optional[str] = None,
+    is_white_label: Optional[str] = None,
+    has_image_logo: Optional[str] = None,
+    image_prohibited: Optional[str] = None,
+    violation_type: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -714,7 +795,12 @@ def list_piggyback_ids(
         max_price=max_price,
         date_range=date_range,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        brand_nature=brand_nature,
+        is_white_label=is_white_label,
+        has_image_logo=has_image_logo,
+        image_prohibited=image_prohibited,
+        violation_type=violation_type
     )
 
     if stage == "ABANDONED":
@@ -774,6 +860,11 @@ def list_piggyback_items(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     sort_by: Optional[str] = None,
+    brand_nature: Optional[str] = None,
+    is_white_label: Optional[str] = None,
+    has_image_logo: Optional[str] = None,
+    image_prohibited: Optional[str] = None,
+    violation_type: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -791,7 +882,12 @@ def list_piggyback_items(
         max_price=max_price,
         date_range=date_range,
         start_date=start_date,
-        end_date=end_date
+        end_date=end_date,
+        brand_nature=brand_nature,
+        is_white_label=is_white_label,
+        has_image_logo=has_image_logo,
+        image_prohibited=image_prohibited,
+        violation_type=violation_type
     )
 
     # 1. 动态计算与当前公共筛选匹配的 6 大 KPI 卡片数据
@@ -805,6 +901,7 @@ def list_piggyback_items(
     active_count = active_query.count()
 
     winning_count = active_query.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
+    no_competitor_count = active_query.filter(MakroPiggybackItem.buybox_status == "NO_COMPETITOR").count()
     losing_count = active_query.filter(MakroPiggybackItem.buybox_status == "LOSING").count()
     floor_hit_count = active_query.filter(MakroPiggybackItem.buybox_status == "FLOOR_HIT").count()
     missing_floor_count = active_query.filter(
@@ -821,6 +918,7 @@ def list_piggyback_items(
         "total_count": total_count,
         "active_count": active_count,
         "winning_count": winning_count,
+        "no_competitor_count": no_competitor_count,
         "losing_count": losing_count,
         "floor_hit_count": floor_hit_count,
         "missing_floor_count": missing_floor_count,
@@ -850,6 +948,7 @@ def list_piggyback_items(
     safe_count = stage_query.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
     risk_count = stage_query.filter(MakroPiggybackItem.compliance_status == "RISK").count()
     prohibited_count = stage_query.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
+    disputed_count = stage_query.filter(MakroPiggybackItem.compliance_status == "DISPUTED").count()
 
     stats = {
         "total_all": total_count,
@@ -860,6 +959,7 @@ def list_piggyback_items(
         "safe_count": safe_count,
         "risk_count": risk_count,
         "prohibited_count": prohibited_count,
+        "disputed_count": disputed_count,
         "abandoned_count": abandoned_count
     }
 
@@ -931,11 +1031,18 @@ def batch_adjust_price(
     if not req.ids:
         raise HTTPException(status_code=400, detail="请至少选择一件商品")
 
-    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
-    updated_count = 0
-    synced_count = 0
     mode = (req.mode or "DELTA").upper()
     val = float(req.value or 0.0)
+
+    # 分批查询商品 (Chunk 1000 防止 SQLite SQLITE_MAX_VARIABLE_NUMBER 上限)
+    items = []
+    chunk_size = 1000
+    for i in range(0, len(req.ids), chunk_size):
+        chunk_ids = req.ids[i:i + chunk_size]
+        items.extend(db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(chunk_ids)).all())
+
+    updated_count = 0
+    synced_count = 0
 
     from collections import defaultdict
     store_online_items = defaultdict(list)
@@ -1019,7 +1126,12 @@ def batch_toggle_auto_reprice(
     if not req.ids:
         raise HTTPException(status_code=400, detail="请至少选择一件商品")
 
-    items = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).all()
+    items = []
+    chunk_size = 1000
+    for i in range(0, len(req.ids), chunk_size):
+        chunk_ids = req.ids[i:i + chunk_size]
+        items.extend(db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(chunk_ids)).all())
+
     count = 0
     for it in items:
         it.auto_reprice = req.auto_reprice
@@ -1032,7 +1144,7 @@ def batch_toggle_auto_reprice(
         task_type="PIGGYBACK_BATCH_TOGGLE_REPRICE",
         status="SUCCESS",
         message=f"批量{action_str}自动跟价: 成功为 {count} 件商品{action_str}自动跟价巡检",
-        detail_logs={"ids": req.ids, "count": count, "auto_reprice": req.auto_reprice},
+        detail_logs={"ids": req.ids[:100], "count": count, "auto_reprice": req.auto_reprice},
         user_id=current_user.id if current_user else None,
         operator_name=(current_user.nickname or current_user.username) if current_user else None,
         db=db
@@ -1059,6 +1171,11 @@ def export_piggyback_items(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     sort_by: Optional[str] = None,
+    brand_nature: Optional[str] = None,
+    is_white_label: Optional[str] = None,
+    has_image_logo: Optional[str] = None,
+    image_prohibited: Optional[str] = None,
+    violation_type: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1080,7 +1197,12 @@ def export_piggyback_items(
             max_price=max_price,
             date_range=date_range,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            brand_nature=brand_nature,
+            is_white_label=is_white_label,
+            has_image_logo=has_image_logo,
+            image_prohibited=image_prohibited,
+            violation_type=violation_type
         )
 
         if stage == "ABANDONED":
@@ -1871,8 +1993,7 @@ def abandon_piggyback_item(
     item.abandoned_reason = req.reason or "侵权违规拦截/手工弃用"
     item.abandoned_at = datetime.now()
     item.auto_reprice = False  # 弃用商品自动关闭自动巡检跟价
-    if item.status in ["ACTIVE", "PUBLISHED"]:
-        item.status = "INACTIVE"
+    item.status = "INACTIVE"
     db.commit()
 
     record_audit_log(
@@ -1929,8 +2050,7 @@ def batch_abandon_piggyback(
         it.abandoned_reason = reason_txt
         it.abandoned_at = now
         it.auto_reprice = False
-        if it.status in ["ACTIVE", "PUBLISHED"]:
-            it.status = "INACTIVE"
+        it.status = "INACTIVE"
         count += 1
 
     db.commit()

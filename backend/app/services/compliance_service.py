@@ -262,7 +262,9 @@ class ComplianceService:
             target_brand_name=target_brand_name,
             jev_title=jev_title_res,
             is_piggyback=is_piggyback,
-            original_seller=original_seller
+            original_seller=original_seller,
+            eval_title=(makro_title or title or "").strip(),
+            category=category
         )
 
         return final_result
@@ -417,19 +419,22 @@ class ComplianceService:
         piggyback_block = ""
         if is_piggyback:
             piggyback_block = f"""
-【Makro 跟品(Piggybacking/Latching) 特别风控准则】:
+【Makro 跟品特别风控铁律（宁可杀错也不放过）】:
 * 平台特性: Makro 平台强制在标题最前端拼接原 Listing 品牌名（例如 "{brand} {target_title}"）。
-* 卖家自造白牌/杂牌豁免: 若品牌为普通卖家自造商号/白牌(如 HYinjin, Generic, OEM 或拼音杂牌，非全球受保护大牌)，根据 Makro 官方跟品规则，100% 允许合规挂靠跟品！此类必须判定为 SAFE (合规)，绝不能误判为商标侵权！
+* 卖家自造白牌/杂牌豁免: 若品牌为普通卖家自造商号/白牌(如 HYinjin, Generic, OEM 或拼音杂牌，非全球受保护大牌)，根据 Makro 官方跟品规则，100% 允许合规挂靠跟品！此类判定为 SAFE (合规)。
 * 知名大牌一票否决红线: 若标题或品牌指代受保护知名大牌(Apple, Dyson, Sony, Nike, Stanley, Makita 等)或知名影视IP整机，严格判定为 PROHIBITED (禁跟)！
-* 副厂兼容配件(Fair Use): 若商品属于通用耗材/滤网/替换配件/外壳(如 vacuum maintenance kit, filter, replacement parts 等)，含有知名品牌用于指示兼容型号的，属于合理使用，判定为 SAFE。"""
+* ★★★【全品类兼容词硬性红线（宁可杀错也不放过）】★★★:
+  - 无论整机还是配件，标题中一旦出现任何第三方知名品牌/专有名词/卡口型号（如 Minolta, Sony, Apple, Canon, Dyson 等），【前提必须包含 'Compatible with'、'For' 或 'Fits' 等明确的兼容连接词】！
+  - 严禁缺少兼容词: 标题中一旦包含第三方品牌，但【未包含任何合规兼容连接词】（例如直接并列 "{brand} Minolta MD Mount..."），在平台算法和商标法上属于直接假冒或商标侵权！
+  - 严禁擅自放行: 绝对严禁以“合理使用”、“通用卡口规格”、“历史型号”、“非活跃商标”等理由放行为 SAFE！此类必须 100% 判定为 RISK，violation_type 标记为 MISSING_COMPATIBILITY，并在 recommended_title 中给出规范添加 'for' 或 'Compatible with' 的修改建议标题！"""
 
         return f"""审查跨境电商商品标题合规与侵权风险，仅返回合法JSON，严禁输出思维过程与闲聊。
 【规则】:
 1. 商标侵权: 严查受保护大牌(如Apple,Stanley,Nike,Dyson等)。区分语境: 颜色/通用词(如apple green)合规，指代受保护品牌违规。
 2. 影视IP: 严禁未经授权蹭用知名动漫潮玩/游戏IP(如Sanrio,Disney,Marvel,Pokemon,One Piece,Frozen,Labubu等)。注意区分语境: 商品件数/规格词(如1 piece, 2 pieces)属合规数量词，严禁误判为海贼王One Piece！冷冻甜品/冰块模具(如frozen mold)属合规用途词，严禁误判为冰雪奇缘Frozen！仅指代动漫角色/衍生周边才判定违规。
-3. 配件规范: 兼容大牌配件必须含'Compatible with'或'For'；严禁大牌开头冒充原厂；严禁连续堆砌>=3个大牌。
+3. 品牌与配件规范: 包含第三方品牌的标题必须明确包含兼容连接词(如 'Compatible with', 'For', 'Fits')；若标题含第三方品牌但缺少任何兼容词，一律 100% 判定为 RISK (MISSING_COMPATIBILITY)，严禁放行；严禁第三方大牌直接紧跟自有品牌冒充原厂；严禁连续堆砌>=3个大牌。
 4. 禁运技术与物品: 严禁蓝牙(Bluetooth)、WiFi、红外线(Infrared)等无线发射设备；严禁液体/香水/精油/乳液/膏霜/易燃化学品跨境航空禁运品。注意区分形态: 硅胶模具、空瓶容器、化妆刷/粉扑、刮痧板按摩石、喷头喷枪工具、无源转接线等实体用具均属合规SAFE；仅商品本身实际灌装/包含液体、膏体、化学药剂才判定为PROHIBITED违规禁运。
-5. 评级: SAFE(合规/通用品/规范配件/实体工具), RISK(配件缺少Compatible with声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售无线设备/灌装液体航空违禁品)。{few_shot_block}{piggyback_block}
+5. 评级: SAFE(合规通用品/包含For或Compatible with的规范兼容配件), RISK(含第三方品牌但缺少Compatible with或For声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售无线设备/灌装液体航空违禁品)。{few_shot_block}{piggyback_block}
 待审数据:
 - 标题: {target_title}
 - 授权自有品牌: {brand or "Beishi"}
@@ -820,7 +825,9 @@ class ComplianceService:
         target_brand_name: str,
         jev_title: Optional[Dict[str, Any]] = None,
         is_piggyback: bool = False,
-        original_seller: str = ""
+        original_seller: str = "",
+        eval_title: str = "",
+        category: str = ""
     ) -> Dict[str, Any]:
         """
         裁决聚合器 (Reconciliation Engine)：
@@ -1248,6 +1255,69 @@ class ComplianceService:
                 advice = f"💡 Makro 跟品运营防守建议: 前缀品牌「{brand_clean}」属于卖家自造白牌，技术与平台规则允许合规跟品。发货时请务必使用纯中性外包装，切勿印制原卖家私有品牌标志。"
                 if advice not in suggestions:
                     suggestions.append(advice)
+
+        # =========================================================================
+        # ★★★ 全品类铁律硬拦截：含第三方品牌但缺少合规兼容词 (宁可杀错也不放过) ★★★
+        # =========================================================================
+        # 1. 提取所有检出的第三方候选品牌 (排除自有品牌 target_brand_name 与通用白牌)
+        my_brand_lower = (target_brand_name or "beishi").strip().lower()
+        ignore_brand_names = {"beishi", "generic", "oem", "none", "n/a", my_brand_lower}
+        third_party_brands = [
+            b for b in all_detected_brands
+            if b.strip().lower() not in ignore_brand_names
+        ]
+
+        # 扫描 eval_title 是否直接包含 FAMOUS_BRANDS 知名品牌词
+        eval_title_text = (eval_title or "").strip()
+        eval_title_lower = eval_title_text.lower()
+        for fb in FAMOUS_BRANDS:
+            if fb != my_brand_lower and re.search(rf'\b{re.escape(fb)}\b', eval_title_lower):
+                fb_title = fb.title()
+                if fb_title not in third_party_brands and fb.lower() not in ignore_brand_names:
+                    third_party_brands.append(fb_title)
+
+        # 2. 检查标题是否包含合规兼容连接词 (涵盖 compatible with, compatible for, suitable for, replacement for, designed for, fits, fit for, for use with, 独立介词 for)
+        has_compatibility_words = bool(
+            re.search(
+                r'\b(?:compatible\s+with|compatible\s+for|suitable\s+for|replacement\s+for|designed\s+for|for\s+use\s+with|fits?|fit\s+for|\bfor\b)\b',
+                eval_title_text,
+                re.IGNORECASE
+            )
+        )
+
+        # 3. 宁可杀错也不放过：全品类凡含第三方品牌且缺少合规兼容词，绝不许判为 SAFE！
+        if third_party_brands and not has_compatibility_words:
+            flagged_brand_str = ", ".join(third_party_brands)
+            missing_comp_reason = (
+                f"【侵权红线硬拦截】标题中出现了第三方受保护品牌 [{flagged_brand_str}]，"
+                f"但未包含任何合规兼容连接词 (如 For / Compatible with / Fits)。"
+                f"根据平台知识产权合规铁律（宁可杀错也不放过），直接使用或并列第三方品牌存在商标侵权与虚假联名极高风险，"
+                f"已强制阻断 SAFE 并标记为 RISK 待整改！"
+            )
+            if final_status in ["SAFE", "DISPUTED"]:
+                final_status = "RISK"
+                is_disputed = False
+                reconciliation_summary = f"【铁律拦截】标题检出第三方品牌 [{flagged_brand_str}] 且缺少合规兼容词，依据“宁可杀错不可放过”原则终审裁定为 [RISK]"
+
+            if missing_comp_reason not in risk_reasons:
+                risk_reasons.insert(0, missing_comp_reason)
+
+            # 智能重构生成合规建议标题
+            if not recommended_title or not re.search(r'\b(?:for|compatible\s+with)\b', recommended_title, re.I):
+                from .cleaner.device_rules import reconstruct_accessory_title
+                category_name = local_rules.get("category", "") or category or ""
+                recommended_title = reconstruct_accessory_title(
+                    makro_title=eval_title_text,
+                    raw_title=eval_title_text,
+                    target_brand=target_brand_name or "BeiShi",
+                    nature="COMPATIBLE_ACCESSORY",
+                    target_famous=third_party_brands[0],
+                    vertical=category_name
+                )
+                brand_breakdown["recommended_title"] = recommended_title
+                rec_advice = f"AI 推荐合规修改标题: \"{recommended_title}\""
+                if rec_advice not in suggestions:
+                    suggestions.insert(0, rec_advice)
 
         brand_info = local_rules.get("brand_info", {})
         brand_info["detected_brands"] = all_detected_brands

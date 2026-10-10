@@ -34,7 +34,7 @@ const app = createApp({
             stage: 'ALL',
             buybox_status: 'ALL',
             compliance_status: 'ALL',
-            store_id: null,
+            store_id: (function() { try { const v = localStorage.getItem('makro_selected_store_id'); return v ? parseInt(v) : null; } catch(_) { return null; } })(),
             user_id: null,
             search: '',
             // 高级过滤维度
@@ -46,6 +46,12 @@ const app = createApp({
             max_price: '',
             date_range: 'ALL',
             sort_by: 'ID_DESC',
+            // 质检细分过滤维度
+            brand_nature: 'ALL',
+            is_white_label: 'ALL',
+            has_image_logo: 'ALL',
+            image_prohibited: 'ALL',
+            violation_type: 'ALL',
             showAdvancedFilters: false,
             verticalsList: [],
             stats: {
@@ -57,12 +63,14 @@ const app = createApp({
               safe_count: 0,
               risk_count: 0,
               prohibited_count: 0,
+              disputed_count: 0,
               abandoned_count: 0
             },
             kpi: {
               total_count: 0,
               active_count: 0,
               winning_count: 0,
+              no_competitor_count: 0,
               losing_count: 0,
               floor_hit_count: 0,
               missing_floor_count: 0,
@@ -533,6 +541,12 @@ const app = createApp({
           if (this.piggyback.max_price !== '' && this.piggyback.max_price !== null && !isNaN(this.piggyback.max_price)) count++;
           if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') count++;
           if (this.piggyback.sort_by && this.piggyback.sort_by !== 'ID_DESC') count++;
+          if (this.piggyback.brand_nature && this.piggyback.brand_nature !== 'ALL') count++;
+          if (this.piggyback.is_white_label && this.piggyback.is_white_label !== 'ALL') count++;
+          if (this.piggyback.has_image_logo && this.piggyback.has_image_logo !== 'ALL') count++;
+          if (this.piggyback.image_prohibited && this.piggyback.image_prohibited !== 'ALL') count++;
+          if (this.piggyback.violation_type && this.piggyback.violation_type !== 'ALL') count++;
+          if (this.piggyback.buybox_status && this.piggyback.buybox_status !== 'ALL') count++;
           return count;
         },
         hasActivePiggybackFilters() {

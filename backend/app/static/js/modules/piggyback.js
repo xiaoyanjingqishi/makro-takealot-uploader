@@ -3,6 +3,16 @@
  * 导出该领域的业务方法集
  */
 export const piggybackMethods = {
+  onPiggybackStoreChange() {
+    this.selectedStoreId = this.piggyback.store_id;
+    if (this.piggyback.store_id) {
+      localStorage.setItem('makro_selected_store_id', this.piggyback.store_id);
+    }
+    this.clearPiggybackSelection();
+    this.loadPiggybackItems(1);
+    this.loadPiggybackVerticals();
+  },
+
   async loadPiggybackKpi() {
     try {
       const params = new URLSearchParams();
@@ -16,6 +26,11 @@ export const piggybackMethods = {
       if (this.piggyback.min_price !== '' && !isNaN(this.piggyback.min_price)) params.append('min_price', this.piggyback.min_price);
       if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) params.append('max_price', this.piggyback.max_price);
       if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') params.append('date_range', this.piggyback.date_range);
+      if (this.piggyback.brand_nature && this.piggyback.brand_nature !== 'ALL') params.append('brand_nature', this.piggyback.brand_nature);
+      if (this.piggyback.is_white_label && this.piggyback.is_white_label !== 'ALL') params.append('is_white_label', this.piggyback.is_white_label);
+      if (this.piggyback.has_image_logo && this.piggyback.has_image_logo !== 'ALL') params.append('has_image_logo', this.piggyback.has_image_logo);
+      if (this.piggyback.image_prohibited && this.piggyback.image_prohibited !== 'ALL') params.append('image_prohibited', this.piggyback.image_prohibited);
+      if (this.piggyback.violation_type && this.piggyback.violation_type !== 'ALL') params.append('violation_type', this.piggyback.violation_type);
 
       const res = await fetch(`/api/piggyback/kpi-stats?${params.toString()}`);
       if (res.ok) {
@@ -29,12 +44,16 @@ export const piggybackMethods = {
 
 
   selectKpiFilter(filterType) {
+    this.clearPiggybackSelection();
     if (filterType === 'total') {
       this.piggyback.stage = 'ALL';
       this.piggyback.buybox_status = 'ALL';
     } else if (filterType === 'active') {
       this.piggyback.stage = 'ACTIVE_MONITOR';
       this.piggyback.buybox_status = 'ALL';
+    } else if (filterType === 'no_competitor') {
+      this.piggyback.stage = 'ACTIVE_MONITOR';
+      this.piggyback.buybox_status = 'NO_COMPETITOR';
     } else if (filterType === 'winning') {
       this.piggyback.stage = 'ACTIVE_MONITOR';
       this.piggyback.buybox_status = 'WINNING';
@@ -53,6 +72,7 @@ export const piggybackMethods = {
 
 
   changePiggybackStage(stage) {
+    this.clearPiggybackSelection();
     this.piggyback.stage = stage;
     this.piggyback.buybox_status = 'ALL';
     this.loadPiggybackItems(1);
@@ -183,7 +203,10 @@ export const piggybackMethods = {
   },
 
 
-  async loadPiggybackItems(page = 1) {
+  async loadPiggybackItems(page = 1, resetSelection = false) {
+    if (resetSelection) {
+      this.clearPiggybackSelection();
+    }
     this.loadingPiggyback = true;
     this.piggyback.page = page;
     try {
@@ -236,6 +259,21 @@ export const piggybackMethods = {
       if (this.piggyback.sort_by) {
         params.append('sort_by', this.piggyback.sort_by);
       }
+      if (this.piggyback.brand_nature && this.piggyback.brand_nature !== 'ALL') {
+        params.append('brand_nature', this.piggyback.brand_nature);
+      }
+      if (this.piggyback.is_white_label && this.piggyback.is_white_label !== 'ALL') {
+        params.append('is_white_label', this.piggyback.is_white_label);
+      }
+      if (this.piggyback.has_image_logo && this.piggyback.has_image_logo !== 'ALL') {
+        params.append('has_image_logo', this.piggyback.has_image_logo);
+      }
+      if (this.piggyback.image_prohibited && this.piggyback.image_prohibited !== 'ALL') {
+        params.append('image_prohibited', this.piggyback.image_prohibited);
+      }
+      if (this.piggyback.violation_type && this.piggyback.violation_type !== 'ALL') {
+        params.append('violation_type', this.piggyback.violation_type);
+      }
 
       const res = await fetch(`/api/piggyback/items?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -248,14 +286,11 @@ export const piggybackMethods = {
       if (data.stats) {
         this.piggyback.stats = data.stats;
       }
-      if (this.piggyback.isAllFilteredSelected) {
-        this.piggyback.selectAll = this.piggyback.items.length > 0 && 
-          this.piggyback.items.every(it => this.piggyback.selectedIds.includes(it.id));
-      } else {
-        this.piggyback.selectedIds = [];
-        this.piggyback.selectAll = false;
-        this.piggyback.isAllFilteredSelected = false;
-      }
+
+      // 动态同步当前页的全选状态（保留已有跨页已选商品，翻页不重置）
+      const pageIds = this.piggyback.items.map(it => it.id);
+      this.piggyback.selectAll = pageIds.length > 0 && 
+        pageIds.every(id => this.piggyback.selectedIds.includes(id));
     } catch (e) {
       console.error('加载跟品列表异常:', e);
       this.showToast('加载跟品商品列表失败: ' + e.message, 'error');
@@ -283,15 +318,27 @@ export const piggybackMethods = {
 
   changePiggybackState(st) {
     this.piggyback.status = st;
-    this.piggyback.isAllFilteredSelected = false;
+    this.clearPiggybackSelection();
     this.loadPiggybackItems(1);
   },
 
 
   changePiggybackCompliance(cst) {
     this.piggyback.compliance_status = cst;
-    this.piggyback.isAllFilteredSelected = false;
+    this.clearPiggybackSelection();
     this.loadPiggybackItems(1);
+  },
+
+  getCurrentPageSelectedCount() {
+    if (!this.piggyback.items || !this.piggyback.selectedIds) return 0;
+    const pageIdSet = new Set(this.piggyback.items.map(it => it.id));
+    return this.piggyback.selectedIds.filter(id => pageIdSet.has(id)).length;
+  },
+
+  isPiggybackPageIndeterminate() {
+    if (!this.piggyback.items || this.piggyback.items.length === 0) return false;
+    const count = this.getCurrentPageSelectedCount();
+    return count > 0 && count < this.piggyback.items.length;
   },
 
 
@@ -311,9 +358,12 @@ export const piggybackMethods = {
 
 
   handlePiggybackItemCheckboxChange() {
-    this.piggyback.isAllFilteredSelected = false;
-    this.piggyback.selectAll = this.piggyback.items.length > 0 && 
-      this.piggyback.items.every(it => this.piggyback.selectedIds.includes(it.id));
+    const pageIds = this.piggyback.items.map(it => it.id);
+    this.piggyback.selectAll = pageIds.length > 0 && 
+      pageIds.every(id => this.piggyback.selectedIds.includes(id));
+    if (this.piggyback.isAllFilteredSelected && this.piggyback.selectedIds.length < this.piggyback.total) {
+      this.piggyback.isAllFilteredSelected = false;
+    }
   },
 
 
@@ -342,6 +392,11 @@ export const piggybackMethods = {
       if (this.piggyback.min_price !== '' && !isNaN(this.piggyback.min_price)) params.append('min_price', this.piggyback.min_price);
       if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) params.append('max_price', this.piggyback.max_price);
       if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') params.append('date_range', this.piggyback.date_range);
+      if (this.piggyback.brand_nature && this.piggyback.brand_nature !== 'ALL') params.append('brand_nature', this.piggyback.brand_nature);
+      if (this.piggyback.is_white_label && this.piggyback.is_white_label !== 'ALL') params.append('is_white_label', this.piggyback.is_white_label);
+      if (this.piggyback.has_image_logo && this.piggyback.has_image_logo !== 'ALL') params.append('has_image_logo', this.piggyback.has_image_logo);
+      if (this.piggyback.image_prohibited && this.piggyback.image_prohibited !== 'ALL') params.append('image_prohibited', this.piggyback.image_prohibited);
+      if (this.piggyback.violation_type && this.piggyback.violation_type !== 'ALL') params.append('violation_type', this.piggyback.violation_type);
 
       const res = await fetch(`/api/piggyback/ids?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1111,6 +1166,18 @@ export const piggybackMethods = {
     }
   },
 
+  sortPiggybackVerticals(list = null) {
+    const target = list || (this.piggyback && this.piggyback.verticalsList);
+    if (!Array.isArray(target) || target.length === 0) return;
+    target.sort((a, b) => {
+      const labelA = this.getVerticalZh(a) || a;
+      const labelB = this.getVerticalZh(b) || b;
+      const lenDiff = labelA.length - labelB.length;
+      if (lenDiff !== 0) return lenDiff;
+      return labelA.localeCompare(labelB, 'zh-CN');
+    });
+  },
+
   async loadPiggybackVerticals() {
     try {
       const params = new URLSearchParams();
@@ -1118,7 +1185,9 @@ export const piggybackMethods = {
       const res = await fetch(`/api/piggyback/verticals?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        this.piggyback.verticalsList = data.verticals || [];
+        const list = data.verticals || [];
+        this.sortPiggybackVerticals(list);
+        this.piggyback.verticalsList = list;
       }
     } catch (e) {
       console.warn('获取类目列表异常:', e);
@@ -1126,6 +1195,7 @@ export const piggybackMethods = {
   },
 
   resetPiggybackFilters() {
+    this.clearPiggybackSelection();
     this.piggyback.search = '';
     this.piggyback.vertical = 'ALL';
     this.piggyback.inventory_status = 'ALL';
@@ -1136,6 +1206,11 @@ export const piggybackMethods = {
     this.piggyback.date_range = 'ALL';
     this.piggyback.sort_by = 'ID_DESC';
     this.piggyback.compliance_status = 'ALL';
+    this.piggyback.brand_nature = 'ALL';
+    this.piggyback.is_white_label = 'ALL';
+    this.piggyback.has_image_logo = 'ALL';
+    this.piggyback.image_prohibited = 'ALL';
+    this.piggyback.violation_type = 'ALL';
     this.piggyback.stage = 'ALL';
     this.piggyback.buybox_status = 'ALL';
     this.piggyback.isAllFilteredSelected = false;
@@ -1164,21 +1239,54 @@ export const piggybackMethods = {
 
   async handleBatchAdjustPrice() {
     if (this.piggyback.selectedIds.length === 0) return;
+
+    const mode = (this.batchPriceAdjustForm.mode || 'DELTA').toUpperCase();
+    const rawVal = this.batchPriceAdjustForm.value;
+    const val = parseFloat(rawVal);
+
+    if (isNaN(val)) {
+      this.showToast('请输入有效的调价数值', 'warning');
+      return;
+    }
+    if (mode === 'FIXED' && val <= 0) {
+      this.showToast('固定售价必须大于 0 兰特', 'warning');
+      return;
+    }
+    if ((mode === 'DELTA' || mode === 'PERCENT') && val === 0) {
+      this.showToast('调整数值不能为 0（如需降价请输入负数，如 -5）', 'warning');
+      return;
+    }
+
     this.isBatchAdjustingPrice = true;
     try {
       const res = await fetch('/api/piggyback/batch-adjust-price', {
         method: 'POST',
-        headers: this.getAuthHeaders(),
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           ids: this.piggyback.selectedIds,
-          mode: this.batchPriceAdjustForm.mode,
-          value: parseFloat(this.batchPriceAdjustForm.value || 0),
+          mode: mode,
+          value: val,
           sync_to_makro: Boolean(this.batchPriceAdjustForm.sync_to_makro),
           enforce_floor: Boolean(this.batchPriceAdjustForm.enforce_floor)
         })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || '批量改价失败');
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = { detail: await res.text().catch(() => '网络响应异常') };
+      }
+
+      if (!res.ok) {
+        let errMsg = data.detail || data.message || '批量改价失败';
+        if (Array.isArray(data.detail)) {
+          errMsg = data.detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+        } else if (typeof data.detail === 'object' && data.detail !== null) {
+          errMsg = JSON.stringify(data.detail);
+        }
+        throw new Error(errMsg);
+      }
+
       this.showToast(data.message || `已成功批量调整 ${data.updated_count} 件商品价格`, 'success');
       this.showBatchPriceAdjustModal = false;
       this.loadPiggybackItems(this.piggyback.page);
@@ -1197,14 +1305,27 @@ export const piggybackMethods = {
     try {
       const res = await fetch('/api/piggyback/batch-toggle-auto-reprice', {
         method: 'POST',
-        headers: this.getAuthHeaders(),
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           ids: this.piggyback.selectedIds,
           auto_reprice: Boolean(enable)
         })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || '批量修改跟价状态失败');
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = { detail: await res.text().catch(() => '网络响应异常') };
+      }
+
+      if (!res.ok) {
+        let errMsg = data.detail || data.message || '批量修改跟价状态失败';
+        if (Array.isArray(data.detail)) {
+          errMsg = data.detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+        }
+        throw new Error(errMsg);
+      }
+
       this.showToast(data.message || '操作成功！', 'success');
       this.loadPiggybackItems(this.piggyback.page);
     } catch (e) {
@@ -1236,6 +1357,11 @@ export const piggybackMethods = {
       if (this.piggyback.max_price !== '' && !isNaN(this.piggyback.max_price)) params.append('max_price', this.piggyback.max_price);
       if (this.piggyback.date_range && this.piggyback.date_range !== 'ALL') params.append('date_range', this.piggyback.date_range);
       if (this.piggyback.sort_by) params.append('sort_by', this.piggyback.sort_by);
+      if (this.piggyback.brand_nature && this.piggyback.brand_nature !== 'ALL') params.append('brand_nature', this.piggyback.brand_nature);
+      if (this.piggyback.is_white_label && this.piggyback.is_white_label !== 'ALL') params.append('is_white_label', this.piggyback.is_white_label);
+      if (this.piggyback.has_image_logo && this.piggyback.has_image_logo !== 'ALL') params.append('has_image_logo', this.piggyback.has_image_logo);
+      if (this.piggyback.image_prohibited && this.piggyback.image_prohibited !== 'ALL') params.append('image_prohibited', this.piggyback.image_prohibited);
+      if (this.piggyback.violation_type && this.piggyback.violation_type !== 'ALL') params.append('violation_type', this.piggyback.violation_type);
     }
 
     this.showToast('正在生成并下载 Excel/CSV 报表...', 'info');

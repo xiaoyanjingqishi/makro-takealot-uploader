@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Takealot to Makro 智能搬品助手",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "在 Takealot 前台一键采集选品，经 AI 清洗规整后自动刊登到 Makro 卖家平台",
   "icons": {
     "16": "icons/icon16.png",

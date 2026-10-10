@@ -23,8 +23,27 @@
       }
     }
   </script>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- 优先本地极速加载 Vue 3 核心运行时，彻底杜绝外网 CDN 抽风白屏 -->
+  <script src="/static/vendor/vue.global.prod.js"></script>
+  <script>
+    if (typeof Vue === 'undefined') {
+      document.write('<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"><\/script>');
+    }
+  </script>
+  
+  <!-- 防白屏安全看门狗 (Anti-White-Screen Watchdog) -->
+  <script>
+    setTimeout(function() {
+      var appEl = document.getElementById('app');
+      if (appEl && appEl.hasAttribute('v-cloak')) {
+        console.warn('⚠️ Vue 挂载超时，触发防白屏保护...');
+        appEl.removeAttribute('v-cloak');
+      }
+    }, 2500);
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <!-- 模块化外部样式表 -->
   <link rel="stylesheet" href="/static/css/global.css">
   <link rel="stylesheet" href="/static/css/layout.css">

@@ -1,7 +1,7 @@
-# Makro-Takealot 智能搬品与多店铺自动化运营系统 (v2.1.3)
+# Makro-Takealot 智能搬品与多店铺自动化运营系统 (v2.2.0)
 
-[![System Version](https://img.shields.io/badge/System-v2.1.3-blue.svg)](backend/app/config.py)
-[![Extension Version](https://img.shields.io/badge/Extension-v1.1.3-green.svg)](extension/manifest.json)
+[![System Version](https://img.shields.io/badge/System-v2.2.0-blue.svg)](backend/app/config.py)
+[![Extension Version](https://img.shields.io/badge/Extension-v1.1.6-green.svg)](extension/manifest.json)
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB.svg?logo=python)](requirements.txt)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-009688.svg?logo=fastapi)](backend/requirements.txt)
 [![License](https://img.shields.io/badge/License-Proprietary-red.svg)](#)
@@ -164,12 +164,13 @@ makro-takealot-uploader/
 │   │   │   ├── takealot_service.py        # Takealot 原生 API 变体采集引擎
 │   │   │   └── vertical_service.py        # 类目自适应映射与 Qualifier 适配
 │   │   ├── static/                  # 静态资源与打包扩展 (.zip)
+│   │   │   └── vendor/              # 本地化离线依赖 (vue.global.prod.js 容灾降级)
 │   │   ├── templates/               # 前端单页应用 (Vue 3 + Tailwind CSS)
 │   │   ├── config.py                # Pydantic 全局配置管理
 │   │   ├── database.py              # 数据库连接池与会话管理
 │   │   └── init_db.py               # 数据库初始化与迁移补丁脚本
 │   ├── tests/                       # 单元测试与集成测试脚本集
-│   ├── tools/                       # 实用运维脚本 (bump_version.py, backfill.py)
+│   ├── tools/                       # 实用运维脚本 (bump_version.py, import_delisted_to_piggyback.py)
 │   ├── requirements.txt             # 后端 Python 依赖清册
 │   └── main.py                      # FastAPI 启动主入口
 │
@@ -182,6 +183,7 @@ makro-takealot-uploader/
 ├── tools/                           # 辅助工具包
 │   └── makro_pricing_calculator.html# 1688 采购与全链路成本核算计算器
 ├── docs/                            # 业务文档与交付指南
+│   ├── 运维与排障速查手册.md          # 5分钟极速上手部署、日常高频运维与故障急救手册 (必读)
 │   ├── 项目维护与交接指南.md          # 详细系统维护手册、表结构、接口对照与排错 FAQ
 │   ├── 1688采购与全链路成本定价核算手册.md
 │   └── MAKRO选品与防侵权合规实操手册.md
@@ -270,6 +272,7 @@ python backend/tools/bump_version.py --sys 2.1.4 --ext 1.1.4
 
 交接给新维护人员时，请重点查阅以下文档：
 
-- 📘 **[项目维护与交接指南 (必读)](file:///docs/%E9%A1%B9%E7%9B%AE%E7%BB%B4%E6%8A%A4%E4%B8%8E%E4%BA%A4%E6%8E%A5%E6%8C%87%E5%8D%97.md)**：包含全数据表字段释义、接口调用链、逆向发包协议解析、PerimeterX 应对方案、常见报错排查 FAQ。
+- 📕 **[运维与排障速查手册 (急救必读)](file:///docs/%E8%BF%90%E7%BB%B4%E4%B8%8E%E6%8E%92%E9%9A%9C%E9%80%9F%E6%9F%A5%E6%89%8B%E5%86%8C.md)**：3步极速部署、7大KPI实操、三轨重试防踩坑、官方动态代理池、白屏自愈、数据库备份恢复。
+- 📘 **[项目维护与交接指南 (系统全貌)](file:///docs/%E9%A1%B9%E7%9B%AE%E7%BB%B4%E6%8A%A4%E4%B8%8E%E4%BA%A4%E6%8E%A5%E6%8C%87%E5%8D%97.md)**：包含全数据表字段释义、接口调用链、逆向发包协议解析、PerimeterX 应对方案、常见报错排查 FAQ。
 - 📗 **[MAKRO选品与防侵权合规实操手册](file:///docs/MAKRO%E9%80%89%E5%93%81%E4%88%8E%E9%98%B2%E4%BE%B5%E6%9D%83%E5%90%88%E8%A7%84%E5%AE%9E%E6%93%8D%E6%89%8B%E5%86%8C.md)**：选品避坑与品牌侵权识别规范。
 - 📙 **[1688采购与全链路成本定价核算手册](file:///docs/1688%E9%87%87%E8%B4%AD%E4%B8%8E%E5%85%A8%E9%93%BE%E8%B7%AF%E6%88%90%E6%9C%AC%E5%AE%9A%E4%BB%B7%E6%A0%B8%E7%AE%97%E6%89%8B%E5%86%8C.md)**：跨境运费、关税与汇率测算模型。

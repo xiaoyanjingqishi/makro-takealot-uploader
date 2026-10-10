@@ -2,7 +2,7 @@
         <!-- 顶部固定控制区 -->
         <div class="shrink-0 space-y-2 pb-2">
           <!-- 运营驾驶舱 6 大核心 KPI 战况卡片 -->
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
             <!-- 1. 跟品总池 -->
             <div 
               @click="selectKpiFilter('total')"
@@ -33,10 +33,25 @@
               </div>
             </div>
 
-            <!-- 3. Buybox 占位中 -->
+            <!-- 3. 独家在售 (无外部竞对) -->
+            <div 
+              @click="selectKpiFilter('no_competitor')"
+              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'NO_COMPETITOR' ? 'ring-2 ring-indigo-500 bg-indigo-50/70 shadow-xs' : 'hover:border-indigo-300 bg-white'"
+              class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
+            >
+              <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
+                <span class="font-medium text-indigo-900 font-bold">💎 独家在售</span>
+                <span class="text-[9.5px] bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded-full font-bold">无竞对</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-indigo-700 group-hover:scale-105 transition-transform origin-left">
+                {{ piggyback.kpi.no_competitor_count }}
+              </div>
+            </div>
+
+            <!-- 4. Buybox 占位赢车 -->
             <div 
               @click="selectKpiFilter('winning')"
-              :class="piggyback.buybox_status === 'WINNING' ? 'ring-2 ring-emerald-600 bg-emerald-50/70 shadow-xs' : 'hover:border-emerald-300 bg-white'"
+              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'WINNING' ? 'ring-2 ring-emerald-600 bg-emerald-50/70 shadow-xs' : 'hover:border-emerald-300 bg-white'"
               class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
             >
               <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
@@ -48,10 +63,10 @@
               </div>
             </div>
 
-            <!-- 4. 丢车需调价 -->
+            <!-- 5. 丢车需调价 -->
             <div 
               @click="selectKpiFilter('losing')"
-              :class="piggyback.buybox_status === 'LOSING' ? 'ring-2 ring-rose-500 bg-rose-50/70 shadow-xs' : 'hover:border-rose-300 bg-white'"
+              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'LOSING' ? 'ring-2 ring-rose-500 bg-rose-50/70 shadow-xs' : 'hover:border-rose-300 bg-white'"
               class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
             >
               <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
@@ -63,10 +78,10 @@
               </div>
             </div>
 
-            <!-- 5. 底价拦截中 -->
+            <!-- 6. 底价拦截中 -->
             <div 
               @click="selectKpiFilter('floor_hit')"
-              :class="piggyback.buybox_status === 'FLOOR_HIT' ? 'ring-2 ring-amber-500 bg-amber-50/70 shadow-xs' : 'hover:border-amber-300 bg-white'"
+              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'FLOOR_HIT' ? 'ring-2 ring-amber-500 bg-amber-50/70 shadow-xs' : 'hover:border-amber-300 bg-white'"
               class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
             >
               <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
@@ -78,10 +93,10 @@
               </div>
             </div>
 
-            <!-- 6. 未设底价高危 -->
+            <!-- 7. 未设底价高危 -->
             <div 
               @click="selectKpiFilter('missing_floor')"
-              :class="piggyback.buybox_status === 'MISSING_FLOOR' ? 'ring-2 ring-orange-500 bg-orange-50/70 shadow-xs' : 'hover:border-orange-300 bg-white'"
+              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'MISSING_FLOOR' ? 'ring-2 ring-orange-500 bg-orange-50/70 shadow-xs' : 'hover:border-orange-300 bg-white'"
               class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
             >
               <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
@@ -127,7 +142,8 @@
                       { key: 'PENDING_CHECK', label: '⏳ 待检测', count: piggyback.stats.pending_check_count },
                       { key: 'SAFE', label: '🟢 合规', count: piggyback.stats.safe_count },
                       { key: 'RISK', label: '🟡 风险', count: piggyback.stats.risk_count },
-                      { key: 'PROHIBITED', label: '🔴 禁售', count: piggyback.stats.prohibited_count }
+                      { key: 'PROHIBITED', label: '🔴 禁售', count: piggyback.stats.prohibited_count },
+                      { key: 'DISPUTED', label: '⚖️ 分歧待仲裁', count: piggyback.stats.disputed_count }
                     ]"
                     :key="cst.key"
                     @click="changePiggybackCompliance(cst.key)"
@@ -143,7 +159,7 @@
                 <select 
                   v-if="currentUser && currentUser.role === 'ADMIN'"
                   v-model="piggyback.user_id" 
-                  @change="loadPiggybackItems(1)"
+                  @change="clearPiggybackSelection(); loadPiggybackItems(1)"
                   class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
                   title="按采集员工过滤跟品商品"
                 >
@@ -153,10 +169,10 @@
                   </option>
                 </select>
 
-                <!-- 店铺筛选下拉 -->
+                <!-- 店铺筛选下拉 (与顶部全局店铺双向联动) -->
                 <select 
                   v-model="piggyback.store_id" 
-                  @change="loadPiggybackItems(1); loadPiggybackVerticals()"
+                  @change="onPiggybackStoreChange()"
                   class="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 font-medium shadow-2xs"
                 >
                   <option :value="null">🏪 全部店铺</option>
@@ -507,6 +523,96 @@
                   <option value="LAST_REPRICE_DESC">最近调价优先</option>
                 </select>
               </div>
+
+              <!-- 7. 品牌形态属性 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🏷️ 品牌形态属性</label>
+                <select 
+                  v-model="piggyback.brand_nature" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部品牌形态</option>
+                  <option value="COMPATIBLE_ACCESSORY">🔌 兼容配件</option>
+                  <option value="GENERIC_WHITE_LABEL">⚪ 中性白牌</option>
+                  <option value="ORIGINAL_BRAND">👑 原装大牌</option>
+                </select>
+              </div>
+
+              <!-- 8. 白牌豁免形态 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🛡️ 卖家白牌豁免</label>
+                <select 
+                  v-model="piggyback.is_white_label" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部白牌状态</option>
+                  <option value="true">🏷️ 卖家自造白牌 (豁免)</option>
+                  <option value="false">🏛️ 知名品牌品</option>
+                </select>
+              </div>
+
+              <!-- 9. 首图 Logo 识别 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🖼️ 首图 Logo 识别</label>
+                <select 
+                  v-model="piggyback.has_image_logo" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部首图特征</option>
+                  <option value="true">🚨 首图含品牌Logo</option>
+                  <option value="false">🟢 首图无Logo</option>
+                </select>
+              </div>
+
+              <!-- 10. 首图禁运识别 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">⚠️ 首图禁运识别</label>
+                <select 
+                  v-model="piggyback.image_prohibited" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部图审形态</option>
+                  <option value="true">🔴 检出禁运品形态</option>
+                  <option value="false">🟢 视觉形态正常</option>
+                </select>
+              </div>
+
+              <!-- 11. 质检违规类型 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🚨 质检违规类型</label>
+                <select 
+                  v-model="piggyback.violation_type" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                >
+                  <option value="ALL">全部违规类型</option>
+                  <option value="MISSING_COMPATIBILITY">⚠️ 缺少兼容词</option>
+                  <option value="TRADEMARK">🛑 商标假冒侵权</option>
+                  <option value="PROHIBITED_GOODS">☣️ 违禁品/电池/液体</option>
+                </select>
+              </div>
+
+              <!-- 12. Buybox 竞价状态 -->
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-600 text-[11px]">🏆 Buybox 竞价状态</label>
+                <select 
+                  v-model="piggyback.buybox_status" 
+                  @change="loadPiggybackItems(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-sky-500 shadow-2xs font-medium"
+                >
+                  <option value="ALL">全部 Buybox 状态</option>
+                  <option value="NO_COMPETITOR">💎 独家在售 (无外部竞对)</option>
+                  <option value="WINNING">🥇 占位赢车 (本店/友军最低价)</option>
+                  <option value="LOSING">🚨 丢车需调价 (竞对更低)</option>
+                  <option value="FLOOR_HIT">🛡️ 保本底价拦截 (坚守不降)</option>
+                  <option value="MISSING_FLOOR">⚠️ 缺底价高危</option>
+                  <option value="UNKNOWN">❓ 待巡检 / 未知</option>
+                </select>
+              </div>
             </div>
 
             <!-- 活跃筛选标签栏 (Active Filter Pills Bar) -->
@@ -515,6 +621,15 @@
               class="flex items-center space-x-1.5 flex-wrap gap-y-1 pt-1 text-[11px] border-t border-slate-100"
             >
               <span class="text-slate-400 font-medium">当前过滤:</span>
+
+              <!-- Buybox pill -->
+              <span 
+                v-if="piggyback.buybox_status && piggyback.buybox_status !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200 font-medium"
+              >
+                <span>Buybox: {{ piggyback.buybox_status === 'NO_COMPETITOR' ? '独家在售' : piggyback.buybox_status === 'WINNING' ? '占位赢车' : piggyback.buybox_status === 'LOSING' ? '丢车需调价' : piggyback.buybox_status === 'FLOOR_HIT' ? '底价坚守' : piggyback.buybox_status === 'MISSING_FLOOR' ? '缺底价高危' : '待巡检' }}</span>
+                <button @click="piggyback.buybox_status = 'ALL'; loadPiggybackItems(1)" class="hover:text-indigo-900 cursor-pointer">✕</button>
+              </span>
               
               <!-- 类目 pill -->
               <span 
@@ -570,6 +685,51 @@
                 <button @click="piggyback.sort_by = 'ID_DESC'; loadPiggybackItems(1)" class="hover:text-purple-900 cursor-pointer">✕</button>
               </span>
 
+              <!-- 品牌形态 pill -->
+              <span 
+                v-if="piggyback.brand_nature && piggyback.brand_nature !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full border border-blue-200 font-medium"
+              >
+                <span>品牌: {{ piggyback.brand_nature === 'COMPATIBLE_ACCESSORY' ? '兼容配件' : piggyback.brand_nature === 'GENERIC_WHITE_LABEL' ? '中性白牌' : '原装大牌' }}</span>
+                <button @click="piggyback.brand_nature = 'ALL'; loadPiggybackItems(1)" class="hover:text-blue-900 cursor-pointer">✕</button>
+              </span>
+
+              <!-- 白牌豁免 pill -->
+              <span 
+                v-if="piggyback.is_white_label && piggyback.is_white_label !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-full border border-cyan-200 font-medium"
+              >
+                <span>白牌: {{ piggyback.is_white_label === 'true' ? '卖家白牌' : '知名品牌' }}</span>
+                <button @click="piggyback.is_white_label = 'ALL'; loadPiggybackItems(1)" class="hover:text-cyan-900 cursor-pointer">✕</button>
+              </span>
+
+              <!-- 首图Logo pill -->
+              <span 
+                v-if="piggyback.has_image_logo && piggyback.has_image_logo !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-rose-50 text-rose-700 rounded-full border border-rose-200 font-medium"
+              >
+                <span>图审Logo: {{ piggyback.has_image_logo === 'true' ? '含品牌Logo' : '无Logo' }}</span>
+                <button @click="piggyback.has_image_logo = 'ALL'; loadPiggybackItems(1)" class="hover:text-rose-900 cursor-pointer">✕</button>
+              </span>
+
+              <!-- 首图禁运 pill -->
+              <span 
+                v-if="piggyback.image_prohibited && piggyback.image_prohibited !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-red-50 text-red-700 rounded-full border border-red-200 font-medium"
+              >
+                <span>图审禁运: {{ piggyback.image_prohibited === 'true' ? '检出禁运品' : '正常' }}</span>
+                <button @click="piggyback.image_prohibited = 'ALL'; loadPiggybackItems(1)" class="hover:text-red-900 cursor-pointer">✕</button>
+              </span>
+
+              <!-- 违规类型 pill -->
+              <span 
+                v-if="piggyback.violation_type && piggyback.violation_type !== 'ALL'"
+                class="inline-flex items-center space-x-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full border border-amber-200 font-medium"
+              >
+                <span>违规: {{ piggyback.violation_type === 'MISSING_COMPATIBILITY' ? '缺少兼容词' : piggyback.violation_type === 'TRADEMARK' ? '商标侵权' : '禁运品形态' }}</span>
+                <button @click="piggyback.violation_type = 'ALL'; loadPiggybackItems(1)" class="hover:text-amber-900 cursor-pointer">✕</button>
+              </span>
+
               <!-- 店铺 pill -->
               <span 
                 v-if="piggyback.store_id !== null"
@@ -604,23 +764,6 @@
           
           <!-- 跨页全选提示栏 (跨页批量操作交互条) -->
           <div 
-            v-if="piggyback.selectAll && piggyback.total > piggyback.items.length && !piggyback.isAllFilteredSelected"
-            class="bg-sky-50 text-sky-800 px-4 py-2 text-xs border-b border-sky-100 flex items-center justify-between shrink-0 animate-in fade-in duration-150"
-          >
-            <div class="flex items-center space-x-2">
-              <span class="inline-block w-2 h-2 rounded-full bg-sky-500"></span>
-              <span>已勾选当前页 <strong class="font-semibold text-sky-900">{{ piggyback.items.length }}</strong> 件商品。是否勾选符合当前筛选条件的全部 <strong class="font-semibold text-sky-900">{{ piggyback.total }}</strong> 件商品？</span>
-            </div>
-            <button 
-              @click="selectAllFilteredPiggyback"
-              :disabled="loadingPiggyback"
-              class="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded-md font-medium text-[11px] shadow-2xs transition-all cursor-pointer flex items-center space-x-1"
-            >
-              <span>✓ 勾选全部 {{ piggyback.total }} 件商品</span>
-            </button>
-          </div>
-
-          <div 
             v-if="piggyback.isAllFilteredSelected"
             class="bg-indigo-50 text-indigo-800 px-4 py-2 text-xs border-b border-indigo-100 flex items-center justify-between shrink-0 animate-in fade-in duration-150"
           >
@@ -636,6 +779,34 @@
             </button>
           </div>
 
+          <div 
+            v-else-if="piggyback.selectedIds.length > 0"
+            class="bg-sky-50 text-sky-800 px-4 py-2 text-xs border-b border-sky-100 flex items-center justify-between shrink-0 animate-in fade-in duration-150"
+          >
+            <div class="flex items-center space-x-2">
+              <span class="inline-block w-2 h-2 rounded-full bg-sky-500"></span>
+              <span>
+                📌 跨页勾选生效中：已累计勾选 <strong class="font-semibold text-sky-900">{{ piggyback.selectedIds.length }}</strong> 件商品（当前页 <strong class="font-semibold text-sky-900">{{ getCurrentPageSelectedCount() }}</strong> 件，翻页不会清除选中）。
+              </span>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button 
+                v-if="piggyback.total > piggyback.selectedIds.length"
+                @click="selectAllFilteredPiggyback"
+                :disabled="loadingPiggyback"
+                class="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded-md font-medium text-[11px] shadow-2xs transition-all cursor-pointer flex items-center space-x-1"
+              >
+                <span>✓ 勾选符合条件的全部 {{ piggyback.total }} 件商品</span>
+              </button>
+              <button 
+                @click="clearPiggybackSelection"
+                class="text-sky-700 hover:text-sky-900 font-semibold underline text-xs cursor-pointer"
+              >
+                清空已选 ({{ piggyback.selectedIds.length }})
+              </button>
+            </div>
+          </div>
+
           <div class="flex-1 min-h-0 overflow-auto custom-scrollbar">
             <table class="w-full text-left border-collapse text-xs">
               <thead class="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200/80 backdrop-blur-xs">
@@ -644,8 +815,10 @@
                     <input 
                       type="checkbox" 
                       :checked="piggyback.selectAll" 
+                      :indeterminate.prop="isPiggybackPageIndeterminate()"
                       @change="toggleSelectAllPiggyback"
                       class="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                      title="全选/取消全选当前页商品"
                     />
                   </th>
                   <th class="py-2.5 px-3 min-w-[280px]">Makro 商品信息</th>
@@ -766,9 +939,10 @@
                           </span>
                           <span 
                             v-else-if="item.buybox_status === 'NO_COMPETITOR'" 
-                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200"
+                            class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-300"
+                            title="本店独家在售，当前买家前台无外部竞对跟卖"
                           >
-                            ⚪ 独家在售
+                            💎 独家在售
                           </span>
                           <span 
                             v-else 
@@ -1024,8 +1198,23 @@
                         <template v-if="item.status === 'ACTIVE'">🟢 挂靠成功</template>
                         <template v-else-if="item.status === 'SUBMITTING'">⏳ 提交中...</template>
                         <template v-else-if="item.status === 'FETCHING'">🔄 数据获取中...</template>
-                        <template v-else-if="item.status === 'FAILED'">❌ 获取失败</template>
+                        <template v-else-if="item.status === 'FAILED'">
+                          <template v-if="(item.error_message && (item.error_message.includes('挂靠') || item.error_message.includes('ATTRIBUTE_VALIDATION') || item.error_message.includes('sku_id') || item.error_message.includes('license'))) || (item.original_price > 0 && !(item.title && item.title.startsWith('[待获取]')))">
+                            ❌ 挂靠失败
+                          </template>
+                          <template v-else>
+                            ❌ 采集失败
+                          </template>
+                        </template>
                         <template v-else>⚪ 待发布</template>
+                      </span>
+                      <!-- 若在售商品上期巡检阻断或推送失败，展示提示徽章 -->
+                      <span 
+                        v-if="item.status === 'ACTIVE' && item.last_reprice_result && (item.last_reprice_result.startsWith('FAILED') || item.last_reprice_result.startsWith('BLOCKED'))"
+                        class="px-1.5 py-0.2 text-[9.5px] rounded bg-rose-50 text-rose-700 border border-rose-200 font-medium"
+                        :title="'巡检结果: ' + item.last_reprice_result"
+                      >
+                        ⚠️ 巡检遇阻
                       </span>
                       <span v-if="item.is_abandoned && item.abandoned_reason" class="text-[9.5px] text-slate-500 line-clamp-1 max-w-[120px]" :title="item.abandoned_reason">
                         原因: {{ item.abandoned_reason }}
@@ -1041,7 +1230,7 @@
 
                   <!-- 操作列 -->
                   <td class="py-3 px-3 text-right align-top">
-                    <div class="flex items-center justify-end space-x-1.5">
+                    <div class="flex items-center justify-end space-x-1.5 flex-wrap gap-y-1">
                       <!-- 恢复已弃用商品 -->
                       <button 
                         v-if="item.is_abandoned"
@@ -1052,38 +1241,49 @@
                         <span>🔄 恢复</span>
                       </button>
 
-                      <!-- 重试获取数据 (若处于失败状态) -->
+                      <!-- 1. 采集失败重试 (针对无有效数据或采集报错的商品) -->
                       <button 
-                        v-if="!item.is_abandoned && item.status === 'FAILED'"
+                        v-if="!item.is_abandoned && item.status === 'FAILED' && (!item.original_price || (item.title && item.title.startsWith('[待获取]')))"
                         @click="handleRetryFetchItem(item)"
                         class="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded font-medium text-xs transition-colors cursor-pointer"
-                        title="重新放入后台静默拉取队列"
+                        title="重新放入后台静默拉取队列拉取详情"
                       >
-                        <span>🔄 重试</span>
+                        <span>🔄 重新采集</span>
                       </button>
 
-                      <!-- 立即挂靠 (未弃用且非获取中) -->
+                      <!-- 2. 挂靠失败重试 / 正常待挂靠 (针对待处理池或挂靠失败商品：直接提交官方挂靠接口，绝不回退采集池！) -->
                       <button 
-                        v-if="!item.is_abandoned && item.status !== 'FAILED'"
+                        v-if="!item.is_abandoned && item.status !== 'ACTIVE' && (item.status === 'PENDING' || (item.status === 'FAILED' && item.original_price > 0 && !(item.title && item.title.startsWith('[待获取]'))))"
                         @click="handlePublishPiggyback(item)"
                         :disabled="item.compliance_status === 'PROHIBITED' || item.status === 'SUBMITTING' || item.status === 'FETCHING'"
                         class="px-2 py-1 bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200 rounded font-medium text-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                        :title="item.status === 'FETCHING' ? '后台正在静默抓取商品数据，请稍候...' : (item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品')"
+                        :title="item.status === 'FAILED' ? '重新向 Makro 提交挂靠上架 (不回退待处理池)' : (item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品')"
                       >
-                        <span>🚀 跟品</span>
+                        <span>🚀 {{ item.status === 'FAILED' ? '重新挂靠' : '跟品' }}</span>
                       </button>
 
-                      <!-- 立即执行自动跟价 (未弃用) -->
+                      <!-- 3. 挂靠失败辅助选项：也支持运营人员选择重走爬虫 -->
                       <button 
-                        v-if="!item.is_abandoned"
-                        @click="triggerSingleItemReprice(item)"
-                        class="px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded font-medium text-xs transition-colors cursor-pointer"
-                        title="立即探测竞对前台价格并执行自动跟价策略"
+                        v-if="!item.is_abandoned && item.status === 'FAILED' && item.original_price > 0 && !(item.title && item.title.startsWith('[待获取]'))"
+                        @click="handleRetryFetchItem(item)"
+                        class="px-1.5 py-1 text-slate-500 hover:text-slate-700 hover:bg-slate-100 border border-slate-200 rounded text-[11px] transition-colors cursor-pointer"
+                        title="若前台页面信息发生变动，可选择重新拉取并更新数据"
                       >
-                        <span>⚡ 跟价</span>
+                        <span>🔄 重新采集</span>
                       </button>
 
-                      <!-- 弃用商品 (未弃用) -->
+                      <!-- 4. 在售商品跟价巡检 / 重试巡检 (仅针对在售商品，保持 ACTIVE，绝不降级 PENDING！) -->
+                      <button 
+                        v-if="!item.is_abandoned && item.status === 'ACTIVE'"
+                        @click="triggerSingleItemReprice(item)"
+                        class="px-2 py-1 border rounded font-medium text-xs transition-colors cursor-pointer"
+                        :class="item.last_reprice_result && (item.last_reprice_result.startsWith('FAILED') || item.last_reprice_result.startsWith('BLOCKED')) ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 border-rose-200 font-semibold' : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200'"
+                        :title="item.last_reprice_result && (item.last_reprice_result.startsWith('FAILED') || item.last_reprice_result.startsWith('BLOCKED')) ? '上次巡检/调价异常，立即重试探测比价: ' + item.last_reprice_result : '立即探测竞对前台价格并执行自动跟价策略'"
+                      >
+                        <span>⚡ {{ item.last_reprice_result && (item.last_reprice_result.startsWith('FAILED') || item.last_reprice_result.startsWith('BLOCKED')) ? '重试跟价' : '跟价' }}</span>
+                      </button>
+
+                      <!-- 5. 弃用商品 -->
                       <button 
                         v-if="!item.is_abandoned"
                         @click="handleAbandonPiggyback(item)"
@@ -1169,6 +1369,7 @@
             <div class="flex items-center space-x-1.5 text-xs font-medium pr-3 border-r border-slate-700/80">
               <span class="text-sky-400 font-bold font-mono text-sm">{{ piggyback.selectedIds.length }}</span>
               <span class="text-slate-300">已选</span>
+              <span class="text-[10.5px] text-slate-400 font-mono">(当前页 {{ getCurrentPageSelectedCount() }})</span>
               <span v-if="piggyback.isAllFilteredSelected" class="ml-1 text-[10px] bg-indigo-500/40 text-indigo-200 border border-indigo-400/40 px-1.5 py-0.5 rounded-full font-sans">跨页全选</span>
             </div>
 

@@ -17,6 +17,7 @@ FAMOUS_BRANDS = [
     "nintendo switch", "nintendo", "steam deck", "xbox", "huawei", "xiaomi", "redmi", "dji", "gopro",
     "philips", "makita", "bosch", "dewalt", "milwaukee", "dell", "hp",
     "lenovo", "asus", "acer", "garmin", "fitbit", "bose", "jbl", "beats",
+    "canon", "nikon", "sony alpha", "fujifilm", "olympus", "panasonic", "lumix", "pentax", "minolta", "leica", "hasselblad", "sigma", "tamron", "tokina", "insta360",
     "nike", "adidas", "lego", "stanley", "rolex", "crocs", "kindle",
     "chanel", "louis vuitton", "gucci", "hermes", "prada", "dior", "balenciaga",
     "fendi", "burberry", "celine", "bottega veneta", "saint laurent", "ysl",
@@ -29,7 +30,8 @@ ACCESSORY_KEYWORDS = [
     "replacement", "filter", "mount", "stand", "battery", "dock",
     "protector", "screen protector", "stylus", "shell", "ear tips",
     "pad", "blade", "holder", "pouch", "housing", "nozzle", "head",
-    "sleeve", "bracket", "belt", "refill", "spares", "parts"
+    "sleeve", "bracket", "belt", "refill", "spares", "parts",
+    "lens cap", "body cap", "rear cap", "cap", "hood", "filter ring", "adapter ring", "mount adapter"
 ]
 
 # 第三方兼容声明合格词

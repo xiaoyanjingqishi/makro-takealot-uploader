@@ -178,7 +178,7 @@ class BatchRestorePiggybackRequest(BaseModel):
 class BatchAdjustPriceRequest(BaseModel):
     ids: List[int] = Field(..., description="选中的跟品商品 ID 列表")
     mode: str = Field("DELTA", description="FIXED(直接设固定价), DELTA(增减指定金额), PERCENT(按百分比上浮/下调)")
-    value: float = Field(..., description="数值，如 199(固定价), 10(加10兰特), -5(减5兰特), 5(上浮5%), -3(下调3%)")
+    value: Optional[float] = Field(0.0, description="数值，如 199(固定价), 10(加10兰特), -5(减5兰特), 5(上浮5%), -3(下调3%)")
     sync_to_makro: Optional[bool] = Field(False, description="是否即时同步推送官方 Makro 网关更新在售价格")
     enforce_floor: Optional[bool] = Field(True, description="是否严格受保本底价保护(价格不可低于底价)")
 

@@ -297,6 +297,11 @@ def sanitize_accessory_core_name(
     for b_pat in BRANDS_TO_REMOVE:
         clean = re.sub(b_pat, '', clean, flags=re.I)
 
+    # 动态遍历 FAMOUS_BRANDS 库，彻底剔除核心品名中的所有第三方受保护品牌
+    for fb in FAMOUS_BRANDS:
+        if len(fb) > 2:
+            clean = re.sub(rf'\b{re.escape(fb)}\b', '', clean, flags=re.I)
+
     # 5. 若已知具体的 device_model (例如 PlayStation 5 Slim 或 Apple AirTag)，从核心品名中剥离其零散单词
     if device_model:
         dev_words = re.split(r'[\s\-_]+', device_model)

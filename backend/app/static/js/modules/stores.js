@@ -8,9 +8,16 @@ export const storesMethods = {
       localStorage.setItem('makro_selected_store_id', this.selectedStoreId);
       const curStore = this.authorizedStores.find(s => s.id === this.selectedStoreId);
       this.showToast(`已切换至店铺: ${curStore?.name || this.selectedStoreId}`, 'info');
-      if (this.currentTab === 'piggyback') {
+      
+      // 联动同步更新跟品模块的 store_id
+      if (this.piggyback) {
+        this.piggyback.store_id = this.selectedStoreId;
+        this.clearPiggybackSelection();
         this.loadPiggybackItems(1);
-      } else if (this.currentTab === 'store_products') {
+        this.loadPiggybackVerticals();
+      }
+      
+      if (this.currentTab === 'store_products') {
         this.loadStoreProducts(1);
       } else if (this.currentTab === 'store_audits') {
         this.loadStoreAudits(1);
