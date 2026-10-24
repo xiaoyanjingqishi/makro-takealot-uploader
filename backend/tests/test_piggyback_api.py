@@ -482,11 +482,11 @@ class TestPiggybackAPI(unittest.TestCase):
             self.assertEqual(data["concurrency"], 3)
             self.assertIn("3线程并发", data["task_name"])
 
-            # 2. 验证设置接口中默认 piggyback_compliance_concurrency 为 100
+            # 2. 验证设置接口中默认 piggyback_compliance_concurrency 为 15 (安全稳健并发，防暴刷Token)
             settings_resp = self.client.get("/api/settings", headers=self.headers)
             self.assertEqual(settings_resp.status_code, 200)
             settings_data = settings_resp.json()
-            self.assertEqual(settings_data.get("piggyback_compliance_concurrency"), 100)
+            self.assertEqual(settings_data.get("piggyback_compliance_concurrency"), 15)
 
             # 3. 更新设置并发为 50 并保存
             settings_data["piggyback_compliance_concurrency"] = 50
@@ -497,11 +497,11 @@ class TestPiggybackAPI(unittest.TestCase):
             settings_resp2 = self.client.get("/api/settings", headers=self.headers)
             self.assertEqual(settings_resp2.json().get("piggyback_compliance_concurrency"), 50)
 
-            # 恢复设置回 100
-            settings_data["piggyback_compliance_concurrency"] = 100
+            # 恢复设置回 15
+            settings_data["piggyback_compliance_concurrency"] = 15
             self.client.post("/api/settings", headers=self.headers, json=settings_data)
 
-            print("[OK] Test 4: Batch check compliance 100 concurrency and settings configuration passed")
+            print("[OK] Test 4: Batch check compliance 15 concurrency and settings configuration passed")
         finally:
             for it in test_items:
                 del_it = self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == it.id).first()
@@ -604,9 +604,13 @@ class TestPiggybackAPI(unittest.TestCase):
 
     def test_abandon_active_item_dual_delisting(self):
         """测试 7: 在售跟品商品弃用时双重下架保障 (create-update-listings 改 INACTIVE + updateListingsInventory 清零库存)"""
-        # 1. 创建在线在售的跟品条目与 Listing 快照
+        # 1. 创建在线在售的跟品条目与 Listing 快照 (预先清理历史残留)
         sku = "GP_TEST_ACTIVE_DELIST_01"
         fsn = "FSN_ACTIVE_DELIST_01"
+        self.db.query(MakroListing).filter(MakroListing.sku_id == sku).delete()
+        self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.seller_sku == sku).delete()
+        self.db.commit()
+
         item = MakroPiggybackItem(
             store_id=self.store.id,
             user_id=self.user.id,
@@ -639,10 +643,17 @@ class TestPiggybackAPI(unittest.TestCase):
         item_id = item.id
 
         try:
-            # 2. 模拟 requests.post 捕获调用载荷
+            # 2. 模拟 requests 捕获调用载荷
             captured_calls = []
 
-            def mock_requests_post(url, *args, **kwargs):
+            def mock_requests_any(*args, **kwargs):
+                if len(args) >= 2 and isinstance(args[0], str) and args[0].upper() in ["GET", "POST", "PUT", "DELETE"]:
+                    url = args[1]
+                elif len(args) >= 1:
+                    url = args[0]
+                else:
+                    url = kwargs.get("url", "")
+
                 mock_resp = MagicMock()
                 mock_resp.status_code = 200
                 captured_calls.append({"url": url, "kwargs": kwargs})
@@ -668,7 +679,7 @@ class TestPiggybackAPI(unittest.TestCase):
                     mock_resp.json.return_value = {"status": "success"}
                 return mock_resp
 
-            with patch("requests.post", side_effect=mock_requests_post):
+            with patch("requests.request", side_effect=mock_requests_any), patch("requests.post", side_effect=mock_requests_any):
                 resp = self.client.post(
                     f"/api/piggyback/items/{item_id}/abandon",
                     headers=self.headers,
@@ -727,6 +738,9 @@ class TestPiggybackAPI(unittest.TestCase):
         """测试 8: 批量弃用多件在售商品聚合双重下架与批量恢复重置为 PENDING"""
         sku1, fsn1 = "GP_BATCH_ACTIVE_01", "FSN_BATCH_ACTIVE_01"
         sku2, fsn2 = "GP_BATCH_ACTIVE_02", "FSN_BATCH_ACTIVE_02"
+        self.db.query(MakroListing).filter(MakroListing.sku_id.in_([sku1, sku2])).delete()
+        self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.seller_sku.in_([sku1, sku2])).delete()
+        self.db.commit()
 
         it1 = MakroPiggybackItem(
             store_id=self.store.id,
@@ -779,7 +793,14 @@ class TestPiggybackAPI(unittest.TestCase):
         try:
             captured_calls = []
 
-            def mock_requests_post(url, *args, **kwargs):
+            def mock_requests_any(*args, **kwargs):
+                if len(args) >= 2 and isinstance(args[0], str) and args[0].upper() in ["GET", "POST", "PUT", "DELETE"]:
+                    url = args[1]
+                elif len(args) >= 1:
+                    url = args[0]
+                else:
+                    url = kwargs.get("url", "")
+
                 mock_resp = MagicMock()
                 mock_resp.status_code = 200
                 captured_calls.append({"url": url, "kwargs": kwargs})
@@ -802,7 +823,7 @@ class TestPiggybackAPI(unittest.TestCase):
                     mock_resp.json.return_value = {"status": "success"}
                 return mock_resp
 
-            with patch("requests.post", side_effect=mock_requests_post):
+            with patch("requests.request", side_effect=mock_requests_any), patch("requests.post", side_effect=mock_requests_any):
                 resp = self.client.post(
                     "/api/piggyback/batch-abandon",
                     headers=self.headers,

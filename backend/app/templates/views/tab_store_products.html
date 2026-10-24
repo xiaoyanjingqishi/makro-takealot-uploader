@@ -29,7 +29,7 @@
               </button>
             </div>
 
-            <!-- 右侧：搜索框、一键同步按钮 -->
+            <!-- 右侧：搜索框、高级筛选开关、一键同步按钮 -->
             <div class="flex items-center space-x-2">
               <div class="relative">
                 <input 
@@ -37,7 +37,7 @@
                   v-model="storeProducts.search" 
                   @keyup.enter="loadStoreProducts(1)"
                   placeholder="搜索标题、SKU、FSN..." 
-                  class="text-xs pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg w-52 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-2xs"
+                  class="text-xs pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg w-48 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-2xs"
                 />
                 <span class="absolute left-2.5 top-2 text-slate-400 text-xs">🔍</span>
               </div>
@@ -48,6 +48,17 @@
                 搜索
               </button>
               <button 
+                @click="storeProducts.showAdvancedFilters = !storeProducts.showAdvancedFilters" 
+                :class="storeProducts.showAdvancedFilters || hasActiveStoreProductFilters ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-bold' : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700 border-slate-200 font-semibold'"
+                class="px-3 py-1.5 border text-xs rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1"
+                title="展开/收起售价、库存、类目、时间等高级过滤"
+              >
+                <span>⚙️ 筛选</span>
+                <span v-if="activeStoreProductFiltersCount > 0" class="w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] font-bold inline-flex items-center justify-center">
+                  {{ activeStoreProductFiltersCount }}
+                </span>
+              </button>
+              <button 
                 @click="syncStoreProducts" 
                 :disabled="syncingStoreProducts"
                 class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50 active:scale-95"
@@ -56,6 +67,189 @@
                 <span>{{ syncingStoreProducts ? '同步中...' : '一键同步官方商品' }}</span>
               </button>
             </div>
+          </div>
+
+          <!-- 折叠式高级筛选抽屉面板 (售价、库存、类目、同步时间、排序) -->
+          <div 
+            v-if="storeProducts.showAdvancedFilters" 
+            class="bg-slate-50/95 p-3 rounded-xl border border-slate-200/90 shadow-xs grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 text-xs animate-in fade-in duration-150"
+          >
+            <!-- 1. 所属类目 -->
+            <div class="space-y-1">
+              <label class="block font-semibold text-slate-600 text-[11px]">🏷️ 所属类目 (Vertical)</label>
+              <select 
+                v-model="storeProducts.vertical" 
+                @change="loadStoreProducts(1)"
+                class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+              >
+                <option value="ALL">全部类目 ({{ (storeProducts.verticalsList || []).length }}个)</option>
+                <option v-for="v in storeProducts.verticalsList" :key="v.code" :value="v.code">
+                  {{ v.name }} ({{ v.count }})
+                </option>
+              </select>
+            </div>
+
+            <!-- 2. 库存状态 -->
+            <div class="space-y-1">
+              <label class="block font-semibold text-slate-600 text-[11px]">📦 库存状态</label>
+              <select 
+                v-model="storeProducts.inventory_status" 
+                @change="loadStoreProducts(1)"
+                class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+              >
+                <option value="ALL">全部库存状态</option>
+                <option value="IN_STOCK">🟢 充足在库 (>10)</option>
+                <option value="LOW_STOCK">🟡 低库存 (1~10)</option>
+                <option value="OUT_OF_STOCK">🔴 缺货售罄 (0)</option>
+              </select>
+            </div>
+
+            <!-- 3. 库存数量区间 -->
+            <div class="space-y-1">
+              <label class="block font-semibold text-slate-600 text-[11px]">🔢 库存数量区间</label>
+              <div class="flex items-center space-x-1">
+                <input 
+                  type="number" 
+                  v-model.number="storeProducts.min_inventory" 
+                  @change="loadStoreProducts(1)"
+                  @keyup.enter="loadStoreProducts(1)"
+                  placeholder="Min" 
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs font-mono"
+                />
+                <span class="text-slate-400">~</span>
+                <input 
+                  type="number" 
+                  v-model.number="storeProducts.max_inventory" 
+                  @change="loadStoreProducts(1)"
+                  @keyup.enter="loadStoreProducts(1)"
+                  placeholder="Max" 
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs font-mono"
+                />
+              </div>
+            </div>
+
+            <!-- 4. 售价区间 (ZAR) -->
+            <div class="space-y-1">
+              <label class="block font-semibold text-slate-600 text-[11px]">💰 售价区间 (ZAR)</label>
+              <div class="flex items-center space-x-1">
+                <input 
+                  type="number" 
+                  step="0.01" 
+                  v-model.number="storeProducts.min_price" 
+                  @change="loadStoreProducts(1)"
+                  @keyup.enter="loadStoreProducts(1)"
+                  placeholder="Min" 
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs font-mono"
+                />
+                <span class="text-slate-400">~</span>
+                <input 
+                  type="number" 
+                  step="0.01" 
+                  v-model.number="storeProducts.max_price" 
+                  @change="loadStoreProducts(1)"
+                  @keyup.enter="loadStoreProducts(1)"
+                  placeholder="Max" 
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs font-mono"
+                />
+              </div>
+            </div>
+
+            <!-- 5. 同步时间范围 -->
+            <div class="space-y-1">
+              <label class="block font-semibold text-slate-600 text-[11px]">📅 同步时间范围</label>
+              <select 
+                v-model="storeProducts.date_range" 
+                @change="onStoreProductDateRangeChange"
+                class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+              >
+                <option value="ALL">全部时间</option>
+                <option value="today">今天同步</option>
+                <option value="3d">近 3 天</option>
+                <option value="7d">近 7 天</option>
+                <option value="30d">近 30 天</option>
+                <option value="custom">自定义时间段...</option>
+              </select>
+              <div v-if="storeProducts.date_range === 'custom'" class="flex items-center space-x-1 mt-1">
+                <input 
+                  type="date" 
+                  v-model="storeProducts.sync_start" 
+                  @change="loadStoreProducts(1)"
+                  class="w-1/2 text-[10px] bg-white border border-slate-200 rounded px-1 py-1"
+                />
+                <span class="text-slate-400 text-[10px]">~</span>
+                <input 
+                  type="date" 
+                  v-model="storeProducts.sync_end" 
+                  @change="loadStoreProducts(1)"
+                  class="w-1/2 text-[10px] bg-white border border-slate-200 rounded px-1 py-1"
+                />
+              </div>
+            </div>
+
+            <!-- 6. 排序规则与重置按钮 -->
+            <div class="space-y-1 flex flex-col justify-between">
+              <div>
+                <label class="block font-semibold text-slate-600 text-[11px]">🔄 排序规则</label>
+                <select 
+                  v-model="storeProducts.sort_by" 
+                  @change="loadStoreProducts(1)"
+                  class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs font-medium"
+                >
+                  <option value="SYNCED_DESC">最新同步优先 ↓</option>
+                  <option value="SYNCED_ASC">最早同步优先 ↑</option>
+                  <option value="PRICE_ASC">售价从低到高 ↑</option>
+                  <option value="PRICE_DESC">售价从高到低 ↓</option>
+                  <option value="INVENTORY_DESC">库存从多到少 ↓</option>
+                  <option value="INVENTORY_ASC">库存从少到多 ↑</option>
+                </select>
+              </div>
+              <div class="pt-1">
+                <button 
+                  @click="resetStoreProductFilters" 
+                  class="w-full py-1.5 px-2 bg-slate-200/80 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center justify-center space-x-1"
+                >
+                  <span>🔄</span>
+                  <span>重置所有筛选</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 已生效筛选条件指示标签 -->
+          <div 
+            v-if="hasActiveStoreProductFilters" 
+            class="flex items-center space-x-1.5 flex-wrap gap-y-1 text-xs text-slate-600 bg-indigo-50/40 p-2 rounded-lg border border-indigo-100"
+          >
+            <span class="font-semibold text-indigo-900 text-[11px] flex items-center space-x-1">
+              <span>🏷️</span>
+              <span>已生效筛选:</span>
+            </span>
+            <span v-if="storeProducts.vertical && storeProducts.vertical !== 'ALL'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] bg-white border border-indigo-200 text-indigo-700">
+              类目: {{ getStoreProductVerticalName(storeProducts.vertical) }}
+              <button @click="storeProducts.vertical = 'ALL'; loadStoreProducts(1)" class="ml-1 hover:text-rose-600 font-bold">✕</button>
+            </span>
+            <span v-if="storeProducts.inventory_status && storeProducts.inventory_status !== 'ALL'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] bg-white border border-indigo-200 text-indigo-700">
+              库存状态: {{ formatStoreInventoryStatusLabel(storeProducts.inventory_status) }}
+              <button @click="storeProducts.inventory_status = 'ALL'; loadStoreProducts(1)" class="ml-1 hover:text-rose-600 font-bold">✕</button>
+            </span>
+            <span v-if="storeProducts.min_inventory !== '' && storeProducts.min_inventory !== null || storeProducts.max_inventory !== '' && storeProducts.max_inventory !== null" class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] bg-white border border-indigo-200 text-indigo-700 font-mono">
+              库存: {{ storeProducts.min_inventory !== '' ? storeProducts.min_inventory : 0 }} ~ {{ storeProducts.max_inventory !== '' ? storeProducts.max_inventory : '∞' }}
+              <button @click="storeProducts.min_inventory = ''; storeProducts.max_inventory = ''; loadStoreProducts(1)" class="ml-1 hover:text-rose-600 font-bold">✕</button>
+            </span>
+            <span v-if="storeProducts.min_price !== '' && storeProducts.min_price !== null || storeProducts.max_price !== '' && storeProducts.max_price !== null" class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] bg-white border border-indigo-200 text-indigo-700 font-mono">
+              售价: R{{ storeProducts.min_price !== '' ? storeProducts.min_price : 0 }} ~ R{{ storeProducts.max_price !== '' ? storeProducts.max_price : '∞' }}
+              <button @click="storeProducts.min_price = ''; storeProducts.max_price = ''; loadStoreProducts(1)" class="ml-1 hover:text-rose-600 font-bold">✕</button>
+            </span>
+            <span v-if="storeProducts.date_range && storeProducts.date_range !== 'ALL'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] bg-white border border-indigo-200 text-indigo-700">
+              时间: {{ formatStoreProductDateRangeLabel(storeProducts.date_range) }}
+              <button @click="storeProducts.date_range = 'ALL'; storeProducts.sync_start = ''; storeProducts.sync_end = ''; loadStoreProducts(1)" class="ml-1 hover:text-rose-600 font-bold">✕</button>
+            </span>
+            <button 
+              @click="resetStoreProductFilters" 
+              class="text-indigo-600 hover:text-indigo-800 underline text-[11px] font-medium ml-2 cursor-pointer"
+            >
+              清空全部
+            </button>
           </div>
         </div>
 
@@ -76,12 +270,33 @@
               {{ isAllStoreProductsSelected ? '取消全选全店（恢复仅选勾选件）' : `⚡ 一键勾选全店全部商品 (共 ${storeProducts.total} 件)` }}
             </button>
           </div>
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center space-x-2 flex-wrap">
+            <button 
+              @click="openBatchStorePriceModal" 
+              class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition active:scale-95 flex items-center space-x-1.5 cursor-pointer text-xs"
+            >
+              <span>🏷️ 批量修改售价</span>
+            </button>
             <button 
               @click="openBatchInventoryModal" 
               class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs transition active:scale-95 flex items-center space-x-1.5 cursor-pointer text-xs"
             >
               <span>✏️ 批量修改库存</span>
+            </button>
+
+            <button 
+              @click="openBatchDeactivateModal" 
+              class="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg shadow-xs transition active:scale-95 flex items-center space-x-1 cursor-pointer text-xs"
+              title="官方批量下架已选商品"
+            >
+              <span>🛑 批量下架</span>
+            </button>
+            <button 
+              @click="openBatchActivateModal" 
+              class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition active:scale-95 flex items-center space-x-1 cursor-pointer text-xs"
+              title="官方批量激活上架已选商品"
+            >
+              <span>🟢 批量上架</span>
             </button>
             <button 
               @click="selectedStoreProductSkus = []; isAllStoreProductsSelected = false;" 
@@ -94,7 +309,7 @@
 
         <!-- 列表内容区 -->
         <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
-          <div class="flex-1 overflow-y-auto custom-scrollbar">
+          <div class="flex-1 min-h-0 overflow-y-auto overflow-x-auto custom-scrollbar">
             <table class="w-full text-left border-collapse text-xs">
               <thead class="sticky top-0 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200/80 text-slate-500 font-semibold text-[11px] uppercase tracking-wider z-10">
                 <tr>
@@ -112,20 +327,22 @@
                   <th class="py-3 px-3.5 w-44">Makro 凭据 (SKU / Listing)</th>
                   <th class="py-3 px-3.5 w-28 text-right">售价 (ZAR)</th>
                   <th class="py-3 px-3.5 w-32 text-center">当前库存 (点击修改)</th>
-                  <th class="py-3 px-3.5 w-28 text-center">在线状态</th>
-                  <th class="py-3 px-3.5 w-48 text-slate-400">驳回/下架原因</th>
-                  <th class="py-3 px-3.5 w-28 text-right">同步时间</th>
+                  <th class="py-3 px-3.5 w-24 text-center">在线状态</th>
+                  <th class="py-3 px-3.5 w-32 text-center">🤖 跟价监控</th>
+                  <th class="py-3 px-3.5 w-44 text-slate-400">驳回/下架原因</th>
+                  <th class="py-3 px-3.5 w-20 text-center">操作</th>
+                  <th class="py-3 px-3.5 w-24 text-right">同步时间</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100">
                 <tr v-if="storeProducts.loading">
-                  <td colspan="9" class="text-center py-16 text-slate-400">
+                  <td colspan="11" class="text-center py-16 text-slate-400">
                     <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
                     <div>正在加载店铺在线商品...</div>
                   </td>
                 </tr>
                 <tr v-else-if="!storeProducts.items || storeProducts.items.length === 0">
-                  <td colspan="9" class="text-center py-16 text-slate-400">
+                  <td colspan="11" class="text-center py-16 text-slate-400">
                     <div class="text-3xl mb-2">🏬</div>
                     <div class="font-medium">当前店铺暂无此状态商品</div>
                     <p class="text-xs text-slate-400 mt-1">可点击右上角【一键同步官方商品】从 Makro 网关抓取最新在线 Listing</p>
@@ -163,11 +380,26 @@
                     <div class="text-slate-400 text-[10px] truncate" :title="it.product_id">FSN: {{ it.product_id }}</div>
                     <div v-if="it.listing_id" class="text-slate-400 text-[10px] truncate">LST: {{ it.listing_id }}</div>
                   </td>
-                  <!-- 价格 -->
+                  <!-- 价格 (可直接行内修改并三表联动) -->
                   <td class="py-2.5 px-3.5 text-right font-mono tabular-nums">
-                    <div class="font-bold text-slate-900 text-xs">R{{ it.ssp || 0 }}</div>
-                    <div class="text-[10.5px] text-slate-400 line-through">R{{ it.mrp || 0 }}</div>
+                    <div class="inline-flex items-center justify-end space-x-1 group">
+                      <span class="text-slate-400 text-[10px]">R</span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        :value="it._edit_ssp !== undefined ? it._edit_ssp : (it.ssp || 0)"
+                        @focus="it._edit_ssp = (it.ssp || 0)"
+                        @input="it._edit_ssp = $event.target.value"
+                        @blur="handleInlineStorePriceChange(it, it._edit_ssp !== undefined ? it._edit_ssp : $event.target.value)"
+                        @keyup.enter="$event.target.blur()"
+                        @keyup.esc="delete it._edit_ssp; $event.target.blur()"
+                        class="w-16 text-right text-xs py-1 px-1 border border-slate-200 rounded bg-slate-50 font-bold font-mono focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-slate-900"
+                        title="点击直接修改售价，按回车或失焦即刻同步官方网关及所有模块"
+                      />
+                    </div>
+                    <div class="text-[10.5px] text-slate-400 line-through mt-0.5">R{{ it.mrp || 0 }}</div>
                   </td>
+
                   <!-- 库存 (行内直接修改) -->
                   <td class="py-2.5 px-3.5 text-center">
                     <div v-if="editingInventoryId === it.id" class="inline-flex items-center space-x-1">
@@ -206,15 +438,79 @@
                       {{ formatListingState(it.internal_state) }}
                     </span>
                   </td>
+                  <!-- 🤖 跟价监控列 -->
+                  <td class="py-2.5 px-3.5 text-center">
+                    <div v-if="it.reprice" class="space-y-0.5">
+                      <div class="flex items-center justify-center space-x-1">
+                        <span 
+                          :class="it.reprice.auto_reprice ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-slate-100 text-slate-500 border-slate-200'"
+                          class="px-1.5 py-0.2 rounded text-[10px] font-bold border"
+                        >
+                          {{ it.reprice.auto_reprice ? '🤖 ON' : 'OFF' }}
+                        </span>
+                        <span 
+                          :class="formatBuyboxStatus(it.reprice.buybox_status).bg"
+                          class="px-1.5 py-0.2 rounded text-[10px] font-bold border"
+                        >
+                          {{ formatBuyboxStatus(it.reprice.buybox_status).label }}
+                        </span>
+                      </div>
+                      <div v-if="it.reprice.min_price_floor > 0" class="text-[9.5px] text-slate-400 font-mono">
+                        底价 R{{ it.reprice.min_price_floor }}
+                      </div>
+                      <button 
+                        @click="switchTab('reprice'); reprice.search = it.sku_id; loadRepriceItems(1);"
+                        class="text-[10px] text-indigo-600 hover:text-indigo-800 underline cursor-pointer block mx-auto mt-0.5"
+                      >
+                        进入监控 🚀
+                      </button>
+                    </div>
+                    <div v-else>
+                      <button 
+                        @click="openBindRepriceModal(it)" 
+                        class="px-2 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-bold transition cursor-pointer"
+                        title="录入竞品并开启 24h 智能跟价监控"
+                      >
+                        ➕ 开启跟价
+                      </button>
+                    </div>
+                  </td>
                   <!-- 驳回/下架原因 -->
                   <td class="py-2.5 px-3.5 text-[11px]">
-                    <div v-if="it.deactivation_reasons && it.deactivation_reasons.length > 0" class="text-rose-600 bg-rose-50/80 p-1.5 rounded border border-rose-200/70 space-y-0.5" :title="it.deactivation_reasons.join('; ')">
-                      <div v-for="(dr, dIdx) in it.deactivation_reasons.slice(0, 2)" :key="dIdx" class="truncate leading-tight">
+                    <div v-if="it.deactivation_reason_category || (it.deactivation_reasons && it.deactivation_reasons.length > 0)" class="text-rose-600 bg-rose-50/80 p-1.5 rounded border border-rose-200/70 space-y-0.5">
+                      <div v-if="it.deactivation_reason_category" class="font-bold text-[10.5px]">
+                        [{{ it.deactivation_reason_category }}]
+                      </div>
+                      <div v-if="it.deactivation_note" class="text-[10px] text-slate-600 truncate" :title="it.deactivation_note">
+                        {{ it.deactivation_note }}
+                      </div>
+                      <div v-for="(dr, dIdx) in (it.deactivation_reasons || []).slice(0, 2)" :key="dIdx" class="truncate leading-tight">
                         • {{ dr }}
                       </div>
-                      <div v-if="it.deactivation_reasons.length > 2" class="text-[9.5px] text-rose-500 font-semibold">+{{ it.deactivation_reasons.length - 2 }} 项原因</div>
                     </div>
                     <span v-else class="text-slate-300">-</span>
+                  </td>
+                  <!-- 行操作: 上下架 -->
+                  <td class="py-2.5 px-3 text-center">
+                    <div class="flex items-center justify-center space-x-1">
+                      <button 
+                        v-if="it.internal_state === 'ACTIVE'"
+                        @click="openSingleDeactivateModal(it)"
+                        class="px-2 py-0.8 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold transition cursor-pointer"
+                        title="下架该商品"
+                      >
+                        🛑 下架
+                      </button>
+                      <button 
+                        v-else-if="it.internal_state === 'INACTIVE'"
+                        @click="openSingleActivateModal(it)"
+                        class="px-2 py-0.8 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-bold transition cursor-pointer"
+                        title="重新激活上架该商品"
+                      >
+                        🟢 上架
+                      </button>
+                      <span v-else class="text-slate-300">-</span>
+                    </div>
                   </td>
                   <!-- 同步时间 -->
                   <td class="py-2.5 px-3.5 text-right font-mono text-[10.5px] text-slate-400 whitespace-nowrap">
@@ -248,6 +544,160 @@
             </div>
           </div>
         </div>
+
+        <!-- ================= 店铺商品专用弹窗区 ================= -->
+
+        <!-- 1. 下架确认弹窗 -->
+        <div v-if="showDeactivateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-rose-200/80 w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-rose-100 flex items-center justify-between bg-rose-50/50">
+              <h3 class="font-bold text-rose-900 text-sm flex items-center space-x-2">
+                <span>🛑</span>
+                <span>商品下架确认 (Makro 官方接口)</span>
+              </h3>
+              <button @click="showDeactivateModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+            </div>
+            <div class="p-5 space-y-3.5 text-xs">
+              <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                <div class="font-bold text-slate-800">
+                  即将下架 <strong class="text-rose-600 font-mono">{{ deactivateForm.selectAll ? deactivateForm.totalCount : (deactivateForm.targetSkus ? deactivateForm.targetSkus.length : 0) }}</strong> 件商品：
+                </div>
+                <div v-if="!deactivateForm.selectAll" class="text-[11px] text-slate-500 font-mono mt-1 max-h-16 overflow-y-auto">
+                  {{ (deactivateForm.targetSkus || []).slice(0, 5).join(', ') }}{{ (deactivateForm.targetSkus || []).length > 5 ? ' 等...' : '' }}
+                </div>
+                <div v-else class="text-[11px] text-rose-600 font-medium mt-1">
+                  ⚡ 已开启跨页全选模式，将基于当前筛选条件批量下架全部商品
+                </div>
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1">下架核心原因分类：</label>
+                <select v-model="deactivateForm.reason_category" class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-rose-500/20">
+                  <option value="OUT_OF_STOCK">📦 供应链缺货断货</option>
+                  <option value="INFRINGING_RISK">🔴 侵权风控 (命中文本/品牌/图像侵权禁售红线)</option>
+                  <option value="UNPROFITABLE">📉 严重亏损无利润</option>
+                  <option value="COMPETITOR_WAR">⚔️ 恶性价格战离场</option>
+                  <option value="MANUAL_OFFLINE">🛑 运营主动下架</option>
+                  <option value="OTHER">📝 其他原因</option>
+                </select>
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1">操作详细备注 (选填)：</label>
+                <textarea v-model="deactivateForm.reason_note" rows="2" placeholder="请输入具体下架原因说明，便于后续盘点溯源..." class="w-full text-xs p-2.5 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-rose-500/20"></textarea>
+              </div>
+              <div class="text-[11px] text-rose-700 bg-rose-50 p-2 rounded-lg">
+                ⚠️ 下架后商品将在 Makro 前台立即对买家不可见，且自动暂停该商品的跟价巡航。
+              </div>
+            </div>
+            <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-end space-x-2 bg-slate-50/50">
+              <button @click="showDeactivateModal = false" class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100 cursor-pointer">取消</button>
+              <button @click="submitDeactivate" :disabled="deactivateForm.submitting" class="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50">
+                {{ deactivateForm.submitting ? '下架中...' : '确认下架' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. 上架激活确认弹窗 -->
+        <div v-if="showActivateModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-emerald-200/80 w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-emerald-100 flex items-center justify-between bg-emerald-50/50">
+              <h3 class="font-bold text-emerald-900 text-sm flex items-center space-x-2">
+                <span>🟢</span>
+                <span>商品重新激活上架</span>
+              </h3>
+              <button @click="showActivateModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+            </div>
+            <div class="p-5 space-y-3.5 text-xs">
+              <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                <div class="font-bold text-slate-800">
+                  即将激活上架 <strong class="text-emerald-600 font-mono">{{ activateForm.selectAll ? activateForm.totalCount : (activateForm.targetSkus ? activateForm.targetSkus.length : 0) }}</strong> 件商品：
+                </div>
+                <div v-if="!activateForm.selectAll" class="text-[11px] text-slate-500 font-mono mt-1 max-h-16 overflow-y-auto">
+                  {{ (activateForm.targetSkus || []).slice(0, 5).join(', ') }}{{ (activateForm.targetSkus || []).length > 5 ? ' 等...' : '' }}
+                </div>
+                <div v-else class="text-[11px] text-emerald-700 font-medium mt-1">
+                  ⚡ 已开启跨页全选模式，将基于当前筛选条件批量激活全部商品
+                </div>
+              </div>
+              <div class="space-y-2">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                  <input type="checkbox" v-model="activateForm.restore_inventory" class="rounded w-4 h-4 text-emerald-600 cursor-pointer" />
+                  <span class="font-semibold text-slate-700">上架时恢复正向在售库存</span>
+                </label>
+                <div v-if="activateForm.restore_inventory" class="flex items-center space-x-2 pl-6">
+                  <span class="text-slate-500">设定库存数量:</span>
+                  <input type="number" v-model.number="activateForm.inventory_value" class="w-24 text-xs py-1 px-2 border border-slate-200 rounded font-mono font-bold" />
+                </div>
+              </div>
+              <div class="text-[11px] text-emerald-800 bg-emerald-50 p-2 rounded-lg">
+                💡 激活上架后系统将调用 Makro 官方网关将状态置为 ACTIVE，并自动恢复 24h 智能跟价监控！
+              </div>
+            </div>
+            <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-end space-x-2 bg-slate-50/50">
+              <button @click="showActivateModal = false" class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100 cursor-pointer">取消</button>
+              <button @click="submitActivate" :disabled="activateForm.submitting" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50">
+                {{ activateForm.submitting ? '上架中...' : '确认激活上架' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 普通商品绑定竞对开启跟价弹窗 -->
+        <div v-if="showBindRepriceModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-indigo-200/80 w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-indigo-100 flex items-center justify-between bg-indigo-50/50">
+              <h3 class="font-bold text-indigo-900 text-sm flex items-center space-x-2">
+                <span>🤖</span>
+                <span>开启 24h 智能跟价监控</span>
+              </h3>
+              <button @click="showBindRepriceModal = false" class="text-slate-400 hover:text-slate-600 text-sm cursor-pointer">✕</button>
+            </div>
+            <div class="p-5 space-y-3.5 text-xs">
+              <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                <div class="font-bold text-slate-900 truncate">{{ bindRepriceForm.title }}</div>
+                <div class="text-slate-400 font-mono mt-0.5">SKU: {{ bindRepriceForm.seller_sku }}</div>
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1">竞品 Makro FSN 或编号：<span class="text-rose-500">*</span></label>
+                <input type="text" v-model="bindRepriceForm.target_fsn" placeholder="例如 MAKRO_000123" class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500/20" />
+              </div>
+              <div>
+                <label class="block font-semibold text-slate-700 mb-1">Makro 前台详情链接 (选填)：</label>
+                <input type="text" v-model="bindRepriceForm.target_makro_url" placeholder="https://www.makro.co.za/..." class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg font-mono focus:ring-2 focus:ring-indigo-500/20" />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-semibold text-amber-800 mb-1">保本底价 (ZAR)：</label>
+                  <input type="number" v-model.number="bindRepriceForm.min_price_floor" class="w-full text-xs px-2.5 py-1.5 border border-amber-300 rounded-lg bg-amber-50/30 font-mono font-bold" />
+                </div>
+                <div>
+                  <label class="block font-semibold text-slate-700 mb-1">抢车策略：</label>
+                  <select v-model="bindRepriceForm.price_strategy" class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg">
+                    <option value="MINUS_15">🔥 比竞对低 R15.00</option>
+                    <option value="MINUS_1">⚡ 比竞对低 R1.00</option>
+                    <option value="MINUS_0.5">⚡ 比竞对低 R0.50</option>
+                    <option value="PERCENT_2">📊 比竞对低 2%</option>
+                    <option value="MANUAL">🤝 平价跟卖</option>
+                  </select>
+                </div>
+              </div>
+              <div class="pt-2 border-t border-slate-100 flex items-center justify-between">
+                <div>
+                  <div class="font-bold text-slate-800">立即激活自动跟价</div>
+                  <div class="text-[11px] text-slate-400">纳入 24h 后台巡航定时调度</div>
+                </div>
+                <input type="checkbox" v-model="bindRepriceForm.auto_reprice" class="rounded w-4 h-4 text-indigo-600 cursor-pointer" />
+              </div>
+            </div>
+            <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-end space-x-2 bg-slate-50/50">
+              <button @click="showBindRepriceModal = false" class="px-3.5 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-100 cursor-pointer">取消</button>
+              <button @click="submitBindReprice" :disabled="bindRepriceForm.submitting" class="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50">
+                {{ bindRepriceForm.submitting ? '开启中...' : '确认开启监控' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- ================= Tab: 审核列表板块 (Makro 商品在途流转与质检) ================= -->

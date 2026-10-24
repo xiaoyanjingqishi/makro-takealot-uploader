@@ -1135,7 +1135,7 @@
                     <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
                       <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
                         <span class="font-bold text-indigo-900 text-xs flex items-center">
-                          <span class="mr-1">🐬</span>DeepSeek 视觉 (Flash-Vision)
+                          <span class="mr-1">🐬</span>DeepSeek 视觉 ({{ complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.model || 'deepseek-flash' }})
                         </span>
                         <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level)">
                           {{ complianceModalItem.compliance_details.deepseek_verdict?.image_audit?.risk_level || 'SAFE' }}
@@ -1813,7 +1813,7 @@
             <div class="flex items-center justify-between">
               <span class="text-slate-500 font-medium">目标修改范围:</span>
               <span class="font-bold font-mono text-indigo-600">
-                {{ isAllStoreProductsSelected ? `全店全量商品 (共 ${storeProducts.total} 件)` : `已勾选的 ${selectedStoreProductSkus.length} 件商品` }}
+                {{ isAllStoreProductsSelected ? `当前筛选结果全量商品 (共 ${storeProducts.total} 件)` : `已勾选的 ${selectedStoreProductSkus.length} 件商品` }}
               </span>
             </div>
             <div class="text-[11px] text-slate-400">
@@ -2856,14 +2856,14 @@
               <div class="space-y-1 text-center sm:text-left">
                 <div class="flex items-center justify-center sm:justify-start space-x-2">
                   <span class="text-sm font-bold text-slate-900">Makro 搬品插件安装包</span>
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 font-mono">v1.1.6</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700 font-mono">v1.1.8</span>
                 </div>
-                <p class="text-xs text-slate-500">已预设当前云端服务接口，解压安装即可直接连通</p>
+                <p class="text-xs text-slate-500">已预设当前服务接口及 127.0.0.1:8899 / 192.168.110.145:8899 离线站适配，解压安装即可直接连通</p>
               </div>
 
               <a 
                 href="/api/download/extension" 
-                download="makro-extension-v1.1.6.zip"
+                download="makro-extension-v1.1.8.zip"
                 class="inline-flex items-center justify-center space-x-2 px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer shrink-0"
               >
                 <span>📥</span>
@@ -2887,7 +2887,7 @@
                     <span class="font-bold text-slate-900">解压安装包</span>
                   </div>
                   <p class="text-slate-500 text-[11.5px] leading-relaxed">
-                    下载完成后，右键将压缩包解压到一个文件夹（如 <strong class="text-slate-800 font-mono">makro-extension-v1.1.6</strong>）。
+                    下载完成后，右键将压缩包解压到一个文件夹（如 <strong class="text-slate-800 font-mono">makro-extension-v1.1.8</strong>）。
                   </p>
                 </div>
 

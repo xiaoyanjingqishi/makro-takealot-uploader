@@ -7,7 +7,7 @@ class CollectPiggybackRequest(BaseModel):
 
     url_or_fsn: str = Field(..., description="Makro 商品详情页链接或 FSN (如 GSPHPVTNMFHDAWV4)")
     store_id: Optional[int] = Field(None, description="目标跟品店铺 ID，若未填则使用默认店铺")
-    price_strategy: Optional[str] = Field("MINUS_15", description="比价策略: MINUS_15(低15兰特), MINUS_1(低1兰特), PERCENT_2(低2%), MANUAL(保持原价)")
+    price_strategy: Optional[str] = Field(None, description="比价策略: 若未指定则自动采用系统设置中的默认公式")
     min_price_floor: Optional[float] = Field(0.0, description="保本安全底价")
     # 扩展端直传真实解析字段 (若有)
     item_id: Optional[str] = Field(None, description="目录 Item ID (如 itmdda5c11c09523)")
@@ -33,7 +33,7 @@ class BatchCollectPiggybackRequest(BaseModel):
     items: Optional[List[str]] = Field(None, description="多个 Makro 链接或 FSN 字符串列表")
     rich_items: Optional[List[Dict[str, Any]]] = Field(None, description="扩展端批量传递的富结构商品数组 (搜索页/多变体批量采集)")
     store_id: Optional[int] = Field(None, description="目标跟品店铺 ID")
-    price_strategy: Optional[str] = Field("MINUS_15", description="比价策略")
+    price_strategy: Optional[str] = Field(None, description="比价策略: 若未指定则自动采用系统设置中的默认公式")
     min_price_floor: Optional[float] = Field(0.0, description="保本底价")
     auto_compliance: Optional[bool] = Field(None, description="是否自动执行合规检测")
     user_id: Optional[int] = Field(None, description="操作/归属员工用户 ID")

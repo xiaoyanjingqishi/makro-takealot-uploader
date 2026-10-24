@@ -9,6 +9,9 @@ from .models.setting import SystemSetting
 from .models.compliance_log import ComplianceArbitrationLog
 from .models.makro_listing import MakroListing
 from .models.makro_order import MakroOrder
+from .models.makro_piggyback import MakroPiggybackItem
+from .models.makro_reprice_log import MakroRepriceLog
+from .models.store_product_reprice import StoreProductReprice
 from .utils.auth import hash_password
 
 def init_and_migrate_db():
@@ -52,6 +55,26 @@ def init_and_migrate_db():
     if "imap_password" not in store_cols:
         print("  - 给 stores 表增补 imap_password 字段")
         cursor.execute("ALTER TABLE stores ADD COLUMN imap_password VARCHAR(150)")
+
+    # 检查 makro_listings 是否有 deactivation_reason_category 等字段
+    cursor.execute("PRAGMA table_info(makro_listings)")
+    listing_cols = [c[1] for c in cursor.fetchall()]
+    if "deactivation_reason_category" not in listing_cols:
+        print("  - 给 makro_listings 表增补 deactivation_reason_category 字段")
+        cursor.execute("ALTER TABLE makro_listings ADD COLUMN deactivation_reason_category VARCHAR(50)")
+    if "deactivation_note" not in listing_cols:
+        print("  - 给 makro_listings 表增补 deactivation_note 字段")
+        cursor.execute("ALTER TABLE makro_listings ADD COLUMN deactivation_note VARCHAR(255)")
+    if "deactivated_at" not in listing_cols:
+        print("  - 给 makro_listings 表增补 deactivated_at 字段")
+        cursor.execute("ALTER TABLE makro_listings ADD COLUMN deactivated_at DATETIME")
+
+    # 检查 makro_reprice_logs 是否有 reprice_id 字段
+    cursor.execute("PRAGMA table_info(makro_reprice_logs)")
+    log_cols = [c[1] for c in cursor.fetchall()]
+    if "reprice_id" not in log_cols:
+        print("  - 给 makro_reprice_logs 表增补 reprice_id 字段")
+        cursor.execute("ALTER TABLE makro_reprice_logs ADD COLUMN reprice_id INTEGER REFERENCES store_product_reprices(id) ON DELETE SET NULL")
 
     conn.commit()
     conn.close()

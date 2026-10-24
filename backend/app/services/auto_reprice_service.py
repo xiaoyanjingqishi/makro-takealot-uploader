@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from ..models.makro_piggyback import MakroPiggybackItem
 from ..models.makro_reprice_log import MakroRepriceLog
 from ..models.store import Store
+from ..models.store_product_reprice import StoreProductReprice
+from ..models.makro_listing import MakroListing
 from .makro_scraper_service import MakroScraperService
 from .makro_piggyback_service import MakroPiggybackService, MAKRO_HOST
 from .proxy_service import ProxyPoolService
@@ -24,35 +26,62 @@ class AutoRepriceService:
       3. 保本底线熔断 (REACHED_FLOOR): 竞对恶意低价跌破成本时锁死保本价
       4. 自动比价 (UNDER_CUT): 比竞对低 R1.00 或 2% 抢占购物车
       5. 官方 API 极速下发与操作全量审计追踪
+      6. 侵权熔断防护: 一旦商品被标记为 PROHIBITED 或 BLOCKED，坚决暂停自动调价
     """
 
     @classmethod
     def reprice_single_item(
         cls,
-        item: MakroPiggybackItem,
+        item: Any,
         db: Session,
         force: bool = False,
         allow_inspect_only: bool = False,
         proxy: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        对单件在售跟品执行一次自动跟价巡检与调价
+        对单件在售商品执行一次自动跟价巡检与调价 (兼容 StoreProductReprice 与 MakroPiggybackItem)
         """
+        is_reprice_model = isinstance(item, StoreProductReprice)
+        old_buybox_status = getattr(item, "buybox_status", None)
+
+        # 0. 侵权与合规安全熔断检查
+        if is_reprice_model:
+            if getattr(item, "compliance_status", None) == "PROHIBITED" or getattr(item, "monitor_status", None) == "BLOCKED":
+                msg = f"商品 [{item.seller_sku}] 触发侵权风控熔断保护 (合规: {item.compliance_status})，坚决停止自动跟价调价"
+                logger.warning(msg)
+                item.monitor_status = "BLOCKED"
+                item.last_reprice_at = datetime.now()
+                item.last_reprice_result = "BLOCKED: 侵权熔断暂停调价"
+                db.commit()
+                return {"status": "BLOCKED", "action": "BLOCKED", "reason": msg, "item_id": item.id, "seller_sku": item.seller_sku}
+
+            if getattr(item, "monitor_status", None) == "OFFLINE_SUSPENDED":
+                return {"status": "SKIPPED", "reason": f"商品 [{item.seller_sku}] 处于下架停更状态，跳过跟价", "item_id": item.id, "seller_sku": item.seller_sku}
+
         store = item.store
         if not store:
             store = db.query(Store).filter(Store.id == item.store_id).first()
 
         if not store or not store.seller_id or not store.fk_csrf_token or not store.cookie:
-            msg = f"跟品商品 [{item.seller_sku}] 关联店铺凭据不完整，跳过跟价"
+            msg = f"商品 [{item.seller_sku}] 关联店铺凭据不完整，跳过跟价"
             logger.warning(msg)
             return {"status": "FAILED", "reason": msg, "item_id": item.id}
 
-        # 检查是否启用了自动跟价 (force 参数可强制单次触发调价，allow_inspect_only 允许未开启自动跟价时仅做买家前台巡检和 Buybox 归属分析，不主动调价)
+        # 检查是否启用了自动跟价
         if not force and not item.auto_reprice and not allow_inspect_only:
             return {"status": "SKIPPED", "reason": "商品未开启自动跟价开关", "item_id": item.id}
 
-        # 1. 获取买家前台最新在售与竞争情报 (遇反爬自动秒切代理)
-        target_ref = item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, item.item_id)
+        # 1. 获取买家前台最新在售与竞争情报
+        if is_reprice_model:
+            fsn = item.target_fsn or item.makro_product_id
+            target_ref = item.target_makro_url or MakroScraperService.format_canonical_makro_url(fsn)
+            listing = item.listing or db.query(MakroListing).filter(MakroListing.id == item.listing_id).first()
+            old_selling_price = float(listing.ssp if listing and listing.ssp is not None else 0.0)
+        else:
+            target_ref = item.makro_url or MakroScraperService.format_canonical_makro_url(item.makro_product_id, getattr(item, "item_id", None))
+            old_selling_price = float(item.target_price or 0.0)
+            listing = None
+
         scraped = MakroScraperService.scrape_buyer_frontend(target_ref, proxy=proxy)
         
         comp_price = scraped.get("price", 0.0)
@@ -61,7 +90,6 @@ class AutoRepriceService:
         comp_seller_id = (scraped.get("seller_id") or "").strip()
         seller_count = scraped.get("seller_count", 1)
 
-        old_selling_price = float(item.target_price or 0.0)
         min_floor = float(item.min_price_floor or 0.0)
         strategy = item.price_strategy or "MINUS_1"
 
@@ -131,21 +159,28 @@ class AutoRepriceService:
         # ★★★ 核心修复：更新竞品情报时的身份保护 ★★★
         # 无论谁赢车，在售商家数量与划线 MRP 始终同步
         item.seller_count = seller_count
-        if comp_mrp > 0:
+        if comp_mrp > 0 and not is_reprice_model:
             item.original_mrp = comp_mrp
 
-        if is_own_any_store:
-            # 本店或矩阵友军占位赢车：严禁把本店出价/店名覆盖为外部原网基准价和原卖家！
-            # 外部原价与原卖家保持历史真实竞对记录，若从未记录过才兜底补齐
-            if (item.original_price or 0.0) <= 0 and comp_price > 0:
-                item.original_price = comp_price
+        if not is_reprice_model:
+            if is_own_any_store:
+                # 本店或矩阵友军占位赢车：严禁把本店出价/店名覆盖为外部原网基准价和原卖家！
+                # 外部原价与原卖家保持历史真实竞对记录，若从未记录过才兜底补齐
+                if (getattr(item, "original_price", None) or 0.0) <= 0 and comp_price > 0:
+                    item.original_price = comp_price
+            else:
+                # 外部真实竞对占位：正常同步最新竞对价格与卖家名称
+                if comp_price > 0:
+                    item.original_price = comp_price
+                    item.last_competitor_price = comp_price
+                if comp_seller:
+                    item.original_seller = comp_seller
         else:
-            # 外部真实竞对占位：正常同步最新竞对价格与卖家名称
+            # 在售跟价监控底表模型 (StoreProductReprice)
             if comp_price > 0:
-                item.original_price = comp_price
-                item.last_competitor_price = comp_price
+                item.current_competitor_price = comp_price
             if comp_seller:
-                item.original_seller = comp_seller
+                item.current_competitor_seller = comp_seller
 
         is_blocked = scraped.get("blocked", False)
 
@@ -202,10 +237,16 @@ class AutoRepriceService:
                 logger.info(f"商品 [{item.seller_sku}] 未开启自动跟价，跳过官方 API 调价推送")
             else:
                 try:
-                    cls._push_price_to_makro(item, store, new_price)
-                    item.target_price = new_price
-                    if item.target_mrp and item.target_mrp < new_price:
-                        item.target_mrp = round(new_price * 1.5, 2)
+                    cls._push_price_to_makro(item, store, new_price, listing=listing)
+                    if is_reprice_model:
+                        if listing:
+                            listing.ssp = new_price
+                            if listing.mrp and listing.mrp < new_price:
+                                listing.mrp = round(new_price * 1.5, 2)
+                    else:
+                        item.target_price = new_price
+                        if item.target_mrp and item.target_mrp < new_price:
+                            item.target_mrp = round(new_price * 1.5, 2)
                 except Exception as api_err:
                     logger.error(f"调用 Makro API 更新价格失败 [{item.seller_sku}]: {api_err}")
                     action = "FAILED"
@@ -223,7 +264,7 @@ class AutoRepriceService:
             buybox_status = "WINNING"
         elif comp_seller and not is_own_any_store:
             # 外部真实竞对占位 (例如 pumu222 占车)
-            if action == "REACHED_FLOOR" or (min_floor > 0 and (item.target_price or 0.0) <= min_floor):
+            if action == "REACHED_FLOOR" or (min_floor > 0 and (old_selling_price <= min_floor)):
                 buybox_status = "FLOOR_HIT"
             else:
                 buybox_status = "LOSING"
@@ -231,16 +272,21 @@ class AutoRepriceService:
             buybox_status = "NO_COMPETITOR"
         elif action == "REACHED_FLOOR":
             buybox_status = "FLOOR_HIT"
-        elif comp_price < (item.target_price or 0.0):
+        elif comp_price < old_selling_price:
             buybox_status = "LOSING"
         else:
             buybox_status = "UNKNOWN"
 
         item.buybox_status = buybox_status
-        if not is_own_any_store and comp_price > 0:
-            item.last_competitor_price = comp_price
-        elif is_own_any_store and (not item.last_competitor_price or item.last_competitor_price <= 0) and (item.original_price or 0.0) > 0:
-            item.last_competitor_price = item.original_price
+        if is_reprice_model:
+            item.current_competitor_price = comp_price if comp_price > 0 else item.current_competitor_price
+            item.current_competitor_seller = comp_seller if comp_seller else item.current_competitor_seller
+            item.seller_count = seller_count
+        else:
+            if not is_own_any_store and comp_price > 0:
+                item.last_competitor_price = comp_price
+            elif is_own_any_store and (not item.last_competitor_price or item.last_competitor_price <= 0) and (item.original_price or 0.0) > 0:
+                item.last_competitor_price = item.original_price
 
         # 7. 更新商品记录状态与审计日志
         item.last_reprice_at = datetime.now()
@@ -255,24 +301,36 @@ class AutoRepriceService:
         elif is_matrix_sister_store:
             logged_seller = f"{winning_store_name or comp_seller} (友军抢占)"
 
-        log_entry = MakroRepriceLog(
-            piggyback_id=item.id,
-            store_id=store.id,
-            seller_sku=item.seller_sku,
-            makro_product_id=item.makro_product_id,
-            competitor_seller=logged_seller,
-            competitor_price=comp_price if action != "BLOCKED" else 0.0,
-            old_price=old_selling_price,
-            new_price=new_price if action in ["UNDER_CUT", "REACHED_FLOOR"] else old_selling_price,
-            action=action,
-            reason=reason
-        )
-        db.add(log_entry)
-        db.commit()
-        db.refresh(item)
+        # 优化日志写入策略：仅当实际发生改价、异常失败、安全阻断、单品探查或 Buybox 归属切换时才写入流水
+        # 对静止的心跳 WINNING_HOLD / NO_CHANGE，商品自身已记录 last_reprice_at 与 last_reprice_result，避免撑爆数据库
+        should_log = (action in ["UNDER_CUT", "REACHED_FLOOR", "FAILED", "BLOCKED", "INSPECTED"]) or (old_buybox_status != buybox_status)
+
+        if should_log:
+            log_entry = MakroRepriceLog(
+                reprice_id=item.id if is_reprice_model else None,
+                piggyback_id=item.source_piggyback_id if is_reprice_model else item.id,
+                store_id=store.id,
+                seller_sku=item.seller_sku,
+                makro_product_id=item.makro_product_id,
+                competitor_seller=logged_seller,
+                competitor_price=comp_price if action != "BLOCKED" else 0.0,
+                old_price=old_selling_price,
+                new_price=new_price if action in ["UNDER_CUT", "REACHED_FLOOR"] else old_selling_price,
+                action=action,
+                reason=reason
+            )
+            db.add(log_entry)
+
+        try:
+            db.commit()
+            db.refresh(item)
+        except Exception as log_err:
+            db.rollback()
+            logger.error(f"更新商品调价状态失败: {log_err}")
 
         final_status = "BLOCKED" if action == "BLOCKED" else ("SUCCESS" if action != "FAILED" else "FAILED")
 
+        curr_p = (listing.ssp if listing else 0.0) if is_reprice_model else item.target_price
         return {
             "status": final_status,
             "action": action,
@@ -281,28 +339,44 @@ class AutoRepriceService:
             "competitor_seller": "阻断未获取" if action == "BLOCKED" else comp_seller,
             "competitor_price": None if action == "BLOCKED" else comp_price,
             "old_price": old_selling_price,
-            "new_price": item.target_price,
+            "new_price": curr_p,
+            "current_price": curr_p,
+            "buybox_status": buybox_status,
             "reason": reason,
             "blocked": is_blocked
         }
 
     @classmethod
-    def _push_price_to_makro(cls, item: MakroPiggybackItem, store: Store, new_price: float):
+    def _push_price_to_makro(cls, item: Any, store: Store, new_price: float, listing: Optional[MakroListing] = None):
         """
         调用 Makro 官方 create-update-listings 接口即时更新 Listing 售价
         """
         url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
         headers = MakroPiggybackService._build_headers(store)
 
-        safe_mrp = max(float(item.target_mrp or 0.0), float(new_price) * 1.5, float(new_price) + 10.0)
-        item.target_mrp = round(safe_mrp, 2)
-        ssp_val = str(int(new_price)) if float(new_price).is_integer() else str(round(new_price, 2))
-        mrp_val = str(int(safe_mrp)) if float(safe_mrp).is_integer() else str(round(safe_mrp, 2))
-        lead_time = str(item.lead_time_days or 14)
-        pkg_len = str(item.length or 15.0)
-        pkg_brd = str(item.breadth or 10.0)
-        pkg_hgt = str(item.height or 5.0)
-        pkg_wgt = str(item.weight or 0.5)
+        ssp_f = float(new_price)
+        if isinstance(item, StoreProductReprice):
+            lst = listing or item.listing
+            mrp_base = float(lst.mrp or 0.0) if lst else 0.0
+            safe_mrp_f = max(mrp_base, round(ssp_f * 1.5, 2), ssp_f + 10.0)
+            lead_time = "14"
+            pkg_len = str(int(lst.length)) if lst and lst.length and float(lst.length).is_integer() else str(lst.length if lst else 15)
+            pkg_brd = str(int(lst.breadth)) if lst and lst.breadth and float(lst.breadth).is_integer() else str(lst.breadth if lst else 10)
+            pkg_hgt = str(int(lst.height)) if lst and lst.height and float(lst.height).is_integer() else str(lst.height if lst else 5)
+            pkg_wgt = str(lst.weight or 0.5) if lst else "0.5"
+            fsn_code = item.target_fsn or item.makro_product_id
+        else:
+            safe_mrp_f = max(float(item.target_mrp or 0.0), round(ssp_f * 1.5, 2), ssp_f + 10.0)
+            item.target_mrp = round(safe_mrp_f, 2)
+            lead_time = str(item.lead_time_days or 14)
+            pkg_len = str(item.length or 15.0)
+            pkg_brd = str(item.breadth or 10.0)
+            pkg_hgt = str(item.height or 5.0)
+            pkg_wgt = str(item.weight or 0.5)
+            fsn_code = item.makro_product_id
+
+        ssp_val = str(int(ssp_f)) if ssp_f.is_integer() else str(round(ssp_f, 2))
+        mrp_val = str(int(safe_mrp_f)) if safe_mrp_f.is_integer() else str(round(safe_mrp_f, 2))
 
         payload = {
             "bulkRequests": [
@@ -339,7 +413,8 @@ class AutoRepriceService:
             "sellerId": store.seller_id
         }
 
-        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        from .proxy_service import ProxyPoolService
+        resp = ProxyPoolService.resilient_request("POST", url, headers=headers, json=payload, timeout=25, use_proxy=False)
         if resp.status_code != 200:
             raise Exception(f"Makro 调价接口 HTTP {resp.status_code}: {resp.text[:200]}")
 
@@ -362,12 +437,31 @@ class AutoRepriceService:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from ..database import SessionLocal
 
-        items = db.query(MakroPiggybackItem).filter(
-            MakroPiggybackItem.store_id == store.id,
-            MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]),
-            MakroPiggybackItem.auto_reprice == True,
-            MakroPiggybackItem.makro_product_id.notlike("TEST_FSN_%")
+        # 优先读取在售跟价监控底册 (StoreProductReprice)，采用 LRU 轮转排序 (最久未巡检或从未巡检优先)
+        reprice_items = db.query(StoreProductReprice).join(MakroListing).filter(
+            StoreProductReprice.store_id == store.id,
+            StoreProductReprice.auto_reprice == True,
+            StoreProductReprice.monitor_status == "ACTIVE",
+            MakroListing.internal_state == "ACTIVE",
+            StoreProductReprice.makro_product_id.notlike("TEST_FSN_%")
+        ).order_by(
+            StoreProductReprice.last_reprice_at.asc().nullsfirst(),
+            StoreProductReprice.id.asc()
         ).all()
+
+        is_reprice_mode = True
+        items = reprice_items
+        if not items:
+            items = db.query(MakroPiggybackItem).filter(
+                MakroPiggybackItem.store_id == store.id,
+                MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]),
+                MakroPiggybackItem.auto_reprice == True,
+                MakroPiggybackItem.makro_product_id.notlike("TEST_FSN_%")
+            ).order_by(
+                MakroPiggybackItem.last_reprice_at.asc().nullsfirst(),
+                MakroPiggybackItem.id.asc()
+            ).all()
+            is_reprice_mode = False
 
         total = len(items)
         if total == 0:
@@ -401,16 +495,26 @@ class AutoRepriceService:
             pass
 
         actual_workers = max(1, min(sys_concurrency, total, 100))
-        logger.info(f"店铺 [{store.name}] 启动平稳安全自动跟价巡航：共 {total} 件商品，工作线程数: {actual_workers}")
+        logger.info(f"店铺 [{store.name}] 启动平稳安全自动跟价巡航：共 {total} 件商品 (底册模式: {is_reprice_mode})，工作线程数: {actual_workers}")
 
         def _cruise_worker(iid: int) -> Dict[str, Any]:
-            time.sleep(random.uniform(0.8, 1.8))
+            time.sleep(random.uniform(0.05, 0.2))
             worker_db = SessionLocal()
             try:
-                target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
+                if is_reprice_mode:
+                    target_item = worker_db.query(StoreProductReprice).filter(StoreProductReprice.id == iid).first()
+                else:
+                    target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
+
                 if not target_item:
                     return {"status": "FAILED", "reason": "商品不存在", "item_id": iid}
-                return cls.reprice_single_item(target_item, worker_db, proxy=None)
+
+                # 动态从携趣代理池获取高匿 IP 保护并发巡检
+                proxy_ip = ProxyPoolService.get_proxy()
+                res = cls.reprice_single_item(target_item, worker_db, proxy=proxy_ip)
+                if proxy_ip and (res.get("action") == "BLOCKED" or res.get("status") == "BLOCKED"):
+                    ProxyPoolService.report_failure(proxy_ip)
+                return res
             except Exception as w_err:
                 return {"status": "FAILED", "reason": str(w_err), "item_id": iid}
             finally:
@@ -459,7 +563,8 @@ class AutoRepriceService:
         tm: Any,
         task_id: str,
         item_ids: List[int],
-        concurrency: int = 100
+        concurrency: int = 100,
+        is_reprice_monitor: bool = True
     ):
         """
         全量立刻巡检巡航后台执行器 (集成 TaskManager，支持多线程受控平稳巡航、防页面刷新、真实阻断统计与取消)
@@ -470,7 +575,7 @@ class AutoRepriceService:
 
         total = len(item_ids)
         if total == 0:
-            tm.finish_task(task_id, status="SUCCESS", message="未找到符合巡检条件的在售跟品商品", success_count=0, fail_count=0, blocked_count=0)
+            tm.finish_task(task_id, status="SUCCESS", message="未找到符合巡检条件的在售监控商品", success_count=0, fail_count=0, blocked_count=0)
             return
 
         done_count = 0
@@ -481,6 +586,7 @@ class AutoRepriceService:
         failed_count = 0
         no_change_count = 0
         blocked_count = 0
+        failed_items = []
         lock = threading.Lock()
 
         def _cruise_one(iid: int):
@@ -488,18 +594,32 @@ class AutoRepriceService:
             if tm.is_cancelled(task_id):
                 return
 
-            time.sleep(random.uniform(0.8, 1.8))
+            time.sleep(random.uniform(0.05, 0.2))
             worker_db = SessionLocal()
             try:
-                target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
+                if is_reprice_monitor:
+                    target_item = worker_db.query(StoreProductReprice).filter(StoreProductReprice.id == iid).first()
+                else:
+                    target_item = worker_db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id == iid).first()
+
                 if not target_item:
                     with lock:
                         done_count += 1
                         failed_count += 1
-                        tm.update_progress(task_id, current=done_count, fail_inc=1, error=f"ID {iid} 商品不存在")
+                        failed_items.append({"id": iid, "sku": f"ID#{iid}", "reason": f"商品不存在 (ID: {iid})"})
+                        tm.update_progress(
+                            task_id=task_id,
+                            current=done_count,
+                            fail_inc=1,
+                            error=f"ID {iid} 商品不存在",
+                            failed_items=list(failed_items)
+                        )
                     return
 
-                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True, proxy=None)
+                proxy_ip = ProxyPoolService.get_proxy()
+                res = cls.reprice_single_item(target_item, worker_db, force=False, allow_inspect_only=True, proxy=proxy_ip)
+                if proxy_ip and (res.get("action") == "BLOCKED" or res.get("status") == "BLOCKED"):
+                    ProxyPoolService.report_failure(proxy_ip)
                 action = res.get("action", "")
                 status = res.get("status", "")
 
@@ -523,6 +643,7 @@ class AutoRepriceService:
                         blocked_count += 1
                         blocked_inc = 1
 
+                    sku_display = target_item.seller_sku or f"Item#{iid}"
                     if status == "SUCCESS":
                         succ_inc = 1
                     elif status == "BLOCKED" or action == "BLOCKED":
@@ -531,8 +652,9 @@ class AutoRepriceService:
                     else:
                         fail_inc = 1
                         failed_count += 1
+                        err_reason = res.get("reason") or "未能获取有效竞对售价或调价失败"
+                        failed_items.append({"id": iid, "sku": sku_display, "reason": err_reason})
 
-                    sku_display = target_item.seller_sku or f"Item#{iid}"
                     action_display = {
                         "UNDER_CUT": f"抢流降价至 R{res.get('new_price')}",
                         "WINNING_HOLD": "胜出保持现价",
@@ -543,20 +665,51 @@ class AutoRepriceService:
                         "FAILED": f"失败: {res.get('reason', '')[:30]}"
                     }.get(action, action or "完成")
 
+                    cur_breakdown = {
+                        "undercut": undercut_count,
+                        "winning": winning_count,
+                        "floor": floor_count,
+                        "inspected": inspected_count,
+                        "no_change": no_change_count,
+                        "blocked": blocked_count,
+                        "failed": failed_count,
+                        "success": max(0, done_count - failed_count - blocked_count)
+                    }
+
                     tm.update_progress(
                         task_id=task_id,
                         current=done_count,
                         current_title=f"{sku_display}: {action_display}",
                         success_inc=succ_inc,
                         fail_inc=fail_inc,
-                        blocked_inc=blocked_inc
+                        blocked_inc=blocked_inc,
+                        failed_items=list(failed_items),
+                        breakdown=cur_breakdown
                     )
             except Exception as ex:
                 logger.error(f"巡检单品 [ID: {iid}] 发生异常: {ex}", exc_info=True)
                 with lock:
                     done_count += 1
                     failed_count += 1
-                    tm.update_progress(task_id, current=done_count, fail_inc=1, error=str(ex))
+                    failed_items.append({"id": iid, "sku": f"ID#{iid}", "reason": str(ex)})
+                    cur_breakdown = {
+                        "undercut": undercut_count,
+                        "winning": winning_count,
+                        "floor": floor_count,
+                        "inspected": inspected_count,
+                        "no_change": no_change_count,
+                        "blocked": blocked_count,
+                        "failed": failed_count,
+                        "success": max(0, done_count - failed_count - blocked_count)
+                    }
+                    tm.update_progress(
+                        task_id=task_id,
+                        current=done_count,
+                        fail_inc=1,
+                        error=str(ex),
+                        failed_items=list(failed_items),
+                        breakdown=cur_breakdown
+                    )
             finally:
                 worker_db.close()
 
@@ -573,11 +726,28 @@ class AutoRepriceService:
                 except Exception:
                     pass
 
+        final_breakdown = {
+            "undercut": undercut_count,
+            "winning": winning_count,
+            "floor": floor_count,
+            "inspected": inspected_count,
+            "no_change": no_change_count,
+            "blocked": blocked_count,
+            "failed": failed_count,
+            "success": max(0, done_count - failed_count - blocked_count)
+        }
+
         if tm.is_cancelled(task_id):
-            tm.finish_task(task_id, status="CANCELLED", message="任务已被用户取消")
+            tm.finish_task(
+                task_id=task_id,
+                status="CANCELLED",
+                message="任务已被用户取消",
+                failed_items=list(failed_items),
+                breakdown=final_breakdown
+            )
             return
 
-        success_total = done_count - failed_count - blocked_count
+        success_total = max(0, done_count - failed_count - blocked_count)
         summary_msg = f"全量巡检巡航完成！共处理 {done_count}/{total} 件 (降价抢流: {undercut_count}, 胜出保持: {winning_count}, 触底保本: {floor_count}, 巡检更新: {inspected_count}, 维持不变: {no_change_count}, 🛡️反爬阻断: {blocked_count}, 失败: {failed_count})"
         logger.info(f"全量巡检巡航任务 [{task_id}] 执行完毕: {summary_msg}")
         tm.finish_task(
@@ -586,6 +756,8 @@ class AutoRepriceService:
             message=summary_msg,
             success_count=success_total,
             fail_count=failed_count,
-            blocked_count=blocked_count
+            blocked_count=blocked_count,
+            failed_items=list(failed_items),
+            breakdown=final_breakdown
         )
 

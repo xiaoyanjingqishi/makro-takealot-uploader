@@ -16,7 +16,7 @@ from ..services.makro_client import MakroClient
 from ..services.makro_auth_service import MakroAuthService
 from ..services.email_otp_service import EmailOtpService
 from ..services.audit_logger import record_audit_log
-from ..utils.auth import get_current_user, get_current_admin, get_user_authorized_stores
+from ..utils.auth import get_current_user, get_current_admin, get_user_authorized_stores, get_optional_current_user
 
 router = APIRouter(prefix="/stores", tags=["多店铺管理"])
 logger = logging.getLogger(__name__)
@@ -56,16 +56,35 @@ def _format_store(store: Store, db: Session) -> dict:
         "updated_at": store.updated_at
     }
 
-@router.get("", summary="获取店铺列表 (按用户权限过滤)")
+@router.get("", summary="获取店铺列表 (支持登录按权限过滤及插件免登录获取公用活跃店铺)")
 def list_stores(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role == "ADMIN":
+    if current_user and current_user.role == "ADMIN":
         stores = db.query(Store).order_by(Store.is_default.desc(), Store.id.asc()).all()
-    else:
+        return [_format_store(s, db) for s in stores]
+    elif current_user:
         stores = get_user_authorized_stores(current_user, db)
-    return [_format_store(s, db) for s in stores]
+        return [_format_store(s, db) for s in stores]
+    else:
+        # 免登录/插件访问：安全返回活跃店铺的基础公共信息 (自动剔除敏感凭据与 cookie)
+        stores = db.query(Store).filter(Store.is_active == True).order_by(Store.is_default.desc(), Store.id.asc()).all()
+        return [
+            {
+                "id": s.id,
+                "name": s.name,
+                "seller_id": s.seller_id,
+                "default_brand": s.default_brand or "Beishi",
+                "is_active": bool(s.is_active),
+                "is_default": bool(s.is_default),
+                "has_cookie": bool(s.cookie),
+                "listings_count": 0,
+                "created_at": s.created_at,
+                "updated_at": s.updated_at
+            }
+            for s in stores
+        ]
 
 @router.post("", summary="添加新店铺 (仅管理员)")
 def create_store(

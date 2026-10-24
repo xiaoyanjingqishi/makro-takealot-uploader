@@ -36,6 +36,11 @@ class MakroListing(Base):
     deactivation_reasons = Column(Text, nullable=True)
     archival_reasons = Column(Text, nullable=True)
 
+    # 本地下架原因与时间记录 (OUT_OF_STOCK, INFRINGING_RISK, UNPROFITABLE, COMPETITOR_WAR, MANUAL_OFFLINE)
+    deactivation_reason_category = Column(String(50), nullable=True, index=True)
+    deactivation_note = Column(String(255), nullable=True)
+    deactivated_at = Column(DateTime, nullable=True)
+
     # 本地选品双向关联 (若本地选品箱有此 SKU)
     local_product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
 

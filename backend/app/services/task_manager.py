@@ -44,6 +44,8 @@ class TaskManager:
             "current_title": "准备启动...",
             "message": f"任务启动: 共 {total} 项",
             "errors": [],
+            "failed_items": [],
+            "breakdown": {},
             "product_ids": product_ids or [],
             "created_at": now_str,
             "updated_at": now_str,
@@ -76,7 +78,10 @@ class TaskManager:
         success_inc: int = 0,
         fail_inc: int = 0,
         blocked_inc: int = 0,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        total: Optional[int] = None,
+        failed_items: Optional[List[Dict[str, Any]]] = None,
+        breakdown: Optional[Dict[str, Any]] = None
     ):
         """
         更新任务实时进度
@@ -86,9 +91,11 @@ class TaskManager:
             if not t or t["status"] != "RUNNING":
                 return
 
+            if total is not None and total >= 0:
+                t["total"] = total
             t["current"] = current
-            total = max(1, t["total"])
-            t["progress"] = min(100, int((current / total) * 100))
+            cur_total = max(1, t["total"])
+            t["progress"] = min(100, int((current / cur_total) * 100))
             if current_title:
                 t["current_title"] = current_title[:100]
             if success_inc:
@@ -99,6 +106,10 @@ class TaskManager:
                 t["blocked_count"] = t.get("blocked_count", 0) + blocked_inc
             if error:
                 t["errors"].append(error[:250])
+            if failed_items is not None:
+                t["failed_items"] = failed_items
+            if breakdown is not None:
+                t["breakdown"] = breakdown
             t["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def is_cancelled(self, task_id: str) -> bool:
@@ -125,6 +136,8 @@ class TaskManager:
         success_count: Optional[int] = None,
         fail_count: Optional[int] = None,
         blocked_count: Optional[int] = None,
+        failed_items: Optional[List[Dict[str, Any]]] = None,
+        breakdown: Optional[Dict[str, Any]] = None,
         **kwargs
     ):
         """
@@ -150,6 +163,10 @@ class TaskManager:
                 t["fail_count"] = fail_count
             if blocked_count is not None:
                 t["blocked_count"] = blocked_count
+            if failed_items is not None:
+                t["failed_items"] = failed_items
+            if breakdown is not None:
+                t["breakdown"] = breakdown
             if not message:
                 msg_parts = [f"成功 {t['success_count']} 项", f"失败 {t['fail_count']} 项"]
                 if t.get("blocked_count", 0) > 0:

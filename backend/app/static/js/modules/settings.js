@@ -30,7 +30,7 @@ export const settingsMethods = {
         this.settings.piggyback_collect_concurrency = colConc;
 
         let compConc = parseInt(this.settings.piggyback_compliance_concurrency, 10);
-        if (isNaN(compConc) || compConc < 1) compConc = 100;
+        if (isNaN(compConc) || compConc < 1) compConc = 15;
         if (compConc > 100) compConc = 100;
         this.settings.piggyback_compliance_concurrency = compConc;
       }
@@ -73,6 +73,29 @@ export const settingsMethods = {
       this.jevTestResult = { success: false, error: String(e) };
     } finally {
       this.testingJev = false;
+    }
+  },
+
+  async testAIModelsConnectivity() {
+    this.testingAIModels = true;
+    this.aiModelsTestResult = null;
+    try {
+      const res = await fetch('/api/settings/test-ai-models', {
+        method: 'POST',
+        headers: this.getAuthHeaders()
+      });
+      const data = await res.json();
+      this.aiModelsTestResult = data;
+      if (data.success) {
+        this.showToast('✅ AI 模型连通性测试通过！', 'success');
+      } else {
+        this.showToast('⚠️ 部分 AI 模型测试失败，请核查配置详情', 'warning');
+      }
+    } catch (e) {
+      this.aiModelsTestResult = { success: false, error: String(e) };
+      this.showToast('测试请求异常: ' + e, 'error');
+    } finally {
+      this.testingAIModels = false;
     }
   },
 };

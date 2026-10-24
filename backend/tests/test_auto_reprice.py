@@ -187,8 +187,16 @@ class TestAutoReprice(unittest.TestCase):
         self.assertEqual(data["total_requested"], 1)
         self.assertEqual(data["success_count"], 1)
 
-        # 检查数据库保存的记录
-        item = self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.makro_product_id == "FSN_RICH_001").first()
+        # 检查数据库保存的记录 (轮询等待后台静默线程消费入库)
+        import time
+        item = None
+        for _ in range(40):
+            self.db.expire_all()
+            item = self.db.query(MakroPiggybackItem).filter(MakroPiggybackItem.makro_product_id == "FSN_RICH_001").first()
+            if item and item.target_price and item.target_price > 0:
+                break
+            time.sleep(0.05)
+
         self.assertIsNotNone(item)
         self.assertEqual(item.variant_name, "Black / 10-Pack")
         self.assertIn("color", item.variant_attributes)

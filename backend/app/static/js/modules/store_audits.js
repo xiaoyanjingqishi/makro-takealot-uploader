@@ -48,27 +48,53 @@ export const store_auditsMethods = {
 
   async syncStoreAudits() {
     if (!this.selectedStoreId) {
-      alert('请先选择店铺');
+      this.showToast('请先选择店铺', 'warning');
       return;
     }
     this.syncingStoreAudits = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
     try {
-      const res = await fetch(`/api/store-audits/sync?store_id=${this.selectedStoreId}&max_pages=30`, {
+      const res = await fetch(`/api/store-audits/sync?store_id=${this.selectedStoreId}&max_pages=30&async_task=true`, {
         method: 'POST',
-        headers: this.getAuthHeaders()
+        headers: this.getAuthHeaders(),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok && data.success) {
-        this.showToast(`🎉 ${data.message}`, 'success');
-        if (data.state_counts) {
-          this.storeAudits.counts = data.state_counts;
+        if (data.task_id) {
+          const storeObj = (this.stores || []).find(s => s.id === this.selectedStoreId);
+          const storeName = storeObj ? storeObj.name : `店铺 ${this.selectedStoreId}`;
+          this.addOrUpdateBgTask({
+            id: data.task_id,
+            task_type: 'SYNC_STORE_AUDITS',
+            name: `同步在途审核流转 [${storeName}]`,
+            status: 'RUNNING',
+            total: 0,
+            current: 0,
+            progress: 0,
+            current_title: '正在拉取 Makro 官方在途审核记录...',
+            message: data.message
+          });
+          this.showToast(`🚀 ${data.message}`, 'info');
+        } else {
+          this.showToast(`🎉 ${data.message}`, 'success');
+          if (data.state_counts) {
+            this.storeAudits.counts = data.state_counts;
+          }
+          await this.loadStoreAudits(1);
         }
-        await this.loadStoreAudits(1);
       } else {
-        alert('同步审核列表失败: ' + (data.detail || data.message || '未知错误'));
+        this.showToast('同步审核列表失败: ' + (data.detail || data.message || '未知错误'), 'error');
       }
     } catch (e) {
-      alert('同步官方审核流转网络异常: ' + e);
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('同步启动请求超时，请稍后刷新查看', 'error');
+      } else {
+        this.showToast('同步官方审核流转网络异常: ' + (e.message || e), 'error');
+      }
     } finally {
       this.syncingStoreAudits = false;
     }

@@ -9,6 +9,7 @@ const { createApp } = Vue;
 import { coreMethods } from './modules/core.js';
 import { productsMethods } from './modules/products.js';
 import { piggybackMethods } from './modules/piggyback.js';
+import { repriceMethods } from './modules/reprice.js';
 import { makro_publisherMethods } from './modules/makro_publisher.js';
 import { storesMethods } from './modules/stores.js';
 import { store_productsMethods } from './modules/store_products.js';
@@ -83,6 +84,152 @@ const app = createApp({
             selectAll: false,
             isAllFilteredSelected: false,
             autoCompliance: localStorage.getItem('makro_piggyback_auto_compliance') === 'true'
+          },
+          // Makro 在售跟价监控状态
+          reprice: {
+            total: 0,
+            page: 1,
+            pageSize: 20,
+            items: [],
+            loading: false,
+            source_type: 'ALL',
+            buybox_status: 'ALL',
+            compliance_status: 'ALL',
+            monitor_status: 'ALL',
+            auto_reprice: 'ALL',
+            search: '',
+            min_price: '',
+            max_price: '',
+            selectedIds: [],
+            selectAll: false,
+            kpi: {
+              total_monitored: 0,
+              auto_reprice_enabled: 0,
+              winning_count: 0,
+              losing_count: 0,
+              floor_hit_count: 0,
+              no_competitor_count: 0,
+              blocked_count: 0,
+              missing_floor_count: 0,
+              safe_count: 0,
+              risk_count: 0,
+              paused_count: 0,
+              piggyback_count: 0,
+              self_published_count: 0,
+              store_synced_count: 0
+            },
+            scheduler_enabled: false,
+            scheduler_interval: 1800,
+            fullCruiseRunning: false,
+            batchRunning: false,
+            currentCruiseTaskId: null,
+            showCruiseFailureDetails: false
+          },
+          showBatchRepriceStrategyModal: false,
+          batchRepriceStrategyForm: {
+            mode: 'PRESET',
+            preset: 'MINUS_15',
+            custom_direction: '-',
+            custom_amount: 1.5,
+            custom_percent: 3.0,
+            price_strategy: 'MINUS_15',
+            submitting: false
+          },
+          showBatchRepriceFloorModal: false,
+          batchRepriceFloorForm: {
+            mode: 'PERCENT',
+            percent: 75,
+            fixed_floor: 100,
+            submitting: false
+          },
+          showPriceFloorWarningModal: false,
+          priceFloorWarning: {
+            type: 'reprice',
+            item: null,
+            new_price: 0,
+            min_floor: 0,
+            title: ''
+          },
+          showBatchAdjustPriceModal: false,
+          batchAdjustPriceForm: {
+            source: 'reprice',
+            mode: 'FIXED',
+            value: 99.0,
+            sync_makro: true,
+            force: false,
+            submitting: false
+          },
+          showRepriceConfigModal: false,
+
+          repriceConfigForm: {
+            id: null,
+            seller_sku: '',
+            title: '',
+            price: 0,
+            target_fsn: '',
+            target_makro_url: '',
+            min_price_floor: 0,
+            max_price_ceiling: 0,
+            price_strategy: 'MINUS_15',
+            custom_direction: '-',
+            custom_amount: 1.5,
+            custom_percent: 3.0,
+            auto_reprice: true,
+            submitting: false
+          },
+          showQuickDelistModal: false,
+          quickDelistForm: {
+            item: null,
+            reason_category: 'INFRINGING_RISK',
+            reason_note: '',
+            submitting: false
+          },
+          showBatchDelistModal: false,
+          batchDelistForm: {
+            reason_category: 'MANUAL_OFFLINE',
+            reason_note: '',
+            submitting: false
+          },
+          showRepriceComplianceModal: false,
+          currentRepriceComplianceItem: null,
+          isArbitratingReprice: false,
+          repriceArbitrationNotes: '',
+          repriceLogsDrawer: {
+            show: false,
+            item: null,
+            loading: false,
+            items: [],
+            total: 0,
+            page: 1,
+            pageSize: 20
+          },
+          // 店铺商品上下架与跟价绑定弹窗状态
+          showDeactivateModal: false,
+          deactivateForm: {
+            targetItems: [],
+            reason_category: 'OUT_OF_STOCK',
+            reason_note: '',
+            submitting: false
+          },
+          showActivateModal: false,
+          activateForm: {
+            targetItems: [],
+            restore_inventory: true,
+            inventory_value: 999,
+            submitting: false
+          },
+          showBindRepriceModal: false,
+          bindRepriceForm: {
+            item: null,
+            listing_id: null,
+            seller_sku: '',
+            title: '',
+            target_fsn: '',
+            target_makro_url: '',
+            min_price_floor: 0,
+            price_strategy: 'MINUS_15',
+            auto_reprice: true,
+            submitting: false
           },
           // 管理驾驶舱状态 (团队人效与员工工作量看板)
           management: {
@@ -336,7 +483,28 @@ const app = createApp({
           loginForm: { username: '', password: '', loading: false, error: '' },
           showChangePwdModal: false,
           changePwdForm: { old_password: '', new_password: '', confirm_password: '', loading: false, error: '' },
-          storeProducts: { total: 0, items: [], page: 1, pageSize: 20, loading: false, internal_state: 'ACTIVE', search: '', counts: {} },
+          storeProducts: { 
+            total: 0, 
+            items: [], 
+            page: 1, 
+            pageSize: 20, 
+            loading: false, 
+            internal_state: 'ACTIVE', 
+            search: '', 
+            counts: {},
+            showAdvancedFilters: false,
+            vertical: 'ALL',
+            verticalsList: [],
+            inventory_status: 'ALL',
+            min_inventory: '',
+            max_inventory: '',
+            min_price: '',
+            max_price: '',
+            date_range: 'ALL',
+            sync_start: '',
+            sync_end: '',
+            sort_by: 'SYNCED_DESC'
+          },
           syncingStoreProducts: false,
           editingInventoryId: null,
           editingInventoryVal: 0,
@@ -351,9 +519,81 @@ const app = createApp({
           activeAuditDetail: null,
           showAuditLocalProductModal: false,
           activeAuditLocalProduct: null,
-          orders: { total: 0, items: [], page: 1, pageSize: 20, loading: false, status: 'all', search: '', counts: {} },
+          orders: {
+            total: 0,
+            items: [],
+            page: 1,
+            pageSize: 20,
+            loading: false,
+            status: 'all',
+            fulfillment_status: 'all',
+            order_date_start: '',
+            order_date_end: '',
+            label_printed: 'all',
+            search: '',
+            counts: {},
+            selectedIds: [],
+            indicators: {},
+            financial_summary: {},
+            activePerspective: 'orders' // 'orders' | 'po'
+          },
+          orderStatusHistoryModal: {
+            open: false,
+            loading: false,
+            order: null,
+            logs: []
+          },
           syncingOrders: false,
+          showOrderFinanceConfigModal: false,
+          orderFinanceConfig: {
+            commission_rate: 17.5,
+            shipping_fee_zar: 70.0,
+            exchange_rate: 0.39,
+            air_freight_rate: 90.0
+          },
+          weightModal: {
+            open: false,
+            order: null,
+            items: [],
+            totalWeightG: 0,
+            airFreightRate: 90.0,
+            syncToCatalog: true,
+            propagateToSameSku: true,
+            submitting: false
+          },
+          poListModal: {
+            open: false,
+            list: [],
+            loading: false
+          },
+          poExpandedIds: [],
+          showCreatePoModal: false,
+          poCreateForm: {
+            po_number: '',
+            name: '',
+            forwarder_name: '',
+            air_waybill_no: '',
+            domestic_logistics_fee: 0,
+            head_haul_fee: 0,
+            logistics_loss_fee: 0,
+            box_length_cm: null,
+            box_width_cm: null,
+            box_height_cm: null,
+            package_weight_kg: null,
+            notes: '',
+            submitting: false
+          },
+          showAssignPoModal: false,
+          assignPoTargetPoId: null,
+          assignPoSubmitting: false,
+          poBatchFulfillmentModal: {
+            open: false,
+            po: null,
+            target_status: 'AIR_FREIGHT',
+            submitting: false
+          },
           userList: [],
+
           loadingUsers: false,
           showUserModal: false,
           userModalTitle: '新建员工账号',
@@ -366,6 +606,7 @@ const app = createApp({
             { id: 'products', name: '选品箱', icon: '📦' },
             { id: 'inspector', name: '审品比对', icon: '🔍' },
             { id: 'piggyback', name: 'Makro跟品', icon: '🎯' },
+            { id: 'reprice', name: '跟价监控', icon: '🚀' },
             { id: 'store_products', name: '店铺商品', icon: '🏬' },
             { id: 'store_audits', name: '审核列表', icon: '📋' },
             { id: 'orders', name: '订单管理', icon: '📑' },
@@ -431,19 +672,23 @@ const app = createApp({
           batchPublishTargetStoreId: null,
           batchPublishForce: false,
           showSinglePublishModal: false,
-          singlePublishItem: null,
           testingJev: false,
           jevTestResult: null,
+          testingAIModels: false,
+          aiModelsTestResult: null,
           settings: {
             markup_ratio: 1.35,
             fixed_markup: 20,
             mrp_ratio: 1.5,
+            default_air_freight_rate: 60.0,
             publish_concurrency: 2,
             ai_provider: 'deepseek',
             qwen_api_key: '',
             qwen_model: 'qwen-plus',
+            qwen_vision_model: 'qwen3-vl-plus',
             deepseek_api_key: '',
             deepseek_model: 'deepseek-chat',
+            deepseek_vision_model: 'deepseek-flash',
             jev_api_key: '',
             jev_base_url: 'https://api.typesafe.ai',
             jev_model: 'jev-latest',
@@ -455,7 +700,7 @@ const app = createApp({
             seo_title_enabled: true,
             seo_title_max_len: 120,
             cleaner_mode: 'text',
-            qwen_vision_model: 'qwen-vl-plus',
+            qwen_vision_model: 'qwen3-vl-plus',
             custom_category_synonyms: '{}',
             piggyback_default_strategy: 'MINUS_15',
             piggyback_default_floor_mode: 'PERCENT',
@@ -520,16 +765,46 @@ const app = createApp({
         businessTabs() {
           return [
             { id: 'products', name: '选品箱', icon: '📦', badge: (this.statusCounts && this.statusCounts.PENDING_CLEAN) || null, badgeType: 'warning', desc: 'Takealot 采集商品池 · AI 清洗 · 合规检测与批量刊登' },
-            { id: 'piggyback', name: 'Makro跟品', icon: '🎯', badge: (this.piggyback && this.piggyback.stats && this.piggyback.stats.pending_count > 0 ? this.piggyback.stats.pending_count : null), badgeType: 'warning', desc: 'Makro 站内同款跟品 · 一键跟卖 · 双AI合规拦截 · 智能定价破价' },
+            { id: 'piggyback', name: 'Makro跟品', icon: '🎯', badge: (this.piggyback && this.piggyback.stats && this.piggyback.stats.pending_count > 0 ? this.piggyback.stats.pending_count : null), badgeType: 'warning', desc: 'Makro 站内同款跟品 · 一键跟卖 · 双AI合规拦截 · 初始定价' },
+            { id: 'reprice', name: '跟价监控', icon: '🚀', badge: (this.reprice && this.reprice.kpi && this.reprice.kpi.losing_count > 0 ? this.reprice.kpi.losing_count : null), badgeType: 'warning', desc: '在售商品 24h 智能巡航 · Buybox 夺车 · 来源溯源与合规复检' },
             { id: 'inspector', name: '审品比对', icon: '🔍', desc: '双端字段深度对齐 · 标题/主图/规格实时比对与编辑' },
             { id: 'store_products', name: '店铺商品', icon: '🏬', badge: (this.storeProducts && this.storeProducts.total) || null, desc: '多店铺已刊登商品 · 在线库存同步与价格调节' },
             { id: 'store_audits', name: '审核列表', icon: '📋', badge: (this.storeAudits && this.storeAudits.counts && this.storeAudits.counts.DRAFT > 0 ? this.storeAudits.counts.DRAFT : null), badgeType: 'warning', desc: 'Makro 官方商品在途流转 · 平台质检 · 驳回诊断与错误修复' },
             { id: 'orders', name: '订单管理', icon: '📑', badge: (this.orders && this.orders.total) || null, desc: 'Makro 店铺全量订单同步 · 履约发货与状态追踪' }
           ];
         },
+        isAllCurrentPageRepriceSelected() {
+          if (!this.reprice.items || this.reprice.items.length === 0) return false;
+          return this.reprice.items.every(it => this.reprice.selectedIds.includes(it.id));
+        },
         isAllCurrentPageStoreProductsSelected() {
           if (!this.storeProducts.items || this.storeProducts.items.length === 0) return false;
           return this.storeProducts.items.every(it => this.selectedStoreProductSkus.includes(it.sku_id));
+        },
+        hasActiveStoreProductFilters() {
+          const sp = this.storeProducts;
+          if (!sp) return false;
+          return (sp.vertical && sp.vertical !== 'ALL') ||
+                 (sp.inventory_status && sp.inventory_status !== 'ALL') ||
+                 (sp.min_inventory !== '' && sp.min_inventory !== null && sp.min_inventory !== undefined) ||
+                 (sp.max_inventory !== '' && sp.max_inventory !== null && sp.max_inventory !== undefined) ||
+                 (sp.min_price !== '' && sp.min_price !== null && sp.min_price !== undefined) ||
+                 (sp.max_price !== '' && sp.max_price !== null && sp.max_price !== undefined) ||
+                 (sp.date_range && sp.date_range !== 'ALL') ||
+                 (sp.sync_start || sp.sync_end) ||
+                 (sp.sort_by && sp.sort_by !== 'SYNCED_DESC');
+        },
+        activeStoreProductFiltersCount() {
+          let count = 0;
+          const sp = this.storeProducts;
+          if (!sp) return 0;
+          if (sp.vertical && sp.vertical !== 'ALL') count++;
+          if (sp.inventory_status && sp.inventory_status !== 'ALL') count++;
+          if ((sp.min_inventory !== '' && sp.min_inventory !== null && sp.min_inventory !== undefined) || (sp.max_inventory !== '' && sp.max_inventory !== null && sp.max_inventory !== undefined)) count++;
+          if ((sp.min_price !== '' && sp.min_price !== null && sp.min_price !== undefined) || (sp.max_price !== '' && sp.max_price !== null && sp.max_price !== undefined)) count++;
+          if ((sp.date_range && sp.date_range !== 'ALL') || sp.sync_start || sp.sync_end) count++;
+          if (sp.sort_by && sp.sort_by !== 'SYNCED_DESC') count++;
+          return count;
         },
         activePiggybackFilterCount() {
           let count = 0;
@@ -582,6 +857,17 @@ const app = createApp({
         },
         runningTask() {
           return (this.activeBgTasks || []).find(t => t.status === 'RUNNING') || null;
+        },
+        activeCruiseTask() {
+          const list = this.activeBgTasks || [];
+          if (!list.length) return null;
+          if (this.reprice && this.reprice.currentCruiseTaskId) {
+            const found = list.find(t => t.id === this.reprice.currentCruiseTaskId);
+            if (found) return found;
+          }
+          const running = list.find(t => t.task_type === 'FULL_CRUISE_INSPECTION' && t.status === 'RUNNING');
+          if (running) return running;
+          return list.find(t => t.task_type === 'FULL_CRUISE_INSPECTION') || null;
         },
         selectedIdSet() {
           return new Set(this.selectedIds);
@@ -733,7 +1019,15 @@ const app = createApp({
       },
 
   async mounted() {
+        try {
+          const savedCfg = localStorage.getItem('makro_order_finance_cfg');
+          if (savedCfg) {
+            this.orderFinanceConfig = Object.assign(this.orderFinanceConfig || {}, JSON.parse(savedCfg));
+          }
+        } catch (_) {}
+
         const authed = await this.checkAuth();
+
         if (authed) {
           this.loadProducts(1);
           this.loadPiggybackItems(1);
@@ -746,12 +1040,16 @@ const app = createApp({
           this.loadNetworkInfo();
           this.loadVerticalTranslations();
           this.loadMyDailySummary();
+          this.loadRepriceSchedulerStatus();
           if (this.currentTab === 'users' && this.currentUser && this.currentUser.role === 'ADMIN') {
             this.loadUsers();
           } else if (this.currentTab === 'management' && this.currentUser && this.currentUser.role === 'ADMIN') {
             this.loadManagementData();
+          } else if (this.currentTab === 'reprice') {
+            this.loadRepriceItems(1);
           } else if (this.currentTab === 'store_products') {
             this.loadStoreProducts(1);
+            this.loadStoreProductVerticals();
           } else if (this.currentTab === 'store_audits') {
             this.loadStoreAudits(1);
           } else if (this.currentTab === 'orders') {
@@ -770,6 +1068,7 @@ const app = createApp({
     ...coreMethods,
     ...productsMethods,
     ...piggybackMethods,
+    ...repriceMethods,
     ...makro_publisherMethods,
     ...storesMethods,
     ...store_productsMethods,
@@ -781,6 +1080,20 @@ const app = createApp({
     ...usersMethods,
     ...inspectorMethods
   }
+});
+
+// 全局异常容错捕获器 (防止组件内部数据未定义导致整个应用崩溃白屏)
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[Vue Error Boundary]:', err, info);
+  try {
+    if (instance && typeof instance.showToast === 'function') {
+      instance.showToast(`⚠️ 页面局部组件渲染异常: ${err.message || '数据解析错误'}`, 'warning');
+    }
+  } catch (_) {}
+};
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.warn('[Unhandled Promise Rejection]:', event.reason);
 });
 
 // 挂载应用到 DOM

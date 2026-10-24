@@ -49,7 +49,7 @@ export const piggybackMethods = {
       this.piggyback.stage = 'ALL';
       this.piggyback.buybox_status = 'ALL';
     } else if (filterType === 'active') {
-      this.piggyback.stage = 'ACTIVE_MONITOR';
+      this.piggyback.stage = 'PUBLISHED';
       this.piggyback.buybox_status = 'ALL';
     } else if (filterType === 'no_competitor') {
       this.piggyback.stage = 'ACTIVE_MONITOR';
@@ -157,17 +157,21 @@ export const piggybackMethods = {
   async handleBatchSetFloor() {
     if (this.piggyback.selectedIds.length === 0) return;
     this.submittingBatchFloor = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const res = await fetch('/api/piggyback/batch-set-floor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           ids: this.piggyback.selectedIds,
           mode: this.batchFloorForm.mode,
           value: this.batchFloorForm.value,
           auto_enable_reprice: this.batchFloorForm.auto_enable_reprice
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || '批量设置失败');
       this.showToast(`🛡️ 成功为 ${data.updated_count} 件商品计算并配置保本底价！`, 'success');
@@ -175,31 +179,19 @@ export const piggybackMethods = {
       this.loadPiggybackItems(this.piggyback.page);
       this.loadPiggybackKpi();
     } catch (e) {
-      this.showToast('批量设底价失败: ' + e.message, 'error');
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('设置保本底价请求超时，请稍后刷新查看', 'error');
+      } else {
+        this.showToast('批量设底价失败: ' + e.message, 'error');
+      }
     } finally {
       this.submittingBatchFloor = false;
     }
   },
 
-
   async batchToggleAutoReprice(enable) {
-    if (this.piggyback.selectedIds.length === 0) return;
-    const ids = this.piggyback.selectedIds;
-    try {
-      let updated = 0;
-      for (const id of ids) {
-        const res = await fetch(`/api/reprice/config/${id}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ auto_reprice: enable })
-        });
-        if (res.ok) updated++;
-      }
-      this.showToast(`已批量${enable ? '开启' : '关闭'} ${updated} 件商品的自动跟价`, 'success');
-      this.loadPiggybackItems(this.piggyback.page);
-    } catch (e) {
-      this.showToast('批量修改跟价状态异常: ' + e.message, 'error');
-    }
+    return this.handleBatchToggleAutoReprice(enable);
   },
 
 
@@ -1065,10 +1057,29 @@ export const piggybackMethods = {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      const blockedPart = data.blocked_count ? `, 🛡️阻断: ${data.blocked_count}` : '';
-      const toastType = data.blocked_count > 0 ? 'warning' : 'success';
-      this.showToast(`🤖 批量跟价完成！处理 ${data.total || data.total_items} 件 (降价抢流: ${data.undercut_count || 0}, 胜出保持: ${data.winning_hold_count || 0}, 触底保本: ${data.floor_count || 0}${blockedPart})`, toastType);
-      this.loadPiggybackItems(this.piggyback.page);
+      if (!res.ok || (!data.success && !data.task_id)) {
+        throw new Error(data.detail || data.message || '启动批量巡检失败');
+      }
+      if (data.task_id) {
+        this.addOrUpdateBgTask({
+          id: data.task_id,
+          name: `批量跟价巡检 (${this.piggyback.selectedIds.length} 件)`,
+          task_type: 'FULL_CRUISE_INSPECTION',
+          status: 'RUNNING',
+          current: 0,
+          total: this.piggyback.selectedIds.length,
+          progress: 0,
+          success_count: 0,
+          fail_count: 0,
+          blocked_count: 0,
+          failed_items: [],
+          breakdown: {}
+        });
+        this.ensureBgTasksPolling();
+      }
+      this.showToast(`🤖 ${data.message || '批量跟价巡检任务已在后台启动！'}`, 'success');
+      this.piggyback.selectedIds = [];
+      setTimeout(() => this.pollActiveTasks(), 300);
     } catch (e) {
       this.showToast('批量跟价异常: ' + e.message, 'error');
     } finally {
@@ -1258,6 +1269,8 @@ export const piggybackMethods = {
     }
 
     this.isBatchAdjustingPrice = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
       const res = await fetch('/api/piggyback/batch-adjust-price', {
         method: 'POST',
@@ -1268,8 +1281,10 @@ export const piggybackMethods = {
           value: val,
           sync_to_makro: Boolean(this.batchPriceAdjustForm.sync_to_makro),
           enforce_floor: Boolean(this.batchPriceAdjustForm.enforce_floor)
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       let data = {};
       try {
         data = await res.json();
@@ -1291,7 +1306,12 @@ export const piggybackMethods = {
       this.showBatchPriceAdjustModal = false;
       this.loadPiggybackItems(this.piggyback.page);
     } catch (e) {
-      this.showToast('批量改价失败: ' + e.message, 'error');
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('批量改价请求超时，后台可能正在并发同步，请稍后刷新查看', 'error');
+      } else {
+        this.showToast('批量改价失败: ' + e.message, 'error');
+      }
     } finally {
       this.isBatchAdjustingPrice = false;
     }
@@ -1302,6 +1322,8 @@ export const piggybackMethods = {
       this.showToast('请先勾选需要操作的商品', 'warning');
       return;
     }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
     try {
       const res = await fetch('/api/piggyback/batch-toggle-auto-reprice', {
         method: 'POST',
@@ -1309,8 +1331,10 @@ export const piggybackMethods = {
         body: JSON.stringify({
           ids: this.piggyback.selectedIds,
           auto_reprice: Boolean(enable)
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       let data = {};
       try {
         data = await res.json();
@@ -1329,7 +1353,12 @@ export const piggybackMethods = {
       this.showToast(data.message || '操作成功！', 'success');
       this.loadPiggybackItems(this.piggyback.page);
     } catch (e) {
-      this.showToast('批量操作失败: ' + e.message, 'error');
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('修改跟价状态请求超时，请稍后刷新查看', 'error');
+      } else {
+        this.showToast('批量操作失败: ' + e.message, 'error');
+      }
     }
   },
 

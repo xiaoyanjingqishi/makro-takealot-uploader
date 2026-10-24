@@ -21,8 +21,15 @@ from .cleaner.device_rules import (
     sanitize_accessory_core_name,
     reconstruct_accessory_title,
     format_title_with_specs,
-    INVALID_SPEC_TOKENS,
+INVALID_SPEC_TOKENS,
 )
+
+QWEN_VISION_MODEL_ALIASES = {
+    "qwen-vl-max": "qwen3-vl-plus",
+    "qwen-vl-plus": "qwen3-vl-plus",
+    "qwen-vl": "qwen3-vl-plus",
+    "qwen-vl-chat": "qwen3-vl-plus",
+}
 
 class AICleanerService:
     """
@@ -47,7 +54,8 @@ class AICleanerService:
         self.db = db
         self.provider = provider or settings.AI_PROVIDER
         self.cleaner_mode = cleaner_mode or getattr(settings, "DEFAULT_CLEANER_MODE", "text")
-        self.qwen_vision_model = qwen_vision_model or getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")
+        raw_vmodel = qwen_vision_model or getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen3-vl-plus")
+        self.qwen_vision_model = QWEN_VISION_MODEL_ALIASES.get(raw_vmodel, raw_vmodel)
         self.seo_title_enabled = seo_title_enabled
         self.seo_title_max_len = max(60, min(180, seo_title_max_len or 120))
         
@@ -130,7 +138,8 @@ class AICleanerService:
         cleaner_mode = s_cleaner_mode.value if s_cleaner_mode and s_cleaner_mode.value else getattr(settings, "DEFAULT_CLEANER_MODE", "text")
 
         s_vision_model = db.query(SystemSetting).filter(SystemSetting.key == "qwen_vision_model").first()
-        qwen_vision_model = s_vision_model.value if s_vision_model and s_vision_model.value else getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-plus")
+        raw_vmodel = s_vision_model.value if s_vision_model and s_vision_model.value else getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen3-vl-plus")
+        qwen_vision_model = QWEN_VISION_MODEL_ALIASES.get(raw_vmodel, raw_vmodel)
 
         s_seo_en = db.query(SystemSetting).filter(SystemSetting.key == "seo_title_enabled").first()
         seo_title_enabled = (s_seo_en.value.lower() in ["true", "1", "yes"]) if s_seo_en and s_seo_en.value else getattr(settings, "DEFAULT_SEO_TITLE_ENABLED", True)
@@ -665,12 +674,12 @@ Reply ONLY with a JSON object:
 
         data["attributes"] = attrs
 
-        # 确保双语中文翻译存在
+        # 确保双语中文翻译存在 (优先采用大模型清洗输出中自带的翻译，若缺失使用规则保底，避免发起额外大模型请求)
         from .translation_service import TranslationService
         if not data.get("takealot_title_zh") and raw_title:
-            data["takealot_title_zh"] = TranslationService.translate_title(raw_title, db=self.db)
+            data["takealot_title_zh"] = TranslationService._fallback_title_translate(raw_title)
         if not data.get("makro_title_zh") and makro_title:
-            data["makro_title_zh"] = TranslationService.translate_title(makro_title, db=self.db)
+            data["makro_title_zh"] = TranslationService._fallback_title_translate(makro_title)
             
         return data
 
@@ -977,8 +986,9 @@ Reply ONLY with a JSON object:
         attrs["model_name"] = truncate_title_safely(clean_mn, 120) if clean_mn else "Standard"
 
         from .translation_service import TranslationService
-        takealot_zh = TranslationService.translate_title(raw_title, db=self.db) if raw_title else ""
-        makro_zh = TranslationService.translate_title(makro_title, db=self.db) if makro_title else ""
+        # 启发式保底清洗绝不发起大模型 HTTP 调用，使用本地规则翻译
+        takealot_zh = TranslationService._fallback_title_translate(raw_title) if raw_title else ""
+        makro_zh = TranslationService._fallback_title_translate(makro_title) if makro_title else ""
 
         return {
             "vertical": vertical,

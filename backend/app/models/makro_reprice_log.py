@@ -7,8 +7,9 @@ class MakroRepriceLog(Base):
     __tablename__ = "makro_reprice_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    piggyback_id = Column(Integer, ForeignKey("makro_piggyback_items.id", ondelete="CASCADE"), nullable=False, index=True)
     store_id = Column(Integer, ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True)
+    reprice_id = Column(Integer, ForeignKey("store_product_reprices.id", ondelete="SET NULL"), nullable=True, index=True)
+    piggyback_id = Column(Integer, ForeignKey("makro_piggyback_items.id", ondelete="SET NULL"), nullable=True, index=True)
     seller_sku = Column(String(100), nullable=False, index=True)
     makro_product_id = Column(String(100), nullable=False, index=True) # FSN
 
@@ -23,5 +24,6 @@ class MakroRepriceLog(Base):
 
     created_at = Column(DateTime, default=datetime.now, index=True)
 
+    reprice_item = relationship("StoreProductReprice")
     piggyback_item = relationship("MakroPiggybackItem")
     store = relationship("Store")

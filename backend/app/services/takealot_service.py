@@ -45,6 +45,11 @@ class TakealotService:
         def_size = "均码" if is_apparel else None
         def_colour = "多色" if is_apparel else None
 
+        # 检查系统设置中是否开启了采集自动翻译中文标题 (默认关闭以保护大模型 Token 额度)
+        from ..models.setting import SystemSetting
+        s_auto_tr = db.query(SystemSetting).filter(SystemSetting.key == "auto_translate_on_collect").first()
+        auto_translate = (s_auto_tr.value.strip().lower() in ["true", "1", "yes"]) if (s_auto_tr and s_auto_tr.value) else False
+
         if req.variants and len(req.variants) > 0:
             for idx, v in enumerate(req.variants):
                 v_price = v.takealot_price if v.takealot_price > 0 else req.takealot_price
@@ -68,6 +73,14 @@ class TakealotService:
                     else:
                         var_title = req.takealot_title
 
+                var_title_zh = None
+                if auto_translate and var_title:
+                    try:
+                        from .translation_service import TranslationService
+                        var_title_zh = TranslationService.translate_title(var_title, db=db)
+                    except Exception as tr_err:
+                        logger.warning(f"Takealot 采集变体标题自动翻译异常: {tr_err}")
+
                 var_images = v.images if v.images else req.raw_images
                 
                 combined_specs = dict(req.takealot_specs or {})
@@ -80,6 +93,7 @@ class TakealotService:
                     group_code=root_plid,
                     takealot_url=req.takealot_url,
                     takealot_title=var_title,
+                    takealot_title_zh=var_title_zh,
                     takealot_price=v_price,
                     takealot_brand=req.takealot_brand,
                     takealot_category=req.takealot_category,
@@ -107,12 +121,21 @@ class TakealotService:
             # 单品无变体
             sku_id = f"SKU-{uuid.uuid4().hex[:8].upper()}"
             selling_price, mrp = calculate_prices(req.takealot_price, db)
+            single_title_zh = None
+            if auto_translate and req.takealot_title:
+                try:
+                    from .translation_service import TranslationService
+                    single_title_zh = TranslationService.translate_title(req.takealot_title, db=db)
+                except Exception as tr_err:
+                    logger.warning(f"Takealot 采集单品标题自动翻译异常: {tr_err}")
+
             product = Product(
                 user_id=user_id,
                 takealot_id=root_plid,
                 group_code=root_plid,
                 takealot_url=req.takealot_url,
                 takealot_title=req.takealot_title,
+                takealot_title_zh=single_title_zh,
                 takealot_price=req.takealot_price,
                 takealot_brand=req.takealot_brand,
                 takealot_category=req.takealot_category,

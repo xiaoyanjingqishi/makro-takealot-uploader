@@ -178,17 +178,19 @@ def list_store_audits(
 def sync_store_audits(
     store_id: int = Query(..., description="店铺 ID"),
     max_pages: int = Query(25, ge=1, le=50, description="最大拉取批次数 (每页50条)"),
+    async_task: bool = Query(True, description="是否后台异步执行 (默认 True)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     store = _verify_store_access(current_user, store_id, db)
 
-    total_synced = 0
-    state_counts = {}
-    batch_size = 50
-
-    try:
+    def _do_sync(session_db, progress_cb=None, is_cancelled=None):
+        total_synced = 0
+        state_counts = {}
+        batch_size = 50
         for page_no in range(0, max_pages):
+            if is_cancelled and is_cancelled():
+                break
             res_data = MakroPortalService.fetch_in_progress_listings(
                 store=store,
                 page_no=page_no,
@@ -215,11 +217,10 @@ def sync_store_audits(
                     ]
                     if s_id.isdigit():
                         conds.append(Product.id == int(s_id))
-                    local_p = db.query(Product).filter(or_(*conds)).first()
+                    local_p = session_db.query(Product).filter(or_(*conds)).first()
 
-                # 查询是否已存在
                 existing = (
-                    db.query(MakroAuditListing)
+                    session_db.query(MakroAuditListing)
                     .filter(
                         MakroAuditListing.store_id == store.id,
                         MakroAuditListing.request_id == parsed["request_id"],
@@ -272,25 +273,76 @@ def sync_store_audits(
                         local_product_id=local_p.id if local_p else None,
                         synced_at=datetime.now()
                     )
-                    db.add(new_item)
+                    session_db.add(new_item)
 
                 total_synced += 1
 
-            db.commit()
+            session_db.commit()
+            if progress_cb:
+                progress_cb(total_synced, 0, f"已拉取在途审核第 {page_no + 1} 页 (累计 {total_synced} 件)")
 
             if not res_data.get("hasMore", False):
                 break
 
-        return {
-            "success": True,
-            "message": f"店铺 '{store.name}' 审核流转同步完成，共拉取与更新 {total_synced} 件记录",
-            "total_synced": total_synced,
-            "state_counts": state_counts
-        }
-    except Exception as e:
-        db.rollback()
-        logger.error(f"同步店铺 '{store.name}' (ID: {store_id}) 审核状态失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"同步审核状态失败: {str(e)}")
+        return total_synced, state_counts
+
+    if not async_task:
+        try:
+            total_synced, state_counts = _do_sync(db)
+            return {
+                "success": True,
+                "message": f"店铺 '{store.name}' 审核流转同步完成，共拉取与更新 {total_synced} 件记录",
+                "total_synced": total_synced,
+                "state_counts": state_counts
+            }
+        except Exception as e:
+            db.rollback()
+            logger.error(f"同步店铺 '{store.name}' (ID: {store_id}) 审核状态失败: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"同步审核状态失败: {str(e)}")
+
+    from ..services.task_manager import task_manager, TaskManager
+    from ..database import SessionLocal
+
+    task = task_manager.create_task(
+        task_type="SYNC_STORE_AUDITS",
+        name=f"同步在途审核流转 [{store.name}]",
+        total=0
+    )
+    task_id = task["id"]
+
+    def _worker(tm: TaskManager, tid: str):
+        thread_db = SessionLocal()
+        try:
+            def _progress(cur: int, tot: int, msg: str):
+                tm.update_progress(tid, current=cur, total=tot, current_title=msg)
+
+            tot, counts = _do_sync(
+                thread_db,
+                progress_cb=_progress,
+                is_cancelled=lambda: tm.is_cancelled(tid)
+            )
+            tm.finish_task(
+                tid,
+                status="SUCCESS",
+                message=f"店铺 '{store.name}' 审核流转同步完成，共拉取与更新 {tot} 件记录",
+                success_count=tot
+            )
+        except Exception as ex:
+            logger.error(f"同步店铺 [{store.name}] 在途审核后台任务异常: {ex}", exc_info=True)
+            tm.finish_task(
+                tid,
+                status="FAILED",
+                message=f"同步在途商品异常: {str(ex)}"
+            )
+        finally:
+            thread_db.close()
+
+    task_manager.start_task(task_id, _worker)
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": f"已在后台启动店铺 '{store.name}' 官方在途审核多批次同步任务"
+    }
 
 @router.get("/detail", summary="查看单件商品完整审核详情与错误诊断")
 def get_audit_detail(

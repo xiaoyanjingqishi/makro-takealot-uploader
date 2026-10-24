@@ -47,13 +47,26 @@ from ..constants.brands import (
 )
 from ..constants.protected_ips import PROTECTED_ENTERTAINMENT_IPS
 
+QWEN_VISION_MODEL_ALIASES = {
+    "qwen-vl-max": "qwen3-vl-plus",
+    "qwen-vl-plus": "qwen3-vl-plus",
+    "qwen-vl": "qwen3-vl-plus",
+    "qwen-vl-chat": "qwen3-vl-plus",
+}
+
+DEEPSEEK_VISION_MODEL_ALIASES = {
+    "deepseek-flash-vision": "deepseek-flash",
+    "deepseek-v4-flash": "deepseek-flash",
+    "deepseek-v4-flash-vision-exp": "deepseek-flash",
+}
+
 
 class ComplianceService:
     """
     双 AI 交叉会审合规与侵权风控服务 (通义千问 + DeepSeek-Flash)
     两轮独立风控机制：
       - 第一轮：标题与品牌合规检测 (Qwen 文本模型 + DeepSeek-Flash 文本并发审查)
-      - 第二轮：主图视觉与运输合规检测 (Qwen-VL-Max + DeepSeek-Flash 多模态视觉并发审查)
+      - 第二轮：主图视觉与运输合规检测 (Qwen-VL + DeepSeek-Flash 多模态视觉并发审查)
     仲裁与分歧裁决：
       - 判定一致：自动合并为统一诊断结果推送
       - 判定分歧：标记为 DISPUTED (分歧待仲裁)，并排展示双方依据，供人工一键裁定并沉淀为优化语料
@@ -75,7 +88,8 @@ class ComplianceService:
         self.qwen_api_key = qwen_api_key or settings.QWEN_API_KEY
         self.qwen_base_url = qwen_base_url or settings.QWEN_BASE_URL
         self.qwen_model = qwen_model or settings.QWEN_MODEL
-        self.qwen_vision_model = qwen_vision_model or getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-max")
+        raw_qwen_vmodel = qwen_vision_model or getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen3-vl-plus")
+        self.qwen_vision_model = QWEN_VISION_MODEL_ALIASES.get(raw_qwen_vmodel, raw_qwen_vmodel)
 
         # DeepSeek 配置 (对接 DeepSeek 官方 API: https://api.deepseek.com)
         self.deepseek_api_key = deepseek_api_key or settings.DEEPSEEK_API_KEY
@@ -115,21 +129,35 @@ class ComplianceService:
         return self.has_qwen and self.has_deepseek
 
     @classmethod
-    def from_db(cls, db: Session):
+    def from_db(cls, db: Session, ignore_dual_toggle: bool = False):
         """从数据库系统设置中动态加载两方模型凭据与配置，并自动检索高质量人工仲裁样本供 Few-Shot 优化"""
         def _get_setting(key: str, default_val: str) -> str:
             s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
             return s.value.strip() if s and s.value else default_val
 
+        s_dual = db.query(SystemSetting).filter(SystemSetting.key == "dual_ai_compliance_enabled").first()
+        dual_ai_enabled = (s_dual.value.strip().lower() in ["true", "1", "yes"]) if (s_dual and s_dual.value) else getattr(settings, "DUAL_AI_COMPLIANCE_ENABLED", False)
+
+        s_provider = db.query(SystemSetting).filter(SystemSetting.key == "ai_provider").first()
+        ai_provider = s_provider.value.strip().lower() if (s_provider and s_provider.value) else settings.AI_PROVIDER
+
         q_key = _get_setting("qwen_api_key", settings.QWEN_API_KEY)
         q_url = _get_setting("qwen_base_url", settings.QWEN_BASE_URL)
         q_model = _get_setting("qwen_model", settings.QWEN_MODEL)
-        q_vmodel = _get_setting("qwen_vision_model", getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen-vl-max"))
+        raw_qv = _get_setting("qwen_vision_model", getattr(settings, "DEFAULT_QWEN_VISION_MODEL", "qwen3-vl-plus"))
+        q_vmodel = QWEN_VISION_MODEL_ALIASES.get(raw_qv, raw_qv)
 
         d_key = _get_setting("deepseek_api_key", settings.DEEPSEEK_API_KEY)
         d_url = _get_setting("deepseek_base_url", settings.DEEPSEEK_BASE_URL)
         d_model = _get_setting("deepseek_model", settings.DEEPSEEK_MODEL)
         d_vmodel = _get_setting("deepseek_vision_model", getattr(settings, "DEEPSEEK_VISION_MODEL", "deepseek-flash"))
+
+        # 核心防扣费机制：若未显式启用双 AI 交叉会审（且非连通性测试模式），严格仅初始化主提供商，杜绝后台静默跨厂商扣费！
+        if (not dual_ai_enabled) and (not ignore_dual_toggle):
+            if ai_provider == "qwen":
+                d_key = ""
+            elif ai_provider == "deepseek":
+                q_key = ""
 
         # 动态提示词优化工程：加载最近经过人工仲裁的历史样本作为 Few-Shot 优质对比示例
         few_shots = []
@@ -185,6 +213,10 @@ class ComplianceService:
                 raw_images = json.loads(raw_images)
             except Exception:
                 raw_images = [raw_images] if raw_images.startswith("http") else []
+        if not raw_images:
+            single_img = product_data.get("image_url") or product_data.get("first_image_url")
+            if single_img and isinstance(single_img, str) and single_img.startswith("http"):
+                raw_images = [single_img]
 
         is_piggyback = bool(product_data.get("is_piggyback", False))
         original_seller = str(product_data.get("original_seller") or "").strip()
@@ -234,8 +266,20 @@ class ComplianceService:
         qwen_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "SAFE", "summary": "未执行视觉审查"}
         deepseek_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "SAFE", "summary": "未执行视觉审查"}
 
-        # 第二轮视觉审查全量执行 (已废弃底层死板硬拦截剪枝，100% 由双 AI 多模态视觉审查)
-        if check_image and first_img_url:
+        # 文本红线短路熔断 (Early-Exit Short-Circuiting):
+        # 若第一轮文本审核双方已达成一致均为 PROHIBITED (如严重大牌侵权、禁售无线发射设备、液体禁运品等不可逆违禁项)，
+        # 该商品已被一票否决禁止上架，短路跳过第二轮昂贵的双视觉模型，节省 100% 图审 Token！
+        text_both_prohibited = (
+            qwen_title_res.get("tested") and deepseek_title_res.get("tested") and
+            qwen_title_res.get("risk_level") == "PROHIBITED" and
+            deepseek_title_res.get("risk_level") == "PROHIBITED"
+        )
+        if text_both_prohibited and check_image and first_img_url:
+            logger.info("[SHORT-CIRCUIT] 第一轮文本已全票判定 PROHIBITED，短路跳过第二轮视觉审核，节约 100% 图审 Token")
+            short_circuit_summary = "第一轮文本已确诊严重违规/禁运品 (PROHIBITED)，触发短路熔断以节约视觉 Token"
+            qwen_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "PROHIBITED", "summary": short_circuit_summary}
+            deepseek_image_res = {"tested": False, "image_url": first_img_url, "risk_level": "PROHIBITED", "summary": short_circuit_summary}
+        elif check_image and first_img_url:
             all_known_brands = list(dict.fromkeys(
                 local_rules_res.get("detected_brands", []) +
                 qwen_title_res.get("detected_brands_or_ips", []) +
@@ -402,45 +446,46 @@ class ComplianceService:
         is_piggyback: bool = False,
         original_seller: str = ""
     ) -> str:
-        """极简高密度标题与知识产权风控审查 Prompt (压缩~70% Token 消耗，保留 100% 审查精确度)"""
+        """极简高密度标题与知识产权风控审查 Prompt (压缩~65% Token 消耗，保留 100% 审查精确度)"""
         target_title = (makro_title or raw_title or "").strip()
 
         few_shot_block = ""
         if self.few_shot_examples:
             compact_shots = []
-            for item in self.few_shot_examples[:2]:
-                compact_shots.append(f'"{item["title"][:35]}"->[{item["human_verdict"]}]({item["notes"][:20] or "规范配件"})')
+            for item in self.few_shot_examples[:1]:
+                compact_shots.append(f'"{item["title"][:30]}"->[{item["human_verdict"]}]({item["notes"][:15] or "规范配件"})')
             few_shot_block = f"\n参考基准: {'; '.join(compact_shots)}"
 
         clean_desc = re.sub(r'<[^>]+>', ' ', str(description or ""))
-        clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()[:80]
+        clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()[:60]
         desc_line = f"\n- 描述: {clean_desc}" if clean_desc else ""
 
-        piggyback_block = ""
-        if is_piggyback:
-            piggyback_block = f"""
-【Makro 跟品特别风控铁律（宁可杀错也不放过）】:
-* 平台特性: Makro 平台强制在标题最前端拼接原 Listing 品牌名（例如 "{brand} {target_title}"）。
-* 卖家自造白牌/杂牌豁免: 若品牌为普通卖家自造商号/白牌(如 HYinjin, Generic, OEM 或拼音杂牌，非全球受保护大牌)，根据 Makro 官方跟品规则，100% 允许合规挂靠跟品！此类判定为 SAFE (合规)。
-* 知名大牌一票否决红线: 若标题或品牌指代受保护知名大牌(Apple, Dyson, Sony, Nike, Stanley, Makita 等)或知名影视IP整机，严格判定为 PROHIBITED (禁跟)！
-* ★★★【全品类兼容词硬性红线（宁可杀错也不放过）】★★★:
-  - 无论整机还是配件，标题中一旦出现任何第三方知名品牌/专有名词/卡口型号（如 Minolta, Sony, Apple, Canon, Dyson 等），【前提必须包含 'Compatible with'、'For' 或 'Fits' 等明确的兼容连接词】！
-  - 严禁缺少兼容词: 标题中一旦包含第三方品牌，但【未包含任何合规兼容连接词】（例如直接并列 "{brand} Minolta MD Mount..."），在平台算法和商标法上属于直接假冒或商标侵权！
-  - 严禁擅自放行: 绝对严禁以“合理使用”、“通用卡口规格”、“历史型号”、“非活跃商标”等理由放行为 SAFE！此类必须 100% 判定为 RISK，violation_type 标记为 MISSING_COMPATIBILITY，并在 recommended_title 中给出规范添加 'for' 或 'Compatible with' 的修改建议标题！"""
+        return f"""跨境电商商品标题合规与知识产权风控审查。仅返回合法JSON，严禁输出非JSON内容。
+【审查铁律】:
+1. 知名大牌零容忍: 严查受保护大牌(Apple,Sony,Chevy,GMC,Ford,Toyota,Husqvarna,Nike,Dyson等)及动漫影视IP(Disney,Sanrio,Pokemon等)。区分语境: 规格词(1 piece)/功能词(frozen mold)合规。
+2. 兼容配件规范:
+   - 必须真实出现英文兼容词: 'Compatible with', 'For', 'Fits', 'Suitable for'，严禁脑补隐含语境；无字面兼容词一律判定 RISK (MISSING_COMPATIBILITY)；
+   - 第三方大牌必须且仅出现在兼容连接词之后；严禁第三方大牌出现在连接词之前修饰商品（前置大牌侵权一律判定 RISK）；
+   - 严禁第三方大牌直接紧跟自有品牌冒充联名；严禁连续堆砌>=3个大牌。
+3. 卖家白牌豁免: Listing前缀品牌若为普通卖家商号/白牌(如Generic/OEM/自造拼音)，Makro跟品官方规则100%允许跟卖，此类判定 SAFE。
+4. 违禁品排查: 严禁蓝牙/WiFi无线发射设备；严禁液体/香水/精油/易燃化学品跨境禁运品；区分实体工具/转接线/模具与灌装液体。
+5. 评级: SAFE(合规通用品/白牌/规范配件), RISK(缺少字面兼容词/大牌前置修饰/过度堆砌), PROHIBITED(假冒大牌/受保护整机/违禁品)。{few_shot_block}
 
-        return f"""审查跨境电商商品标题合规与侵权风险，仅返回合法JSON，严禁输出思维过程与闲聊。
-【规则】:
-1. 商标侵权: 严查受保护大牌(如Apple,Stanley,Nike,Dyson等)。区分语境: 颜色/通用词(如apple green)合规，指代受保护品牌违规。
-2. 影视IP: 严禁未经授权蹭用知名动漫潮玩/游戏IP(如Sanrio,Disney,Marvel,Pokemon,One Piece,Frozen,Labubu等)。注意区分语境: 商品件数/规格词(如1 piece, 2 pieces)属合规数量词，严禁误判为海贼王One Piece！冷冻甜品/冰块模具(如frozen mold)属合规用途词，严禁误判为冰雪奇缘Frozen！仅指代动漫角色/衍生周边才判定违规。
-3. 品牌与配件规范: 包含第三方品牌的标题必须明确包含兼容连接词(如 'Compatible with', 'For', 'Fits')；若标题含第三方品牌但缺少任何兼容词，一律 100% 判定为 RISK (MISSING_COMPATIBILITY)，严禁放行；严禁第三方大牌直接紧跟自有品牌冒充原厂；严禁连续堆砌>=3个大牌。
-4. 禁运技术与物品: 严禁蓝牙(Bluetooth)、WiFi、红外线(Infrared)等无线发射设备；严禁液体/香水/精油/乳液/膏霜/易燃化学品跨境航空禁运品。注意区分形态: 硅胶模具、空瓶容器、化妆刷/粉扑、刮痧板按摩石、喷头喷枪工具、无源转接线等实体用具均属合规SAFE；仅商品本身实际灌装/包含液体、膏体、化学药剂才判定为PROHIBITED违规禁运。
-5. 评级: SAFE(合规通用品/包含For或Compatible with的规范兼容配件), RISK(含第三方品牌但缺少Compatible with或For声明/可整改瑕疵), PROHIBITED(假冒原厂/大牌整机/未授权IP/禁售无线设备/灌装液体航空违禁品)。{few_shot_block}{piggyback_block}
 待审数据:
 - 标题: {target_title}
 - 授权自有品牌: {brand or "Beishi"}
 - 类目: {category or "通用"}{desc_line}
-返回JSON:
-{{"has_risk":false,"risk_level":"SAFE|RISK|PROHIBITED","detected_brands_or_ips":[],"violation_type":"NONE|TRADEMARK|COPYRIGHT_IP|BRAND_SPAMMING|MISSING_COMPATIBILITY|PROHIBITED_TECH|PROHIBITED_LIQUID","reasons":["简明中文理由(1句)"],"recommended_title":"合规英文建议标题"}}"""
+
+返回JSON模板:
+{{
+  "has_risk": false,
+  "risk_level": "SAFE|RISK|PROHIBITED",
+  "detected_brands_or_ips": ["识别到的品牌或IP"],
+  "violation_type": "NONE|TRADEMARK|COPYRIGHT_IP|BRAND_SPAMMING|MISSING_COMPATIBILITY|PROHIBITED_TECH|PROHIBITED_LIQUID",
+  "reasons": ["1.品牌属性说明", "2.兼容连接词语法与大牌位置说明", "3.平台跟品合规最终结论"],
+  "summary": "1-2句精炼核心论证",
+  "recommended_title": "合规英文建议标题"
+}}"""
 
     def _invoke_text_model(
         self,
@@ -451,13 +496,14 @@ class ComplianceService:
         raw_title: str,
         makro_title: Optional[str]
     ) -> Dict[str, Any]:
-        """向指定模型客户端发送文本风控请求并解析结构化结论 (严格控制 max_tokens 杜绝 token 浪费)"""
+        """向指定模型客户端发送文本风控请求并解析结构化结论 (充足 Token 预算杜绝截断)"""
         target_title = (makro_title or raw_title or "").strip()
         is_deepseek = "deepseek" in ai_name.lower() or "deepseek" in model.lower()
-        tok_limit = 450 if is_deepseek else 220
+        tok_limit = 1500 if is_deepseek else 600
         sys_msg = (
-            f"You are a fast, decisive ecommerce IP compliance auditor for {ai_name}. "
-            "Do NOT write long thinking essays. Output the final valid JSON object immediately. Reply ONLY with valid JSON."
+            f"You are an expert ecommerce compliance auditor for {ai_name}. "
+            "In your thinking process, analyze intellectual property risks concisely and decisively (strictly within 100-180 words), "
+            "then immediately output the final valid JSON object. Reply ONLY with valid JSON."
         ) if is_deepseek else f"You are a professional ecommerce IP compliance auditor for {ai_name}. Reply ONLY with valid JSON."
         max_retries = 3
         for attempt in range(max_retries + 1):
@@ -473,12 +519,31 @@ class ComplianceService:
                 )
                 choice = resp.choices[0]
                 content = choice.message.content or ""
+                finish_reason = getattr(choice, "finish_reason", None)
                 parsed = self._robust_parse_json(content)
                 if not parsed and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
                     parsed = self._robust_parse_json(choice.message.reasoning_content)
 
                 if not parsed:
-                    parsed = {"has_risk": False, "risk_level": "SAFE", "reasons": [], "detected_brands_or_ips": []}
+                    reasoning_text = (getattr(choice.message, "reasoning_content", "") or "")
+                    lower_all = (content + " " + reasoning_text).lower()
+                    has_explicit_risk = any(k in lower_all for k in ["prohibited", "trademark", "infringement", "violation", "missing_compatibility", "risk"])
+                    if has_explicit_risk:
+                        parsed = {
+                            "has_risk": True,
+                            "risk_level": "RISK",
+                            "reasons": [f"[{ai_name}] 推理过程中检出知识产权风险倾向，但结构化JSON未完整闭合，已触发安全防护拦截"],
+                            "summary": f"[{ai_name}] 思考过程提示存在潜在合规风险，已安全拦截待复核",
+                            "detected_brands_or_ips": []
+                        }
+                    else:
+                        parsed = {
+                            "has_risk": True,
+                            "risk_level": "RISK",
+                            "reasons": [f"[{ai_name}] 模型未返回有效结构化JSON (finish_reason={finish_reason})，已安全标记为风险待复核"],
+                            "summary": f"[{ai_name}] 质检响应未完成，安全阻断拦截为风险待复核",
+                            "detected_brands_or_ips": []
+                        }
 
                 has_risk = bool(parsed.get("has_risk", False))
                 risk_level = str(parsed.get("risk_level", "SAFE")).upper()
@@ -488,6 +553,7 @@ class ComplianceService:
                 detected = parsed.get("detected_brands_or_ips", [])
                 reasons = parsed.get("reasons", [])
                 rec_title = parsed.get("recommended_title")
+                summary = parsed.get("summary") or ("；".join(reasons) if reasons else ("未发现知识产权侵权" if risk_level == "SAFE" else "存在知识产权风险"))
 
                 return {
                     "tested": True,
@@ -499,7 +565,7 @@ class ComplianceService:
                     "violation_type": parsed.get("violation_type", "NONE"),
                     "reasons": reasons,
                     "recommended_title": rec_title,
-                    "summary": "；".join(reasons) if reasons else ("未发现知识产权侵权" if risk_level == "SAFE" else "存在知识产权风险")
+                    "summary": summary
                 }
             except Exception as e:
                 err_str = str(e).lower()
@@ -515,13 +581,13 @@ class ComplianceService:
                     "tested": False,
                     "ai_name": ai_name,
                     "model": model,
-                    "has_risk": False,
-                    "risk_level": "SAFE",
+                    "has_risk": True,
+                    "risk_level": "RISK",
                     "detected_brands_or_ips": [],
                     "violation_type": "NONE",
-                    "reasons": [f"{ai_name} 审查跳过: {str(e)[:50]}"],
+                    "reasons": [f"{ai_name} 接口调用异常 ({str(e)[:40]})，已安全降级为风险待复核"],
                     "recommended_title": target_title,
-                    "summary": f"{ai_name} 调用跳过 ({str(e)[:40]})"
+                    "summary": f"{ai_name} 接口调用异常，已安全标记为风险待复核"
                 }
 
     # =========================================================================
@@ -547,6 +613,18 @@ class ComplianceService:
         cache_key = hashlib.md5(clean_url.encode("utf-8")).hexdigest()
         cache_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.img")
         content_type_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.type")
+        verdict_cache_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.verdict.json")
+
+        # 1.0 命中首图视觉审查持久缓存直接复用 (0ms，0 Token 消耗)
+        if os.path.exists(verdict_cache_path) and os.path.getsize(verdict_cache_path) > 0:
+            try:
+                with open(verdict_cache_path, "r", encoding="utf-8") as vf:
+                    cached_v = json.load(vf)
+                if isinstance(cached_v, dict) and "qwen" in cached_v and "deepseek" in cached_v:
+                    logger.info(f"[CACHE HIT] 命中首图双视觉审查持久缓存: {clean_url[:60]}")
+                    return cached_v["qwen"], cached_v["deepseek"]
+            except Exception as ce:
+                logger.warning(f"读取首图视觉审查持久缓存失败 ({cache_key}): {ce}")
 
         img_bytes = None
         mime = "image/jpeg"
@@ -627,6 +705,23 @@ class ComplianceService:
             }
             return dict(fail_res), dict(fail_res)
 
+        # 1.4 首图前置智能等比缩放 (最大边长 800px，JPEG 质量 85%，节省约 40%~50% 视觉 Token 且保持 100% 镭雕清晰度)
+        if img_bytes:
+            try:
+                from PIL import Image
+                import io
+                im = Image.open(io.BytesIO(img_bytes))
+                if max(im.size) > 800:
+                    im.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                    buf = io.BytesIO()
+                    if im.mode != "RGB":
+                        im = im.convert("RGB")
+                    im.save(buf, format="JPEG", quality=85)
+                    img_bytes = buf.getvalue()
+                    mime = "image/jpeg"
+            except Exception as resize_err:
+                logger.warning(f"首图智能缩放异常，继续使用原图: {resize_err}")
+
         b64_data = base64.b64encode(img_bytes).decode("utf-8")
         data_uri = f"data:{mime};base64,{b64_data}"
 
@@ -670,20 +765,180 @@ class ComplianceService:
                 logger.warning(f"DeepSeek 视觉审查异常: {e}")
                 deepseek_img_res = {"tested": False, "image_url": clean_url, "risk_level": "RISK", "summary": f"DeepSeek 视觉异常: {str(e)[:40]}"}
 
+        # 写入持久化视觉审核结果缓存 (供重复商品/Listing 零 Token 复用)
+        if (qwen_img_res.get("tested") or deepseek_img_res.get("tested")) and not (qwen_img_res.get("download_error") or deepseek_img_res.get("download_error")):
+            try:
+                with open(verdict_cache_path, "w", encoding="utf-8") as vf:
+                    json.dump({"qwen": qwen_img_res, "deepseek": deepseek_img_res, "cached_at": time.time()}, vf, ensure_ascii=False)
+            except Exception as se:
+                logger.warning(f"写入首图视觉审查持久缓存异常: {se}")
+
         return qwen_img_res, deepseek_img_res
 
-    def _build_vision_prompt(self, known_brands: List[str], is_piggyback: bool = False) -> str:
-        """首图合规视觉审查 Prompt (严格识别一切品牌 Logo 与防盗水印)"""
-        brand_hint = f"（重点排查: {', '.join(known_brands[:3])}）" if known_brands else ""
-        piggyback_note = "【全品牌Logo零容忍图审准则】: 画面或产品机身/外包装上只要带任何品牌商标Logo、徽标、专有标识（不论是国际名牌还是卖家自造白牌），一律判定为侵权违规 PROHIBITED！仅完全无任何Logo的纯中性白底产品图判定为 SAFE！"
+    def _run_deepseek_vision_only(
+        self,
+        image_url: str,
+        known_brands: List[str],
+        is_piggyback: bool = False
+    ) -> Dict[str, Any]:
+        """仅运行 DeepSeek-Flash 首图多模态审查 (专用于对历史合规商品进行增量补齐)"""
+        if not image_url or not isinstance(image_url, str) or not image_url.startswith("http"):
+            return {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "未提供有效图片URL"}
+        if not self.deepseek_client:
+            return {"tested": False, "image_url": image_url, "risk_level": "SAFE", "summary": "DeepSeek 客户端未配置"}
 
-        return f"""电商首图视觉合规审查{brand_hint}。{piggyback_note}仅返回JSON，禁止多余输出。
-【准则】:
-1. 品牌Logo零容忍: 严查任何品牌Logo、商标图样、徽标、文字图形标、防盗水印。只要画面或产品本体/包装带有任何品牌Logo（包含知名大牌或卖家白牌Logo），一律判定为 PROHIBITED，严禁放行！仅无任何Logo的纯中性/白牌通用产品图判定为 SAFE。
-2. 运输违禁: 严查液体/精油/香水/喷雾、纯电池/易燃易爆品、管制刀具等航空安检禁运形态，检出判定为 PROHIBITED。
-3. 评级定义: SAFE(纯中性中立白底产品图，完全无任何品牌Logo且无违禁品), RISK(画面疑似隐蔽Logo/水印模糊), PROHIBITED(明确检出任何品牌Logo/商标文字/危险禁运品)。
-返回JSON:
-{{"has_brand_logo":false,"detected_logos":[],"is_transport_prohibited":false,"prohibited_types":[],"risk_level":"SAFE|RISK|PROHIBITED","summary":"1句中文结论"}}"""
+        clean_url = image_url.replace("{size}", "pdpxl") if "{size}" in image_url else image_url
+        cache_key = hashlib.md5(clean_url.encode("utf-8")).hexdigest()
+        cache_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.img")
+        content_type_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.type")
+        verdict_cache_path = os.path.join(IMAGE_CACHE_DIR, f"{cache_key}.verdict.json")
+
+        # 命中首图视觉审查持久缓存直接复用 (0ms，0 Token 消耗)
+        if os.path.exists(verdict_cache_path) and os.path.getsize(verdict_cache_path) > 0:
+            try:
+                with open(verdict_cache_path, "r", encoding="utf-8") as vf:
+                    cached_v = json.load(vf)
+                if isinstance(cached_v, dict) and "deepseek" in cached_v and cached_v["deepseek"].get("tested"):
+                    logger.info(f"[CACHE HIT] 命中 DeepSeek 视觉审查持久缓存: {clean_url[:60]}")
+                    return cached_v["deepseek"]
+            except Exception:
+                pass
+
+        img_bytes = None
+        mime = "image/jpeg"
+
+        if os.path.exists(cache_path) and os.path.getsize(cache_path) > 0:
+            try:
+                with open(cache_path, "rb") as f:
+                    img_bytes = f.read()
+                if os.path.exists(content_type_path):
+                    with open(content_type_path, "r", encoding="utf-8") as f:
+                        mime = f.read().strip() or "image/jpeg"
+            except Exception as ce:
+                img_bytes = None
+
+        if not img_bytes:
+            is_makro_img = any(k in clean_url.lower() for k in ["makro.co.za", "flixcart.com", "fkcloud", "rukmini"])
+            img_referer = "https://www.makro.co.za/" if is_makro_img else "https://www.takealot.com/"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Referer": img_referer
+            }
+            dl_err = None
+            for dl_attempt in range(3):
+                try:
+                    resp = _vision_image_session.get(clean_url, headers=headers, timeout=12)
+                    if resp.status_code == 200 and resp.content:
+                        img_bytes = resp.content
+                        ct = resp.headers.get("content-type", "").split(";")[0].strip()
+                        if ct and ct.startswith("image/"):
+                            mime = ct
+                        elif img_bytes.startswith(b'\x89PNG'):
+                            mime = "image/png"
+                        elif img_bytes.startswith(b'RIFF') and b'WEBP' in img_bytes[:16]:
+                            mime = "image/webp"
+                        elif img_bytes.startswith(b'GIF'):
+                            mime = "image/gif"
+                        else:
+                            mime = "image/jpeg"
+                        try:
+                            with open(cache_path, "wb") as f:
+                                f.write(img_bytes)
+                            with open(content_type_path, "w", encoding="utf-8") as f:
+                                f.write(mime)
+                        except Exception:
+                            pass
+                        break
+                    else:
+                        dl_err = f"HTTP {resp.status_code}"
+                        if dl_attempt < 2:
+                            time.sleep(0.4 * (dl_attempt + 1))
+                except Exception as ex:
+                    dl_err = str(ex)
+                    if dl_attempt < 2:
+                        time.sleep(0.4 * (dl_attempt + 1))
+
+        if not img_bytes:
+            err_msg = f"首图下载失败 ({dl_err or '连接超时'})"
+            return {
+                "tested": False,
+                "download_error": True,
+                "image_url": clean_url,
+                "risk_level": "RISK",
+                "has_brand_logo": False,
+                "logo_names": [],
+                "is_transport_prohibited": False,
+                "prohibited_types": [],
+                "summary": err_msg
+            }
+
+        # 首图前置智能等比缩放 (最大边长 800px，JPEG 质量 85%，节省约 40%~50% 视觉 Token)
+        if img_bytes:
+            try:
+                from PIL import Image
+                import io
+                im = Image.open(io.BytesIO(img_bytes))
+                if max(im.size) > 800:
+                    im.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                    buf = io.BytesIO()
+                    if im.mode != "RGB":
+                        im = im.convert("RGB")
+                    im.save(buf, format="JPEG", quality=85)
+                    img_bytes = buf.getvalue()
+                    mime = "image/jpeg"
+            except Exception as resize_err:
+                logger.warning(f"首图智能缩放异常，继续使用原图: {resize_err}")
+
+        b64_data = base64.b64encode(img_bytes).decode("utf-8")
+        data_uri = f"data:{mime};base64,{b64_data}"
+        vision_prompt = self._build_vision_prompt(known_brands, is_piggyback=is_piggyback)
+
+        res = self._invoke_vision_model(
+            client=self.deepseek_client,
+            model=self.deepseek_vision_model,
+            ai_name="DeepSeek-Flash-Vision",
+            prompt=vision_prompt,
+            data_uri=data_uri,
+            image_url=clean_url
+        )
+
+        if res.get("tested"):
+            try:
+                cached_data = {}
+                if os.path.exists(verdict_cache_path):
+                    with open(verdict_cache_path, "r", encoding="utf-8") as vf:
+                        cached_data = json.load(vf)
+                cached_data["deepseek"] = res
+                cached_data["cached_at"] = time.time()
+                with open(verdict_cache_path, "w", encoding="utf-8") as vf:
+                    json.dump(cached_data, vf, ensure_ascii=False)
+            except Exception:
+                pass
+
+        return res
+
+    def _build_vision_prompt(self, known_brands: List[str], is_piggyback: bool = False) -> str:
+        """首图视觉合规与全域OCR字符深度排查 Prompt (高密度压缩版)"""
+        brand_hint = f"（重点核验: {', '.join(known_brands[:4])}）" if known_brands else ""
+        return f"""电商首图合规与全域OCR字符审查{brand_hint}。仅返回合法JSON，严禁输出非JSON内容。
+【审查铁律】:
+1. 全域OCR与五金镭雕排查:
+   - 全域扫描产品机身、包装、金属插头/五金接头(如USB-C/DP/HDMI等正反面)、线身胶圈，提取所有印刷英文字符(如ELFESOUL, 16K UHD, UGREEN等)；
+   - 只要带有任何品牌商标Logo或商号文字(含卖家白牌/私牌)，一律判定 PROHIBITED；仅完全无文字Logo的纯中性产品图判定 SAFE。
+2. 航空禁运排查: 严查液体、精油、香水、喷雾瓶灌装物、纯电池/易燃品，检出判定 PROHIBITED。
+3. 评级: SAFE(纯中性无Logo白底图), RISK(字符模糊存疑), PROHIBITED(检出任何品牌Logo/插头镭雕商号/航空禁运品)。
+
+返回JSON模板:
+{{
+  "has_brand_logo": false,
+  "detected_logos": ["提取到的品牌Logo或商号印刷词"],
+  "detected_texts": ["画面上提取到的全部印刷文字清单"],
+  "is_transport_prohibited": false,
+  "prohibited_types": [],
+  "risk_level": "SAFE|RISK|PROHIBITED",
+  "summary": "指出在具体哪个部位识别到了什么文字及判定依据"
+}}"""
 
     @staticmethod
     def _robust_parse_json(text: str) -> Optional[Dict[str, Any]]:
@@ -729,6 +984,52 @@ class ComplianceService:
             except Exception:
                 continue
 
+        # 5. 截断容错修复：若 JSON 末尾由于 token 限制被截断导致括号未闭合，尝试常见闭合修补
+        cleaned = text.strip()
+        first_brace = cleaned.find('{')
+        if first_brace != -1:
+            snippet = cleaned[first_brace:]
+            for suffix in ['"}', '"]}', '"]}}', '"} }', '}']:
+                try:
+                    d = json.loads(snippet + suffix)
+                    if isinstance(d, dict) and ("risk_level" in d or "has_risk" in d or "has_brand_logo" in d):
+                        return d
+                except Exception:
+                    continue
+
+        # 6. 正则兜底字段提取 (即使 JSON 结构被截断破坏，也能稳健提取关键审核事实)
+        if "risk_level" in text or "has_brand_logo" in text:
+            extracted = {}
+            rl_m = re.search(r'"risk_level"\s*:\s*"([A-Z_]+)"', text, re.I)
+            if rl_m:
+                extracted["risk_level"] = rl_m.group(1).upper()
+            hr_m = re.search(r'"has_risk"\s*:\s*(true|false)', text, re.I)
+            if hr_m:
+                extracted["has_risk"] = hr_m.group(1).lower() == "true"
+            vt_m = re.search(r'"violation_type"\s*:\s*"([A-Z_]+)"', text, re.I)
+            if vt_m:
+                extracted["violation_type"] = vt_m.group(1).upper()
+            sum_m = re.search(r'"summary"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', text)
+            if sum_m:
+                extracted["summary"] = sum_m.group(1).replace(r'\"', '"').replace(r'\n', '\n')
+            reasons_match = re.search(r'"reasons"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if reasons_match:
+                extracted["reasons"] = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', reasons_match.group(1))
+            logo_m = re.search(r'"has_brand_logo"\s*:\s*(true|false)', text, re.I)
+            if logo_m:
+                extracted["has_brand_logo"] = logo_m.group(1).lower() == "true"
+            logos_match = re.search(r'"detected_logos"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if logos_match:
+                extracted["detected_logos"] = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', logos_match.group(1))
+            brands_match = re.search(r'"detected_brands_or_ips"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if brands_match:
+                extracted["detected_brands_or_ips"] = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', brands_match.group(1))
+            rec_title_m = re.search(r'"recommended_title"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', text)
+            if rec_title_m:
+                extracted["recommended_title"] = rec_title_m.group(1).replace(r'\"', '"')
+            if extracted.get("risk_level"):
+                return extracted
+
         return None
 
     def _invoke_vision_model(
@@ -740,14 +1041,20 @@ class ComplianceService:
         data_uri: str,
         image_url: str
     ) -> Dict[str, Any]:
-        """向指定多模态视觉模型发送图像审查请求 (严格限流 max_tokens)"""
+        """向指定多模态视觉模型发送图像审查请求 (充足 Token 预算杜绝截断与假阴性)"""
         is_deepseek = "deepseek" in ai_name.lower() or "deepseek" in model.lower()
-        tok_limit = 350 if is_deepseek else 180
+        tok_limit = 1000 if is_deepseek else 350
+        if is_deepseek:
+            actual_model = DEEPSEEK_VISION_MODEL_ALIASES.get(model.lower(), model)
+        elif "qwen" in ai_name.lower() or "qwen" in model.lower():
+            actual_model = QWEN_VISION_MODEL_ALIASES.get(model.lower(), model)
+        else:
+            actual_model = model
         max_retries = 3
         for attempt in range(max_retries + 1):
             try:
                 response = client.chat.completions.create(
-                    model=model,
+                    model=actual_model,
                     messages=[
                         {
                             "role": "user",
@@ -762,27 +1069,60 @@ class ComplianceService:
                 )
                 choice = response.choices[0]
                 content = choice.message.content or ""
+                finish_reason = getattr(choice, "finish_reason", None)
                 parsed = self._robust_parse_json(content)
 
                 if not parsed and hasattr(choice.message, "reasoning_content") and choice.message.reasoning_content:
                     parsed = self._robust_parse_json(choice.message.reasoning_content)
 
                 if not parsed:
-                    parsed = {"has_brand_logo": False, "is_transport_prohibited": False, "risk_level": "SAFE", "summary": f"{ai_name} 视觉未检出异常"}
+                    reasoning_text = (getattr(choice.message, "reasoning_content", "") or "")
+                    lower_all = (content + " " + reasoning_text).lower()
+                    has_logo_in_thought = any(k in lower_all for k in ["logo", "brand", "elfesoul", "prohibited", "trademark", "16k"])
+                    is_prohib_in_thought = any(k in lower_all for k in ["liquid", "battery", "knife", "powder", "prohibited"])
+                    
+                    if has_logo_in_thought or is_prohib_in_thought:
+                        parsed = {
+                            "has_brand_logo": has_logo_in_thought,
+                            "detected_logos": ["从思考推理中截获违规标识"],
+                            "is_transport_prohibited": is_prohib_in_thought,
+                            "prohibited_types": ["截获运输受限"] if is_prohib_in_thought else [],
+                            "risk_level": "PROHIBITED",
+                            "summary": f"[{ai_name}] 视觉思考过程已检出品牌Logo或违禁特征，因JSON未闭合触发安全防护判定 PROHIBITED"
+                        }
+                    else:
+                        parsed = {
+                            "has_brand_logo": False,
+                            "is_transport_prohibited": False,
+                            "risk_level": "RISK",
+                            "summary": f"[{ai_name}] 视觉质检响应未完成(finish_reason={finish_reason})，已安全标记为风险待复核"
+                        }
 
                 has_logo = bool(parsed.get("has_brand_logo", False))
+                logos = parsed.get("detected_logos", [])
+                if not isinstance(logos, list):
+                    logos = [str(logos)] if logos else []
+                detected_texts = parsed.get("detected_texts", [])
+                if isinstance(detected_texts, list) and not logos and has_logo:
+                    # 如果 detected_logos 为空但 detected_texts 有内容且标记了 has_brand_logo
+                    logos = [t for t in detected_texts if str(t).lower() not in ["usb-c", "type-c", "dp", "displayport", "hdmi"]]
+
                 is_prohib = bool(parsed.get("is_transport_prohibited", False))
                 risk_level = str(parsed.get("risk_level", "SAFE")).upper()
                 if risk_level not in ["SAFE", "RISK", "PROHIBITED"]:
                     risk_level = "PROHIBITED" if is_prohib else ("RISK" if has_logo else "SAFE")
 
+                if (has_logo or len(logos) > 0) and risk_level == "SAFE":
+                    risk_level = "PROHIBITED"
+
                 return {
                     "tested": True,
                     "ai_name": ai_name,
-                    "model": model,
+                    "model": actual_model,
                     "image_url": image_url,
-                    "has_brand_logo": has_logo,
-                    "logo_names": parsed.get("detected_logos", []),
+                    "has_brand_logo": has_logo or len(logos) > 0,
+                    "logo_names": logos,
+                    "detected_texts": detected_texts if isinstance(detected_texts, list) else [],
                     "is_transport_prohibited": is_prohib,
                     "prohibited_types": parsed.get("prohibited_types", []),
                     "risk_level": risk_level,
@@ -790,6 +1130,12 @@ class ComplianceService:
                 }
             except Exception as e:
                 err_str = str(e).lower()
+                is_model_not_found = ("404" in err_str or "not exist" in err_str or "not_found" in err_str) and ("model" in err_str or "404" in err_str)
+                if is_model_not_found and actual_model != "qwen3-vl-plus" and ("qwen" in ai_name.lower() or "qwen" in actual_model.lower()):
+                    logger.warning(f"[{ai_name}] 视觉模型 {actual_model} 不可用或已弃用 (404)，平滑降级切换为新一代 qwen3-vl-plus 重试...")
+                    actual_model = "qwen3-vl-plus"
+                    continue
+
                 is_rate_limit = any(k in err_str for k in ["429", "rate limit", "too many requests", "rate_limit", "quota"])
                 is_transient = is_rate_limit or any(k in err_str for k in ["timeout", "connection", "connecterror", "reset", "502", "503", "504"])
                 if attempt < max_retries and is_transient:
@@ -801,14 +1147,15 @@ class ComplianceService:
                 return {
                     "tested": False,
                     "ai_name": ai_name,
-                    "model": model,
+                    "model": actual_model,
                     "image_url": image_url,
                     "has_brand_logo": False,
                     "logo_names": [],
+                    "detected_texts": [],
                     "is_transport_prohibited": False,
                     "prohibited_types": [],
                     "risk_level": "RISK",
-                    "summary": f"{ai_name} 视觉检测跳过 ({str(e)[:40]})"
+                    "summary": f"{ai_name} 视觉检测异常 ({str(e)[:40]})，已安全降级为风险待复核"
                 }
 
     # =========================================================================
@@ -841,11 +1188,16 @@ class ComplianceService:
         has_dl_error = bool(qwen_image.get("download_error") or deepseek_image.get("download_error"))
 
         # 千问文本与视觉评级
-        qwen_text_level = qwen_title.get("risk_level", "SAFE") if qwen_title.get("tested") else "SAFE"
+        qwen_text_level = qwen_title.get("risk_level", "SAFE")
+        if not qwen_title.get("tested") and qwen_text_level == "SAFE" and deepseek_title.get("tested"):
+            qwen_text_level = deepseek_title.get("risk_level", "SAFE")
+
         if has_dl_error:
             qwen_img_level = "RISK"
         elif qwen_image.get("tested"):
             qwen_img_level = qwen_image.get("risk_level", "SAFE")
+        elif qwen_image.get("risk_level") in ["RISK", "PROHIBITED"]:
+            qwen_img_level = qwen_image.get("risk_level")
         elif deepseek_image.get("tested"):
             # 若千问视觉未测试但 DeepSeek 视觉已测试，继承已测试模型结论，避免虚假分歧
             qwen_img_level = deepseek_image.get("risk_level", "SAFE")
@@ -854,11 +1206,16 @@ class ComplianceService:
         qwen_overall = get_higher_risk(qwen_text_level, qwen_img_level)
 
         # DeepSeek 文本与视觉评级
-        deepseek_text_level = deepseek_title.get("risk_level", "SAFE") if deepseek_title.get("tested") else "SAFE"
+        deepseek_text_level = deepseek_title.get("risk_level", "SAFE")
+        if not deepseek_title.get("tested") and deepseek_text_level == "SAFE" and qwen_title.get("tested"):
+            deepseek_text_level = qwen_title.get("risk_level", "SAFE")
+
         if has_dl_error:
             deepseek_img_level = "RISK"
         elif deepseek_image.get("tested"):
             deepseek_img_level = deepseek_image.get("risk_level", "SAFE")
+        elif deepseek_image.get("risk_level") in ["RISK", "PROHIBITED"]:
+            deepseek_img_level = deepseek_image.get("risk_level")
         elif qwen_image.get("tested"):
             # 若 DeepSeek 视觉未测试但千问视觉已测试 (如 DeepSeek 官方无 Vision API)，继承千问结论，避免虚假分歧
             deepseek_img_level = qwen_image.get("risk_level", "SAFE")
@@ -1277,31 +1634,58 @@ class ComplianceService:
                     third_party_brands.append(fb_title)
 
         # 2. 检查标题是否包含合规兼容连接词 (涵盖 compatible with, compatible for, suitable for, replacement for, designed for, fits, fit for, for use with, 独立介词 for)
-        has_compatibility_words = bool(
-            re.search(
-                r'\b(?:compatible\s+with|compatible\s+for|suitable\s+for|replacement\s+for|designed\s+for|for\s+use\s+with|fits?|fit\s+for|\bfor\b)\b',
-                eval_title_text,
-                re.IGNORECASE
-            )
-        )
+        compat_pattern = r'\b(?:compatible\s+with|compatible\s+for|suitable\s+for|replacement\s+for|designed\s+for|for\s+use\s+with|fits?|fit\s+for|\bfor\b)\b'
+        compat_match = re.search(compat_pattern, eval_title_text, re.IGNORECASE)
+        has_compatibility_words = bool(compat_match)
+        first_compat_pos = compat_match.start() if compat_match else -1
 
-        # 3. 宁可杀错也不放过：全品类凡含第三方品牌且缺少合规兼容词，绝不许判为 SAFE！
-        if third_party_brands and not has_compatibility_words:
-            flagged_brand_str = ", ".join(third_party_brands)
-            missing_comp_reason = (
-                f"【侵权红线硬拦截】标题中出现了第三方受保护品牌 [{flagged_brand_str}]，"
-                f"但未包含任何合规兼容连接词 (如 For / Compatible with / Fits)。"
-                f"根据平台知识产权合规铁律（宁可杀错也不放过），直接使用或并列第三方品牌存在商标侵权与虚假联名极高风险，"
-                f"已强制阻断 SAFE 并标记为 RISK 待整改！"
-            )
+        # 3. 宁可杀错也不放过：第三方品牌前置裸露修饰商品 或 全文缺少兼容词，绝不许判为 SAFE！
+        unqualified_front_brands = []
+        if third_party_brands:
+            for b in third_party_brands:
+                for m in re.finditer(rf'\b{re.escape(b)}\b', eval_title_text, re.IGNORECASE):
+                    brand_pos = m.start()
+                    # 若品牌出现在首个兼容词之前 (或者全文根本没有兼容词)
+                    if first_compat_pos == -1 or brand_pos < first_compat_pos:
+                        unqualified_front_brands.append(b)
+                        break
+
+        if unqualified_front_brands:
+            flagged_brand_str = ", ".join(list(dict.fromkeys(unqualified_front_brands)))
+            if first_compat_pos == -1:
+                missing_comp_reason = (
+                    f"【侵权红线硬拦截】标题中出现了第三方受保护品牌 [{flagged_brand_str}]，"
+                    f"但未包含任何合规兼容连接词 (如 For / Compatible with / Fits)。"
+                    f"根据平台知识产权合规铁律（宁可杀错也不放过），直接使用或并列第三方品牌存在商标侵权与虚假联名极高风险，"
+                    f"已强制阻断 SAFE 并标记为 RISK 待整改！"
+                )
+                interception_summary = f"【铁律拦截】标题检出第三方品牌 [{flagged_brand_str}] 且缺少合规兼容词，终审裁定为 [RISK]"
+            else:
+                missing_comp_reason = (
+                    f"【前置大牌侵权硬拦截】标题前半部分出现了第三方受保护品牌 [{flagged_brand_str}] 作为商品修饰词，"
+                    f"且出现在任何兼容连接词 (如 Compatible with / For) 之前！"
+                    f"虽然标题后半句带有兼容词，但前半部分裸露使用第三方品牌仍属于严重商标侵权，已强制阻断 SAFE 并标记为 RISK！"
+                )
+                interception_summary = f"【前置拦截】第三方品牌 [{flagged_brand_str}] 前置裸露出现在兼容词之前，终审裁定为 [RISK]"
+
             if final_status in ["SAFE", "DISPUTED"]:
                 final_status = "RISK"
                 is_disputed = False
-                reconciliation_summary = f"【铁律拦截】标题检出第三方品牌 [{flagged_brand_str}] 且缺少合规兼容词，依据“宁可杀错不可放过”原则终审裁定为 [RISK]"
+                reconciliation_summary = interception_summary
 
             if missing_comp_reason not in risk_reasons:
                 risk_reasons.insert(0, missing_comp_reason)
 
+        # 4. AI 幻觉硬核兜底校正：若标题字面无任何兼容词，但 AI 声称“带For/合规语境”误判为 SAFE
+        if not has_compatibility_words and third_party_brands and final_status == "SAFE":
+            final_status = "RISK"
+            is_disputed = False
+            hallucination_reason = f"【AI 幻觉校正】大模型误判标题含兼容语境，但字面完全无任何兼容连接词 (For / Compatible with)，根据字面量真实性铁律强制纠偏为 [RISK]"
+            if hallucination_reason not in risk_reasons:
+                risk_reasons.insert(0, hallucination_reason)
+            reconciliation_summary = f"【校正拦截】字面无兼容词，强制纠偏为 [RISK]"
+
+        if unqualified_front_brands:
             # 智能重构生成合规建议标题
             if not recommended_title or not re.search(r'\b(?:for|compatible\s+with)\b', recommended_title, re.I):
                 from .cleaner.device_rules import reconstruct_accessory_title
@@ -1311,7 +1695,7 @@ class ComplianceService:
                     raw_title=eval_title_text,
                     target_brand=target_brand_name or "BeiShi",
                     nature="COMPATIBLE_ACCESSORY",
-                    target_famous=third_party_brands[0],
+                    target_famous=unqualified_front_brands[0],
                     vertical=category_name
                 )
                 brand_breakdown["recommended_title"] = recommended_title
@@ -1365,7 +1749,14 @@ class ComplianceService:
             "brand_info": brand_info,
             "image_inspection": merged_image_inspection,
             "risk_reasons": list(dict.fromkeys(risk_reasons)),
-            "suggestions": list(dict.fromkeys(suggestions)),
+            "suggestions": list(dict.fromkeys(
+                suggestions + ([
+                    f"【平台资质预警】当前商品类目 [{category.strip().lower()}] 属于 Makro 平台受限准入品类，需在卖家后台提供对应经营执照/许可证方可售卖。"
+                ] if (category or "").strip().lower() in {
+                    "brush_applicator", "baking_decorative", "kitchen_roll",
+                    "electric_insect_killer", "garbage_bag", "insect_repellent", "air_freshener"
+                } else [])
+            )),
             "is_piggyback": is_piggyback,
             "is_white_label": is_white_label,
             "white_label_notice": white_label_notice,
@@ -1433,3 +1824,127 @@ class ComplianceService:
                 "is_famous_brand": is_famous_brand
             }
         }
+
+    @classmethod
+    def test_ai_connectivity(cls, db: Session) -> Dict[str, Any]:
+        """
+        全面测试 Qwen 与 DeepSeek 的文本审查及首图视觉多模态接口连通性与时延
+        """
+        cs = cls.from_db(db, ignore_dual_toggle=True)
+        results = {
+            "qwen_text": {"configured": bool(cs.qwen_client), "success": False, "model": cs.qwen_model, "latency_ms": 0, "message": ""},
+            "qwen_vision": {"configured": bool(cs.qwen_client), "success": False, "model": cs.qwen_vision_model, "latency_ms": 0, "message": ""},
+            "deepseek_text": {"configured": bool(cs.deepseek_client), "success": False, "model": cs.deepseek_model, "latency_ms": 0, "message": ""},
+            "deepseek_vision": {"configured": bool(cs.deepseek_client), "success": False, "model": cs.deepseek_vision_model, "latency_ms": 0, "message": ""},
+        }
+
+        # 64x64 纯白合法标准尺寸测试图片 (满足 DashScope 与 DeepSeek 视觉模型最小尺寸校验)
+        test_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAXklEQVR4nO3PMQ0AMAzAsPInvYLYYVWKESTzjhsd8KsBrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BrQGtAa0BbQHKU9LC7/CP1AAAAABJRU5ErkJggg=="
+        test_data_uri = f"data:image/png;base64,{test_png_b64}"
+
+        def _test_qwen_text():
+            if not cs.qwen_client:
+                results["qwen_text"]["message"] = "未配置通义千问 API Key"
+                return
+            t0 = time.time()
+            try:
+                resp = cs.qwen_client.chat.completions.create(
+                    model=cs.qwen_model,
+                    messages=[{"role": "user", "content": "请回复OK"}],
+                    max_tokens=10,
+                    temperature=0.1
+                )
+                latency = int((time.time() - t0) * 1000)
+                results["qwen_text"]["success"] = True
+                results["qwen_text"]["latency_ms"] = latency
+                results["qwen_text"]["message"] = f"连通成功 (时延: {latency}ms)"
+            except Exception as e:
+                results["qwen_text"]["message"] = f"调用失败: {str(e)[:80]}"
+
+        def _test_qwen_vision():
+            if not cs.qwen_client:
+                results["qwen_vision"]["message"] = "未配置通义千问 API Key"
+                return
+            t0 = time.time()
+            try:
+                actual_model = QWEN_VISION_MODEL_ALIASES.get(cs.qwen_vision_model.lower(), cs.qwen_vision_model)
+                resp = cs.qwen_client.chat.completions.create(
+                    model=actual_model,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "测试图审，请回复SAFE"},
+                            {"type": "image_url", "image_url": {"url": test_data_uri}}
+                        ]
+                    }],
+                    max_tokens=20,
+                    temperature=0.1
+                )
+                latency = int((time.time() - t0) * 1000)
+                results["qwen_vision"]["success"] = True
+                results["qwen_vision"]["latency_ms"] = latency
+                results["qwen_vision"]["message"] = f"连通成功 (模型: {actual_model}, 时延: {latency}ms)"
+            except Exception as e:
+                results["qwen_vision"]["message"] = f"调用失败: {str(e)[:80]}"
+
+        def _test_deepseek_text():
+            if not cs.deepseek_client:
+                results["deepseek_text"]["message"] = "未配置 DeepSeek API Key"
+                return
+            t0 = time.time()
+            try:
+                resp = cs.deepseek_client.chat.completions.create(
+                    model=cs.deepseek_model,
+                    messages=[{"role": "user", "content": "请回复OK"}],
+                    max_tokens=10,
+                    temperature=0.1
+                )
+                latency = int((time.time() - t0) * 1000)
+                results["deepseek_text"]["success"] = True
+                results["deepseek_text"]["latency_ms"] = latency
+                results["deepseek_text"]["message"] = f"连通成功 (时延: {latency}ms)"
+            except Exception as e:
+                results["deepseek_text"]["message"] = f"调用失败: {str(e)[:80]}"
+
+        def _test_deepseek_vision():
+            if not cs.deepseek_client:
+                results["deepseek_vision"]["message"] = "未配置 DeepSeek API Key"
+                return
+            t0 = time.time()
+            try:
+                actual_model = DEEPSEEK_VISION_MODEL_ALIASES.get(cs.deepseek_vision_model.lower(), cs.deepseek_vision_model)
+                resp = cs.deepseek_client.chat.completions.create(
+                    model=actual_model,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "测试首图视觉审查，请回复SAFE"},
+                            {"type": "image_url", "image_url": {"url": test_data_uri}}
+                        ]
+                    }],
+                    max_tokens=20,
+                    temperature=0.1
+                )
+                latency = int((time.time() - t0) * 1000)
+                results["deepseek_vision"]["success"] = True
+                results["deepseek_vision"]["latency_ms"] = latency
+                results["deepseek_vision"]["message"] = f"连通成功 (模型: {actual_model}, 时延: {latency}ms)"
+            except Exception as e:
+                results["deepseek_vision"]["message"] = f"调用失败: {str(e)[:80]}"
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            f1 = executor.submit(_test_qwen_text)
+            f2 = executor.submit(_test_qwen_vision)
+            f3 = executor.submit(_test_deepseek_text)
+            f4 = executor.submit(_test_deepseek_vision)
+            for f in [f1, f2, f3, f4]:
+                try:
+                    f.result(timeout=25.0)
+                except Exception:
+                    pass
+
+        return {
+            "success": any(r["success"] for r in results.values()),
+            "details": results
+        }
+

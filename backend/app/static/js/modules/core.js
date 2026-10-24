@@ -463,8 +463,13 @@ export const coreMethods = {
     if (tabId === 'piggyback') {
       this.loadPiggybackItems(1);
     }
+    if (tabId === 'reprice') {
+      this.loadRepriceItems(1);
+      this.loadRepriceSchedulerStatus();
+    }
     if (tabId === 'store_products') {
       this.loadStoreProducts(1);
+      this.loadStoreProductVerticals();
     }
     if (tabId === 'store_audits') {
       this.loadStoreAudits(1);

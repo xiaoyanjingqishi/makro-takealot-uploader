@@ -47,7 +47,7 @@ class SystemSettingsSchema(BaseModel):
 
     # AI 清洗双模式配置
     cleaner_mode: Optional[str] = "text"  # 'text' 或 'vision'
-    qwen_vision_model: Optional[str] = "qwen-vl-plus"  # 'qwen-vl-plus' 或 'qwen-vl-max'
+    qwen_vision_model: Optional[str] = "qwen3-vl-plus"  # 'qwen3-vl-plus' 等
 
     # 自定义类目同义词拓展 (JSON 格式: {"vertical_code": ["synonym1", "synonym2"]})
     custom_category_synonyms: Optional[str] = "{}"
@@ -60,13 +60,22 @@ class SystemSettingsSchema(BaseModel):
 
     # Makro 跟品全局策略与底价设置
     piggyback_auto_compliance: bool = False  # 采集跟品时是否自动执行双AI侵权检测 (默认关闭，手动触发)
+    dual_ai_compliance_enabled: bool = False  # 双 AI 交叉质检显式总开关 (默认关闭，关闭时仅调用主 AI)
+    auto_translate_on_collect: bool = False  # 采集商品时是否自动调用大模型翻译 (默认关闭，杜绝静默消耗)
     piggyback_default_strategy: str = "MINUS_15"  # 默认跟价策略 (MINUS_15, MINUS_1, etc.)
     piggyback_default_floor_mode: str = "PERCENT"  # 默认底价模式: PERCENT (原价百分比), FIXED_MINUS (直降), FIXED (固定底价)
     piggyback_default_floor_value: float = 70.0    # 默认保本底价计算数值 (如 70.0 代表原价的 70%)
     piggyback_default_inventory: int = 500         # 默认上架库存 (默认 500)
     piggyback_cruise_concurrency: int = 3          # 跟品巡检巡航并发线程数 (管理员自定义配置，默认 3 线程，推荐 2~5)
     piggyback_collect_concurrency: int = 5         # 跟品采集静默抓取并发线程数 (管理员自定义配置，默认 5 线程，支持 1~50)
-    piggyback_compliance_concurrency: int = 100    # 跟品批量AI质检并发线程数 (管理员自定义配置，默认 100 线程，支持 1~100)
+    piggyback_compliance_concurrency: int = 15     # 跟品批量AI质检并发线程数 (管理员自定义配置，默认 15 线程，支持 1~100)
+
+    # 动态代理池配置 (专用于买家前台批量爬虫与24h跟价巡航，商家后台默认直连)
+    crawler_proxy_enabled: bool = False            # 是否开启买家前台爬虫代理 (默认推荐关闭直连，更稳定迅速)
+    xiequ_proxy_api: Optional[str] = ""
+
+    # 跨境物流核算全局配置
+    default_air_freight_rate: float = 90.0         # 默认跨境空运运费单价 (元/kg)
 
 
 class CostPricingCalculateRequest(BaseModel):

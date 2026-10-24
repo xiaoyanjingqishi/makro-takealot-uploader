@@ -190,26 +190,41 @@ class TranslationService:
         if not force_refresh and clean_text in _TITLE_TRANSLATION_MEM_CACHE:
             return _TITLE_TRANSLATION_MEM_CACHE[clean_text]
 
-        # 2. 尝试从数据库同名已译记录快速复用 (非强制刷新时)
-        if not force_refresh and db:
+        # 2. 尝试从数据库同名已译记录快速复用 (非强制刷新时，即使未传 db 也自动查库)
+        if not force_refresh:
+            from ..database import SessionLocal
+            from ..models.makro_piggyback import MakroPiggybackItem
+            
+            s_db = db or SessionLocal()
             try:
-                cached_prod = db.query(Product).filter(
-                    (Product.takealot_title == clean_text) & (Product.takealot_title_zh.isnot(None))
+                cached_prod = s_db.query(Product).filter(
+                    (Product.takealot_title == clean_text) & (Product.takealot_title_zh.isnot(None)) & (Product.takealot_title_zh != '')
                 ).first()
                 if cached_prod and cached_prod.takealot_title_zh:
                     _TITLE_TRANSLATION_MEM_CACHE[clean_text] = cached_prod.takealot_title_zh
                     return cached_prod.takealot_title_zh
 
-                cached_makro = db.query(Product).filter(
-                    (Product.makro_title == clean_text) & (Product.makro_title_zh.isnot(None))
+                cached_makro = s_db.query(Product).filter(
+                    (Product.makro_title == clean_text) & (Product.makro_title_zh.isnot(None)) & (Product.makro_title_zh != '')
                 ).first()
                 if cached_makro and cached_makro.makro_title_zh:
                     _TITLE_TRANSLATION_MEM_CACHE[clean_text] = cached_makro.makro_title_zh
                     return cached_makro.makro_title_zh
+
+                # 亦可复用跟品库中已译记录
+                cached_pb = s_db.query(MakroPiggybackItem).filter(
+                    (MakroPiggybackItem.title == clean_text) & (MakroPiggybackItem.title_zh.isnot(None)) & (MakroPiggybackItem.title_zh != '')
+                ).first()
+                if cached_pb and cached_pb.title_zh:
+                    _TITLE_TRANSLATION_MEM_CACHE[clean_text] = cached_pb.title_zh
+                    return cached_pb.title_zh
             except Exception as dbe:
                 logger.debug(f"数据库翻译缓存查询跳过: {dbe}")
+            finally:
+                if not db:
+                    s_db.close()
 
-        # 3. 构造 AI 调用
+        # 3. 构造 AI 调用 (严格受控于当前主 AI 提供商)
         client, model = cls._get_ai_client_and_model(db)
         if client and model:
             try:
@@ -238,36 +253,42 @@ class TranslationService:
             except Exception as e:
                 logger.warning(f"AI 标题翻译调用失败: {e}")
 
-        # 4. 启发式翻译保底 (确保不返回空)
+        # 4. 启发式翻译保底 (确保不返回空，绝不因翻译失败导致流程异常)
         return cls._fallback_title_translate(clean_text)
 
     @classmethod
     def _get_ai_client_and_model(cls, db: Optional[Session] = None):
-        """获取大模型客户端 (优先 DeepSeek，备选通义千问)"""
+        """获取大模型客户端 (严格遵从系统设置的 ai_provider，杜绝跨厂商静默发包扣费)"""
+        from ..database import SessionLocal
+
+        s_db = db or SessionLocal()
         provider = settings.AI_PROVIDER
         deepseek_key = settings.DEEPSEEK_API_KEY
         qwen_key = settings.QWEN_API_KEY
 
-        if db:
-            try:
-                s_p = db.query(SystemSetting).filter(SystemSetting.key == "ai_provider").first()
-                if s_p and s_p.value:
-                    provider = s_p.value
-                s_dk = db.query(SystemSetting).filter(SystemSetting.key == "deepseek_api_key").first()
-                if s_dk and s_dk.value:
-                    deepseek_key = s_dk.value
-                s_qk = db.query(SystemSetting).filter(SystemSetting.key == "qwen_api_key").first()
-                if s_qk and s_qk.value:
-                    qwen_key = s_qk.value
-            except Exception:
-                pass
+        try:
+            s_p = s_db.query(SystemSetting).filter(SystemSetting.key == "ai_provider").first()
+            if s_p and s_p.value:
+                provider = s_p.value.strip().lower()
+            s_dk = s_db.query(SystemSetting).filter(SystemSetting.key == "deepseek_api_key").first()
+            if s_dk and s_dk.value:
+                deepseek_key = s_dk.value.strip()
+            s_qk = s_db.query(SystemSetting).filter(SystemSetting.key == "qwen_api_key").first()
+            if s_qk and s_qk.value:
+                qwen_key = s_qk.value.strip()
+        except Exception:
+            pass
+        finally:
+            if not db:
+                s_db.close()
 
-        if provider == "deepseek" and deepseek_key:
-            return OpenAI(api_key=deepseek_key, base_url=settings.DEEPSEEK_BASE_URL, timeout=12.0), settings.DEEPSEEK_MODEL
-        elif qwen_key:
-            return OpenAI(api_key=qwen_key, base_url=settings.QWEN_BASE_URL, timeout=12.0), settings.QWEN_MODEL
-        elif deepseek_key:
-            return OpenAI(api_key=deepseek_key, base_url=settings.DEEPSEEK_BASE_URL, timeout=12.0), settings.DEEPSEEK_MODEL
+        # 严格按当前选中的主模型厂商初始化，禁止隐蔽回退至另一厂商！
+        if provider == "deepseek":
+            if deepseek_key:
+                return OpenAI(api_key=deepseek_key, base_url=settings.DEEPSEEK_BASE_URL, timeout=12.0), settings.DEEPSEEK_MODEL
+        elif provider == "qwen":
+            if qwen_key:
+                return OpenAI(api_key=qwen_key, base_url=settings.QWEN_BASE_URL, timeout=12.0), settings.QWEN_MODEL
         return None, None
 
     @classmethod

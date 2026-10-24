@@ -229,6 +229,97 @@ class MakroPiggybackService:
                 db.rollback()
             return err_res
 
+    @classmethod
+    def supplement_deepseek_vision_for_item(
+        cls,
+        item: MakroPiggybackItem,
+        db: Session,
+        compliance_service: Optional[ComplianceService] = None
+    ) -> Dict[str, Any]:
+        """
+        对已完成合规检测但缺少/跳过 DeepSeek 视觉审查的商品进行轻量增量补齐
+        """
+        cs = compliance_service or ComplianceService.from_db(db)
+        if not item.compliance_details:
+            return cls.check_compliance_for_item(item, db)
+
+        try:
+            details = json.loads(item.compliance_details) if isinstance(item.compliance_details, str) else item.compliance_details
+        except Exception:
+            return cls.check_compliance_for_item(item, db)
+
+        qwen_title = details.get("qwen_verdict", {}).get("title_audit", {})
+        deepseek_title = details.get("deepseek_verdict", {}).get("title_audit", {})
+        qwen_image = details.get("qwen_verdict", {}).get("image_audit", {})
+        jev_title = details.get("jev_verdict", {})
+
+        # 若缺乏核心文本会审结果，直接走全量质检
+        if not qwen_title or not deepseek_title:
+            return cls.check_compliance_for_item(item, db)
+
+        local_rules = details.get("local_rules") or {
+            "compliance_status": details.get("compliance_status", "SAFE"),
+            "prohibited_items": details.get("prohibited_items", []),
+            "detected_brands": details.get("detected_brands", []),
+            "risk_reasons": details.get("risk_reasons", []),
+            "suggestions": details.get("suggestions", []),
+            "brand_info": details.get("brand_info", {})
+        }
+
+        # 仅对 DeepSeek 视觉模型发包
+        target_brand = item.brand or "Generic"
+        deepseek_image = cs._run_deepseek_vision_only(
+            image_url=item.image_url or "",
+            known_brands=[target_brand],
+            is_piggyback=True
+        )
+
+        # 重新会审聚合
+        res = cs._reconcile_dual_verdicts(
+            local_rules=local_rules,
+            qwen_title=qwen_title,
+            deepseek_title=deepseek_title,
+            qwen_image=qwen_image,
+            deepseek_image=deepseek_image,
+            first_img_url=item.image_url,
+            target_brand_name=target_brand,
+            jev_title=jev_title,
+            is_piggyback=True,
+            original_seller=item.original_seller or "",
+            eval_title=item.title,
+            category=item.vertical or "general"
+        )
+
+        status = res.get("compliance_status", "SAFE")
+        item.compliance_status = status
+        item.compliance_details = json.dumps(res, ensure_ascii=False)
+        db.commit()
+        db.refresh(item)
+
+        # 同步到关联跟价监控表
+        try:
+            from ..models.store_product_reprice import StoreProductReprice
+            reps = db.query(StoreProductReprice).filter(
+                (StoreProductReprice.source_piggyback_id == item.id) |
+                ((StoreProductReprice.store_id == item.store_id) & (StoreProductReprice.seller_sku == item.seller_sku))
+            ).all()
+            for rp in reps:
+                rp.compliance_status = item.compliance_status
+                rp.compliance_details = item.compliance_details
+                rp.last_compliance_check_at = datetime.now()
+                if item.compliance_status == "PROHIBITED":
+                    rp.monitor_status = "BLOCKED"
+                    rp.auto_reprice = False
+                elif item.compliance_status == "SAFE" and rp.monitor_status == "BLOCKED":
+                    rp.monitor_status = "ACTIVE"
+                    rp.auto_reprice = True
+            if reps:
+                db.commit()
+        except Exception as ex:
+            logger.warning(f"同步补齐合规到 StoreProductReprice 失败: {ex}")
+
+        return res
+
     @staticmethod
     def _build_listing_bulk_request(item: MakroPiggybackItem, store: Store, listing_status: str = "ACTIVE") -> Dict[str, Any]:
         """构建单个商品提交至 create-update-listings 的 bulkRequest 载荷项"""
@@ -298,12 +389,26 @@ class MakroPiggybackService:
             raise ValueError(f"店铺「{store.name}」未配置仓库 Location ID，无法设置库存与物流。")
 
         headers = cls._build_headers(store)
+        from .proxy_service import ProxyPoolService
 
-        # 2. 资格与品牌核验 (预警非致命)
+        # 1.5 前置同店已有 Listing 查重与 SKU 智能对齐 (规避 SKU is not allowed to be updated 冲突)
+        existing_local = db.query(MakroListing).filter(
+            MakroListing.store_id == store.id,
+            MakroListing.product_id == item.makro_product_id
+        ).first()
+        if existing_local and existing_local.sku_id:
+            if item.seller_sku != existing_local.sku_id:
+                logger.info(f"商品 {item.makro_product_id} 在店铺「{store.name}」已存在 Listing (SKU: {existing_local.sku_id})，自动对齐真实 SKU")
+                item.seller_sku = existing_local.sku_id
+            if existing_local.listing_id and not item.makro_listing_id:
+                item.makro_listing_id = existing_local.listing_id
+            db.commit()
+
+        # 2. 资格与品牌核验 (平台准入硬拦截)
         try:
             if item.vertical:
                 elig_url = f"{MAKRO_HOST}/napi/listing/sellerEligible?vertical={item.vertical}&sellerId={store.seller_id}"
-                resp_elig = requests.get(elig_url, headers=headers, timeout=15)
+                resp_elig = ProxyPoolService.resilient_request("GET", elig_url, headers=headers, timeout=15, use_proxy=False)
                 if resp_elig.status_code == 200:
                     elig_data = resp_elig.json()
                     if elig_data.get("eligibility") is False:
@@ -311,13 +416,28 @@ class MakroPiggybackService:
 
             if item.brand and item.vertical:
                 appr_url = f"{MAKRO_HOST}/napi/regulation/approvalStatus?vertical={item.vertical}&brand={item.brand}&sellerId={store.seller_id}"
-                resp_appr = requests.get(appr_url, headers=headers, timeout=15)
+                resp_appr = ProxyPoolService.resilient_request("GET", appr_url, headers=headers, timeout=15, use_proxy=False)
                 if resp_appr.status_code == 200:
                     appr_data = resp_appr.json()
-                    if appr_data.get("approvalStatus") not in ["APPROVED", "AUTO_APPROVED"]:
-                        logger.warning(f"品牌 {item.brand} 审批状态为: {appr_data.get('approvalStatus')}")
+                    appr_status = appr_data.get("approvalStatus")
+                    reason_codes = appr_data.get("reasonCode") or []
+                    reasons_str = " ".join(str(r) for r in reason_codes).lower()
+                    pending_reason = str(appr_data.get("approvalPendingReason") or "").upper()
+
+                    # 硬核类目执照准入拦截 (避免 400 刷崩平台)
+                    if appr_status == "APPROVAL_REQUIRED" and ("license" in reasons_str or pending_reason == "BRAND_VERTICAL"):
+                        vert_desc = item.vertical or "受限类目"
+                        msg = f"平台类目资质受限: 需在 Makro 卖家后台申请提交对应类目营业执照/许可证 (Vertical: {vert_desc})"
+                        item.status = "FAILED"
+                        item.error_message = msg
+                        db.commit()
+                        raise ValueError(msg)
+                    elif appr_status not in ["APPROVED", "AUTO_APPROVED"]:
+                        logger.warning(f"品牌 {item.brand} 审批状态为: {appr_status} (原因: {reason_codes})")
+        except ValueError:
+            raise
         except Exception as pre_err:
-            logger.warning(f"跟品资格前置校验跳过或异常: {pre_err}")
+            logger.warning(f"跟品资格前置校验跳过或网络异常: {pre_err}")
 
         # 3. 组装挂靠核心载荷 (完全对齐 makro跟品协议.har Entry 7)
         create_url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
@@ -337,15 +457,11 @@ class MakroPiggybackService:
             "sellerId": store.seller_id
         }
 
-        from .proxy_service import ProxyPoolService
-        proxy_url = ProxyPoolService.get_proxy()
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-
         item.status = "SUBMITTING"
         db.commit()
 
         try:
-            resp = requests.post(create_url, headers=headers, json=payload, timeout=30, proxies=proxies)
+            resp = ProxyPoolService.resilient_request("POST", create_url, headers=headers, json=payload, timeout=30, use_proxy=False)
             if resp.status_code != 200:
                 raise Exception(f"Makro create-update-listings 挂靠接口响应 HTTP {resp.status_code}: {resp.text[:300]}")
 
@@ -362,7 +478,51 @@ class MakroPiggybackService:
 
             if lst_status not in ["created", "updated", "success"] and not listing_id:
                 err_msg = "; ".join(global_errs) if global_errs else str(attr_errs)
-                raise Exception(f"挂靠未成功 (状态: {lst_status}): {err_msg}")
+
+                # 智能自愈：若平台提示 SKU is not allowed to be updated，反查 Makro 云端真实 SKU 并自动重试
+                if "sku is not allowed to be updated" in err_msg.lower():
+                    try:
+                        from .makro_portal_service import MakroPortalService
+                        cloud_data = MakroPortalService.fetch_listings_data_for_states(
+                            store=store,
+                            internal_state="ALL",
+                            search_text=item.makro_product_id,
+                            headers=headers
+                        )
+                        listings_list = cloud_data.get("listings", []) or cloud_data.get("result", {}).get("listings", [])
+                        matched_lst = None
+                        for l in listings_list:
+                            if l.get("product_id") == item.makro_product_id or l.get("productId") == item.makro_product_id:
+                                matched_lst = l
+                                break
+                        if matched_lst:
+                            real_sku = matched_lst.get("sku_id") or matched_lst.get("skuId")
+                            real_listing_id = matched_lst.get("listing_id") or matched_lst.get("listingId")
+                            if real_sku and real_sku != item.seller_sku:
+                                logger.info(f"反查到 Makro 云端已有真实 SKU: {real_sku} (Listing: {real_listing_id})，执行自动纠偏重试...")
+                                item.seller_sku = real_sku
+                                item.makro_listing_id = real_listing_id
+                                db.commit()
+                                retry_payload = {
+                                    "bulkRequests": [
+                                        cls._build_listing_bulk_request(item, store, listing_status="ACTIVE")
+                                    ],
+                                    "sellerId": store.seller_id
+                                }
+                                retry_resp = ProxyPoolService.resilient_request("POST", create_url, headers=headers, json=retry_payload, timeout=30, use_proxy=False)
+                                if retry_resp.status_code == 200:
+                                    retry_json = retry_resp.json()
+                                    retry_bulk = retry_json.get("result", {}).get("bulkResponse", [])
+                                    if retry_bulk and retry_bulk[0].get("status") in ["created", "updated", "success"]:
+                                        single_res = retry_bulk[0]
+                                        lst_status = single_res.get("status")
+                                        listing_id = single_res.get("listingID") or real_listing_id
+                                        err_msg = ""
+                    except Exception as sku_recover_err:
+                        logger.warning(f"SKU 冲突自动纠偏重试失败: {sku_recover_err}")
+
+                if lst_status not in ["created", "updated", "success"] and not listing_id:
+                    raise Exception(f"挂靠未成功 (状态: {lst_status}): {err_msg}")
 
             # 4. 立即激活库存回写 (updateListingsInventory)
             inv_url = f"{MAKRO_HOST}/napi/sfx/updateListingsInventory?sellerId={store.seller_id}&locationId={target_loc}"
@@ -379,18 +539,20 @@ class MakroPiggybackService:
                 }
             }
             try:
-                requests.post(inv_url, headers=inv_headers, json=inv_payload, timeout=20, proxies=proxies)
+                ProxyPoolService.resilient_request("POST", inv_url, headers=inv_headers, json=inv_payload, timeout=20, use_proxy=False)
             except Exception as inv_e:
                 logger.warning(f"跟品后即时库存回写发生异常 (可由后台定时器补齐): {inv_e}")
 
-            # 5. 更新本地跟品记录
-            item.status = "ACTIVE"
+            # 5. 更新本地跟品记录为已挂靠归档
+            item.status = "PUBLISHED"
             item.makro_listing_id = listing_id
             item.error_message = None
             db.commit()
 
-            # 6. 联动同步写入 makro_listings 统一管理表
+            # 6. 联动同步写入 makro_listings 统一管理表并流转至 StoreProductReprice
             try:
+                from ..models.store_product_reprice import StoreProductReprice
+
                 existing_listing = db.query(MakroListing).filter(
                     MakroListing.store_id == store.id,
                     MakroListing.sku_id == item.seller_sku
@@ -419,14 +581,41 @@ class MakroPiggybackService:
                 existing_listing.height = item.height
                 existing_listing.synced_at = datetime.now()
                 db.commit()
+
+                # 流转至在售跟价监控底册
+                reprice_entry = db.query(StoreProductReprice).filter(
+                    StoreProductReprice.listing_id == existing_listing.id
+                ).first()
+                if not reprice_entry:
+                    reprice_entry = StoreProductReprice(
+                        store_id=store.id,
+                        listing_id=existing_listing.id,
+                        seller_sku=item.seller_sku,
+                        makro_product_id=item.makro_product_id
+                    )
+                    db.add(reprice_entry)
+
+                reprice_entry.source_type = "PIGGYBACK"
+                reprice_entry.source_piggyback_id = item.id
+                reprice_entry.target_fsn = item.makro_product_id
+                reprice_entry.target_makro_url = item.makro_url
+                reprice_entry.auto_reprice = bool(item.auto_reprice)
+                reprice_entry.price_strategy = item.price_strategy or "MINUS_1"
+                reprice_entry.min_price_floor = float(item.min_price_floor or 0.0)
+                reprice_entry.max_price_ceiling = float(item.max_price_ceiling or 0.0)
+                reprice_entry.compliance_status = item.compliance_status or "SAFE"
+                reprice_entry.compliance_details = item.compliance_details
+                reprice_entry.monitor_status = "ACTIVE"
+                db.commit()
+
             except Exception as ml_err:
-                logger.warning(f"写入 makro_listings 失败: {ml_err}")
+                logger.warning(f"写入 makro_listings 或监控底册异常: {ml_err}")
 
             return {
                 "success": True,
                 "listing_id": listing_id,
                 "sku_id": item.seller_sku,
-                "status": "ACTIVE"
+                "status": "PUBLISHED"
             }
 
         except Exception as e:
@@ -487,8 +676,7 @@ class MakroPiggybackService:
                     target_loc = it.location_id
                     break
 
-        proxy_url = ProxyPoolService.get_proxy()
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+        from .proxy_service import ProxyPoolService
 
         total_success = 0
         total_failed = 0
@@ -508,7 +696,7 @@ class MakroPiggybackService:
 
             # 1. 官方 listing 状态变更为 INACTIVE
             try:
-                resp = requests.post(create_url, headers=headers, json=payload, timeout=35, proxies=proxies)
+                resp = ProxyPoolService.resilient_request("POST", create_url, headers=headers, json=payload, timeout=35, use_proxy=False)
                 if resp.status_code != 200:
                     raise Exception(f"Makro create-update-listings 下架接口响应 HTTP {resp.status_code}: {resp.text[:300]}")
                 res_json = resp.json()

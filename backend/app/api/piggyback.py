@@ -7,6 +7,7 @@ import io
 import requests
 from typing import Optional, List, Dict, Any, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Response
+from sqlalchemy import case, func, or_, and_
 from sqlalchemy.orm import Session, joinedload
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +17,7 @@ from ..models.makro_piggyback import MakroPiggybackItem
 from ..models.makro_listing import MakroListing
 from ..models.store import Store
 from ..models.user import User
+from ..models.setting import SystemSetting
 from ..schemas.piggyback import (
     CollectPiggybackRequest,
     BatchCollectPiggybackRequest,
@@ -53,6 +55,19 @@ from ..services.piggyback import PiggybackService, PiggybackPricingCalculator
 _generate_piggyback_sku = PiggybackService.generate_piggyback_sku
 _get_target_store = PiggybackService.get_target_store
 _format_piggyback_item = PiggybackService.format_piggyback_item
+
+def _get_piggyback_system_defaults(db: Session) -> Tuple[str, int]:
+    """读取系统设置中配置的默认跟品策略与默认库存 (真正落实生效)"""
+    s_strat = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_default_strategy").first()
+    strat = s_strat.value.strip() if s_strat and s_strat.value else "MINUS_15"
+
+    s_inv = db.query(SystemSetting).filter(SystemSetting.key == "piggyback_default_inventory").first()
+    try:
+        inv = int(s_inv.value) if s_inv and s_inv.value else 500
+    except (ValueError, TypeError):
+        inv = 500
+    return strat, inv
+
 
 
 @router.post("/collect", summary="采集单个 Makro 商品并秒级加入跟品池 (后台静默拉取详情)")
@@ -121,6 +136,7 @@ def collect_single_piggyback(
     sku = _generate_piggyback_sku()
     placeholder_title = f"[数据获取中] {fsn}"
     canonical_url = MakroScraperService.format_canonical_makro_url(fsn, item_id)
+    def_strat, def_inv = _get_piggyback_system_defaults(db)
 
     new_item = MakroPiggybackItem(
         store_id=store.id,
@@ -145,8 +161,8 @@ def collect_single_piggyback(
         auto_reprice=req.auto_reprice if req.auto_reprice is not None else True,
         variant_attributes=req.variant_attributes,
         variant_name=req.variant_name,
-        price_strategy=req.price_strategy or "MINUS_15",
-        inventory=500,
+        price_strategy=req.price_strategy or def_strat,
+        inventory=def_inv,
         lead_time_days=14,
         is_abandoned=False,
         compliance_status="PENDING_CHECK",
@@ -298,6 +314,7 @@ def batch_collect_piggyback(
         to_fetch_targets.append(t)
 
     # 4. 毫秒级批量创建骨架占位记录 (status=FETCHING，秒级直接落库)
+    def_strat, def_inv = _get_piggyback_system_defaults(db)
     new_items_to_enqueue = []
     for tgt in to_fetch_targets:
         fsn = tgt.get("fsn")
@@ -353,11 +370,11 @@ def batch_collect_piggyback(
             target_price=0.0,
             target_mrp=0.0,
             min_price_floor=float(req.min_price_floor or 0.0),
-            price_strategy=req.price_strategy or "MINUS_15",
+            price_strategy=req.price_strategy or def_strat,
             auto_reprice=True,
             variant_name=variant_name,
             variant_attributes=variant_attributes,
-            inventory=500,
+            inventory=def_inv,
             lead_time_days=14,
             is_abandoned=False,
             compliance_status="PENDING_CHECK",
@@ -592,6 +609,80 @@ def get_piggyback_verticals(
     ))
     return {"verticals": results}
 
+_KPI_CACHE: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
+_KPI_CACHE_TTL: float = 15.0  # 15 秒短时防抖与复用缓存
+
+def invalidate_kpi_cache():
+    """清理 KPI 聚合内存缓存 (在商品增删改查时调用)"""
+    _KPI_CACHE.clear()
+
+def _calculate_piggyback_kpi_fast(base_query) -> Dict[str, int]:
+    """单条 SQL 条件聚合极速计算 10 大核心 KPI，覆盖索引加速至数毫秒"""
+    is_abandoned_expr = (MakroPiggybackItem.is_abandoned == True)
+    not_abandoned_expr = or_(MakroPiggybackItem.is_abandoned == False, MakroPiggybackItem.is_abandoned == None)
+    is_active_expr = and_(not_abandoned_expr, MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
+
+    row = base_query.with_entities(
+        func.sum(case((is_abandoned_expr, 1), else_=0)).label("abandoned_count"),
+        func.sum(case((not_abandoned_expr, 1), else_=0)).label("total_count"),
+        func.sum(case((is_active_expr, 1), else_=0)).label("active_count"),
+        func.sum(case((and_(is_active_expr, MakroPiggybackItem.buybox_status == "WINNING"), 1), else_=0)).label("winning_count"),
+        func.sum(case((and_(is_active_expr, MakroPiggybackItem.buybox_status == "NO_COMPETITOR"), 1), else_=0)).label("no_competitor_count"),
+        func.sum(case((and_(is_active_expr, MakroPiggybackItem.buybox_status == "LOSING"), 1), else_=0)).label("losing_count"),
+        func.sum(case((and_(is_active_expr, MakroPiggybackItem.buybox_status == "FLOOR_HIT"), 1), else_=0)).label("floor_hit_count"),
+        func.sum(case((and_(is_active_expr, or_(MakroPiggybackItem.min_price_floor == None, MakroPiggybackItem.min_price_floor <= 0)), 1), else_=0)).label("missing_floor_count"),
+        func.sum(case((and_(not_abandoned_expr, MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])), 1), else_=0)).label("staging_count"),
+        func.sum(case((and_(not_abandoned_expr, or_(MakroPiggybackItem.status == "FAILED", MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))), 1), else_=0)).label("blocked_count")
+    ).first()
+
+    abandoned_count = int(row[0] or 0) if row else 0
+    total_count = int(row[1] or 0) if row else 0
+    active_count = int(row[2] or 0) if row else 0
+    winning_count = int(row[3] or 0) if row else 0
+    no_competitor_count = int(row[4] or 0) if row else 0
+    losing_count = int(row[5] or 0) if row else 0
+    floor_hit_count = int(row[6] or 0) if row else 0
+    missing_floor_count = int(row[7] or 0) if row else 0
+    staging_count = int(row[8] or 0) if row else 0
+    blocked_count = int(row[9] or 0) if row else 0
+
+    return {
+        "total_count": total_count,
+        "published_count": active_count,
+        "active_count": active_count,
+        "winning_count": winning_count,
+        "no_competitor_count": no_competitor_count,
+        "losing_count": losing_count,
+        "floor_hit_count": floor_hit_count,
+        "missing_floor_count": missing_floor_count,
+        "staging_count": staging_count,
+        "blocked_count": blocked_count,
+        "abandoned_count": abandoned_count
+    }
+
+def _calculate_stage_stats_fast(stage_query, total_count: int, staging_count: int, active_count: int, blocked_count: int, abandoned_count: int) -> Dict[str, int]:
+    """单条 SQL 条件聚合极速计算阶段漏斗下风控分布统计"""
+    row = stage_query.with_entities(
+        func.sum(case((MakroPiggybackItem.compliance_status == "PENDING_CHECK", 1), else_=0)),
+        func.sum(case((MakroPiggybackItem.compliance_status == "SAFE", 1), else_=0)),
+        func.sum(case((MakroPiggybackItem.compliance_status == "RISK", 1), else_=0)),
+        func.sum(case((MakroPiggybackItem.compliance_status == "PROHIBITED", 1), else_=0)),
+        func.sum(case((MakroPiggybackItem.compliance_status == "DISPUTED", 1), else_=0))
+    ).first()
+
+    return {
+        "total_all": total_count,
+        "pending_count": staging_count,
+        "active_count": active_count,
+        "failed_count": blocked_count,
+        "pending_check_count": int(row[0] or 0) if row else 0,
+        "safe_count": int(row[1] or 0) if row else 0,
+        "risk_count": int(row[2] or 0) if row else 0,
+        "prohibited_count": int(row[3] or 0) if row else 0,
+        "disputed_count": int(row[4] or 0) if row else 0,
+        "abandoned_count": abandoned_count
+    }
+
 @router.get("/kpi-stats", summary="获取跟品与跟价运营驾驶舱 6 大核心 KPI 统计 (支持多维条件联动)")
 def get_piggyback_kpi_stats(
     store_id: Optional[int] = None,
@@ -614,6 +705,18 @@ def get_piggyback_kpi_stats(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    eff_uid = current_user.id if current_user and current_user.role != "ADMIN" else user_id
+    cache_key = (
+        eff_uid, store_id, (search or "").strip().lower(), vertical, inventory_status,
+        auto_reprice, has_floor_price, min_price, max_price, date_range,
+        start_date, end_date, brand_nature, is_white_label, has_image_logo,
+        image_prohibited, violation_type
+    )
+    now_ts = time.time()
+    cached = _KPI_CACHE.get(cache_key)
+    if cached and (now_ts - cached[0] < _KPI_CACHE_TTL):
+        return cached[1]
+
     base_query = _build_piggyback_base_query(
         db=db,
         current_user=current_user,
@@ -636,39 +739,9 @@ def get_piggyback_kpi_stats(
         violation_type=violation_type
     )
 
-    abandoned_count = base_query.filter(MakroPiggybackItem.is_abandoned == True).count()
-    unabandoned = base_query.filter((MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None))
-
-    total_count = unabandoned.count()
-    active_query = unabandoned.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
-    active_count = active_query.count()
-
-    winning_count = active_query.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
-    no_competitor_count = active_query.filter(MakroPiggybackItem.buybox_status == "NO_COMPETITOR").count()
-    losing_count = active_query.filter(MakroPiggybackItem.buybox_status == "LOSING").count()
-    floor_hit_count = active_query.filter(MakroPiggybackItem.buybox_status == "FLOOR_HIT").count()
-    missing_floor_count = active_query.filter(
-        (MakroPiggybackItem.min_price_floor == None) | (MakroPiggybackItem.min_price_floor <= 0)
-    ).count()
-
-    staging_count = unabandoned.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
-    blocked_count = unabandoned.filter(
-        (MakroPiggybackItem.status == "FAILED") |
-        (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
-    ).count()
-
-    return {
-        "total_count": total_count,
-        "active_count": active_count,
-        "winning_count": winning_count,
-        "no_competitor_count": no_competitor_count,
-        "losing_count": losing_count,
-        "floor_hit_count": floor_hit_count,
-        "missing_floor_count": missing_floor_count,
-        "staging_count": staging_count,
-        "blocked_count": blocked_count,
-        "abandoned_count": abandoned_count
-    }
+    kpi = _calculate_piggyback_kpi_fast(base_query)
+    _KPI_CACHE[cache_key] = (now_ts, kpi)
+    return kpi
 
 @router.post("/batch-set-floor", summary="批量公式设置保本底价并智能联动跟价")
 def batch_set_floor(
@@ -704,6 +777,7 @@ def batch_set_floor(
         updated_count += 1
 
     db.commit()
+    invalidate_kpi_cache()
     record_audit_log(
         task_type="PIGGYBACK_BATCH_FLOOR",
         status="SUCCESS",
@@ -811,7 +885,7 @@ def list_piggyback_ids(
         )
         if stage == "STAGING":
             query = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
-        elif stage == "ACTIVE_MONITOR":
+        elif stage in ["PUBLISHED", "ACTIVE_MONITOR"]:
             query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
         elif stage == "BLOCKED_FAILED":
             query = query.filter(
@@ -890,51 +964,32 @@ def list_piggyback_items(
         violation_type=violation_type
     )
 
-    # 1. 动态计算与当前公共筛选匹配的 6 大 KPI 卡片数据
-    abandoned_count = base_query.filter(MakroPiggybackItem.is_abandoned == True).count()
-    unabandoned = base_query.filter(
-        (MakroPiggybackItem.is_abandoned == False) | (MakroPiggybackItem.is_abandoned == None)
+    # 1. 动态计算与当前公共筛选匹配的 6 大 KPI 卡片数据 (命中 15s 内存缓存或单条条件聚合)
+    eff_uid = current_user.id if current_user and current_user.role != "ADMIN" else user_id
+    cache_key = (
+        eff_uid, store_id, (search or "").strip().lower(), vertical, inventory_status,
+        auto_reprice, has_floor_price, min_price, max_price, date_range,
+        start_date, end_date, brand_nature, is_white_label, has_image_logo,
+        image_prohibited, violation_type
     )
-
-    total_count = unabandoned.count()
-    active_query = unabandoned.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
-    active_count = active_query.count()
-
-    winning_count = active_query.filter(MakroPiggybackItem.buybox_status == "WINNING").count()
-    no_competitor_count = active_query.filter(MakroPiggybackItem.buybox_status == "NO_COMPETITOR").count()
-    losing_count = active_query.filter(MakroPiggybackItem.buybox_status == "LOSING").count()
-    floor_hit_count = active_query.filter(MakroPiggybackItem.buybox_status == "FLOOR_HIT").count()
-    missing_floor_count = active_query.filter(
-        (MakroPiggybackItem.min_price_floor == None) | (MakroPiggybackItem.min_price_floor <= 0)
-    ).count()
-
-    staging_count = unabandoned.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"])).count()
-    blocked_count = unabandoned.filter(
-        (MakroPiggybackItem.status == "FAILED") |
-        (MakroPiggybackItem.compliance_status.in_(["PROHIBITED", "RISK"]))
-    ).count()
-
-    kpi = {
-        "total_count": total_count,
-        "active_count": active_count,
-        "winning_count": winning_count,
-        "no_competitor_count": no_competitor_count,
-        "losing_count": losing_count,
-        "floor_hit_count": floor_hit_count,
-        "missing_floor_count": missing_floor_count,
-        "staging_count": staging_count,
-        "blocked_count": blocked_count,
-        "abandoned_count": abandoned_count
-    }
+    now_ts = time.time()
+    cached = _KPI_CACHE.get(cache_key)
+    if cached and (now_ts - cached[0] < _KPI_CACHE_TTL):
+        kpi = cached[1]
+    else:
+        kpi = _calculate_piggyback_kpi_fast(base_query)
+        _KPI_CACHE[cache_key] = (now_ts, kpi)
 
     # 2. 计算当前 stage 阶段漏斗切片下的风控分布 stats
     if stage == "ABANDONED":
         stage_query = base_query.filter(MakroPiggybackItem.is_abandoned == True)
     else:
-        stage_query = unabandoned
+        stage_query = base_query.filter(
+            or_(MakroPiggybackItem.is_abandoned == False, MakroPiggybackItem.is_abandoned == None)
+        )
         if stage == "STAGING":
             stage_query = stage_query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
-        elif stage == "ACTIVE_MONITOR":
+        elif stage in ["PUBLISHED", "ACTIVE_MONITOR"]:
             stage_query = stage_query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
         elif stage == "BLOCKED_FAILED":
             stage_query = stage_query.filter(
@@ -944,24 +999,14 @@ def list_piggyback_items(
         elif status and status != "ALL":
             stage_query = stage_query.filter(MakroPiggybackItem.status == status)
 
-    pending_check_count = stage_query.filter(MakroPiggybackItem.compliance_status == "PENDING_CHECK").count()
-    safe_count = stage_query.filter(MakroPiggybackItem.compliance_status == "SAFE").count()
-    risk_count = stage_query.filter(MakroPiggybackItem.compliance_status == "RISK").count()
-    prohibited_count = stage_query.filter(MakroPiggybackItem.compliance_status == "PROHIBITED").count()
-    disputed_count = stage_query.filter(MakroPiggybackItem.compliance_status == "DISPUTED").count()
-
-    stats = {
-        "total_all": total_count,
-        "pending_count": staging_count,
-        "active_count": active_count,
-        "failed_count": blocked_count,
-        "pending_check_count": pending_check_count,
-        "safe_count": safe_count,
-        "risk_count": risk_count,
-        "prohibited_count": prohibited_count,
-        "disputed_count": disputed_count,
-        "abandoned_count": abandoned_count
-    }
+    stats = _calculate_stage_stats_fast(
+        stage_query=stage_query,
+        total_count=kpi["total_count"],
+        staging_count=kpi["staging_count"],
+        active_count=kpi["active_count"],
+        blocked_count=kpi["blocked_count"],
+        abandoned_count=kpi["abandoned_count"]
+    )
 
     # 3. 在 stage_query 基础上进一步叠加 Buybox 和风控具体过滤
     query = stage_query
@@ -1079,26 +1124,38 @@ def batch_adjust_price(
                 store_online_items[s_id].append(item)
 
     db.commit()
+    invalidate_kpi_cache()
 
     if req.sync_to_makro and store_online_items:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from ..services.proxy_service import ProxyPoolService
+
         for s_id, s_items in store_online_items.items():
             store = _get_target_store(db, s_id)
             if store and store.seller_id and store.cookie:
-                try:
-                    for i in range(0, len(s_items), 20):
-                        chunk = s_items[i:i + 20]
-                        bulk_requests = [
-                            MakroPiggybackService._build_listing_bulk_request(it, store, listing_status="ACTIVE")
-                            for it in chunk
-                        ]
-                        payload = {"bulkRequests": bulk_requests, "sellerId": store.seller_id}
-                        headers = MakroPiggybackService._build_headers(store)
-                        create_url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
-                        resp = requests.post(create_url, headers=headers, json=payload, timeout=30)
+                create_url = f"{MAKRO_HOST}/napi/listing/create-update-listings?sellerId={store.seller_id}"
+                headers = MakroPiggybackService._build_headers(store)
+                chunks = [s_items[i:i + 20] for i in range(0, len(s_items), 20)]
+
+                def _push_chunk(chunk):
+                    bulk_requests = [
+                        MakroPiggybackService._build_listing_bulk_request(it, store, listing_status="ACTIVE")
+                        for it in chunk
+                    ]
+                    payload = {"bulkRequests": bulk_requests, "sellerId": store.seller_id}
+                    try:
+                        resp = ProxyPoolService.resilient_request("POST", create_url, headers=headers, json=payload, timeout=30, use_proxy=False)
                         if resp.status_code == 200:
-                            synced_count += len(chunk)
-                except Exception as sync_e:
-                    logger.warning(f"店铺 ID {s_id} 批量改价同步 Makro 发生异常: {sync_e}")
+                            return len(chunk)
+                    except Exception as ex:
+                        logger.warning(f"店铺 ID {s_id} 批量改价分块同步 Makro 发生异常: {ex}")
+                    return 0
+
+                max_workers = min(5, len(chunks)) if chunks else 1
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [executor.submit(_push_chunk, c) for c in chunks]
+                    for fut in as_completed(futures):
+                        synced_count += fut.result()
 
     sync_note = f"，其中 {synced_count} 件在线商品已即时同步推送至 Makro 店铺后台" if req.sync_to_makro else ""
     record_audit_log(
@@ -1213,7 +1270,7 @@ def export_piggyback_items(
             )
             if stage == "STAGING":
                 query = query.filter(MakroPiggybackItem.status.in_(["PENDING", "SUBMITTING"]))
-            elif stage == "ACTIVE_MONITOR":
+            elif stage in ["PUBLISHED", "ACTIVE_MONITOR"]:
                 query = query.filter(MakroPiggybackItem.status.in_(["ACTIVE", "PUBLISHED"]))
             elif stage == "BLOCKED_FAILED":
                 query = query.filter(
@@ -1502,6 +1559,28 @@ def batch_check_compliance(
                             time.sleep(0.8 * (attempt + 1) + random.uniform(0.1, 0.4))
                             continue
 
+                    # 双向同步到关联的 StoreProductReprice 监控表
+                    try:
+                        from ..models.store_product_reprice import StoreProductReprice
+                        reps = thread_db.query(StoreProductReprice).filter(
+                            (StoreProductReprice.source_piggyback_id == it.id) |
+                            ((StoreProductReprice.store_id == it.store_id) & (StoreProductReprice.seller_sku == it.seller_sku))
+                        ).all()
+                        for rp in reps:
+                            rp.compliance_status = it.compliance_status
+                            rp.compliance_details = it.compliance_details
+                            rp.last_compliance_check_at = datetime.now()
+                            if it.compliance_status == "PROHIBITED":
+                                rp.monitor_status = "BLOCKED"
+                                rp.auto_reprice = False
+                            elif it.compliance_status == "SAFE" and rp.monitor_status == "BLOCKED":
+                                rp.monitor_status = "ACTIVE"
+                                rp.auto_reprice = True
+                        if reps:
+                            thread_db.commit()
+                    except Exception as ex:
+                        logger.warning(f"同步跟品合规检测到 StoreProductReprice 失败: {ex}")
+
                     with progress_lock:
                         done += 1
                         status = it.compliance_status
@@ -1635,6 +1714,28 @@ def arbitrate_piggyback_compliance(
     item.compliance_details = json.dumps(details, ensure_ascii=False)
     db.commit()
     db.refresh(item)
+
+    # 双向同步到 StoreProductReprice 监控表
+    try:
+        from ..models.store_product_reprice import StoreProductReprice
+        reprice_items = db.query(StoreProductReprice).filter(
+            (StoreProductReprice.source_piggyback_id == item.id) |
+            ((StoreProductReprice.store_id == item.store_id) & (StoreProductReprice.seller_sku == item.sku))
+        ).all()
+        for rep in reprice_items:
+            rep.compliance_status = human
+            rep.compliance_details = item.compliance_details
+            rep.last_compliance_check_at = datetime.now()
+            if human == "PROHIBITED":
+                rep.monitor_status = "BLOCKED"
+                rep.auto_reprice = False
+            elif human == "SAFE" and rep.monitor_status == "BLOCKED":
+                rep.monitor_status = "ACTIVE"
+                rep.auto_reprice = True
+        if reprice_items:
+            db.commit()
+    except Exception as e:
+        logger.warning(f"同步跟品裁决到 StoreProductReprice 失败: {e}")
 
     record_audit_log(
         task_type="PIGGYBACK_ARBITRATION",
@@ -1938,6 +2039,7 @@ def delete_piggyback_item(
         raise HTTPException(status_code=404, detail="商品不存在")
     db.delete(item)
     db.commit()
+    invalidate_kpi_cache()
     return {"success": True, "message": "删除成功"}
 
 @router.post("/batch-delete", summary="批量删除跟品商品")
@@ -1951,6 +2053,7 @@ def batch_delete_piggyback(
     
     del_count = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.id.in_(req.ids)).delete(synchronize_session=False)
     db.commit()
+    invalidate_kpi_cache()
     record_audit_log(
         task_type="BATCH_DELETE",
         status="SUCCESS",
@@ -1995,6 +2098,7 @@ def abandon_piggyback_item(
     item.auto_reprice = False  # 弃用商品自动关闭自动巡检跟价
     item.status = "INACTIVE"
     db.commit()
+    invalidate_kpi_cache()
 
     record_audit_log(
         task_type="PIGGYBACK_ABANDON",
@@ -2054,6 +2158,7 @@ def batch_abandon_piggyback(
         count += 1
 
     db.commit()
+    invalidate_kpi_cache()
 
     delist_note = f"，其中 {delisted_count} 件在线商品已同步在 Makro 店铺后台修改为 Inactive 并清零库存" if delisted_count > 0 else ""
     record_audit_log(
@@ -2083,6 +2188,7 @@ def restore_piggyback_item(
     if item.status == "INACTIVE":
         item.status = "PENDING"
     db.commit()
+    invalidate_kpi_cache()
 
     record_audit_log(
         task_type="PIGGYBACK_RESTORE",
@@ -2114,6 +2220,7 @@ def batch_restore_piggyback(
             it.status = "PENDING"
         count += 1
     db.commit()
+    invalidate_kpi_cache()
 
     record_audit_log(
         task_type="PIGGYBACK_RESTORE",

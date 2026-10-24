@@ -47,6 +47,30 @@ class MakroOrder(Base):
     raw_items_json = Column(Text, nullable=True)
     raw_payload_json = Column(Text, nullable=True)
 
+    # 运营视角 7 阶履约状态: NEW, PURCHASED, SENT_TO_FORWARDER, AIR_FREIGHT, ARRIVED_SA, SA_PICKUP, COMPLETED, CANCELLED_RTO
+    fulfillment_status = Column(String(50), default="NEW", index=True)
+    fulfillment_updated_at = Column(DateTime, nullable=True)
+
+    # 关联 PO 拼单发货批次
+    po_id = Column(Integer, ForeignKey("makro_purchase_orders.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # 成本核算与追溯 (RMB)
+    purchase_cost = Column(Float, default=0.0)             # 国内采购价 (RMB)
+    domestic_logistics_fee = Column(Float, default=0.0)    # 国内发往货代快递费 (RMB，已平摊)
+    independent_head_haul = Column(Float, default=0.0)     # 单单独立头程费 (按重核算或自定义)
+    total_weight_g = Column(Integer, default=0)            # 订单实测总克重 (g)
+    is_weight_measured = Column(Boolean, default=False, index=True) # 是否已填写实测克重
+    air_freight_rate = Column(Float, default=0.0)          # 单单独立空运单价 (元/kg，0为使用系统默认)
+
+    # 采购与物流单号追溯
+    purchase_order_sn = Column(String(100), nullable=True) # 1688采购订单号 / 采购渠道单号
+    purchase_notes = Column(String(255), nullable=True)    # 采购规格 / 供应商备注
+    domestic_tracking_no = Column(String(100), nullable=True) # 国内寄往货代的快递单号
+
+    # 打包与打单追踪 (40x30mm 标签)
+    label_printed = Column(Boolean, default=False, index=True) # 是否已打印标签
+    label_printed_at = Column(DateTime, nullable=True)         # 首次打单时间 (北京时间)
+
     synced_at = Column(DateTime, default=datetime.now)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -56,3 +80,5 @@ class MakroOrder(Base):
     )
 
     store = relationship("Store", back_populates="orders")
+    purchase_order = relationship("MakroPurchaseOrder", back_populates="orders")
+

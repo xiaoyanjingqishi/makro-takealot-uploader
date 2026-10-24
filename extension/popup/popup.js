@@ -132,7 +132,10 @@ document.addEventListener("DOMContentLoaded", () => {
     fetch(`${targetUrl}/api/stores`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {
-        if (!Array.isArray(data)) return;
+        if (!Array.isArray(data)) {
+          if (storeSelect) storeSelect.innerHTML = '<option value="">❌ 获取店铺列表失败，请重试</option>';
+          return;
+        }
         chrome.storage.local.get(["makro_target_store_id"], (sRes) => {
           const savedStoreId = sRes?.makro_target_store_id || null;
           storeSelect.innerHTML = '<option value="">-- 系统默认主店 --</option>';
@@ -423,9 +426,10 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         );
       };
-    } else if (url.includes("makro.co.za")) {
+    } else if (url.includes("makro.co.za") || url.includes(":8899") || url.includes("192.168.110.145") || url.includes("127.0.0.1") || url.includes("localhost")) {
+      const isLocalMock = url.includes(":8899") || url.includes("192.168.110.145") || url.includes("127.0.0.1") || url.includes("localhost");
       const isPdp = url.includes("/p/") || /[?&](pid|fsn)=/i.test(url);
-      pageInfo.innerText = currentTab.title || (isPdp ? "Makro 买家详情页" : "Makro 搜索/类目页");
+      pageInfo.innerText = currentTab.title || (isLocalMock ? "Makro 离线商品聚合站 (8899)" : (isPdp ? "Makro 买家详情页" : "Makro 搜索/类目页"));
 
       if (isPdp) {
         actionBtn.innerText = "🎯 立即采集当前跟品";

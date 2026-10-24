@@ -90,6 +90,19 @@ class VerticalSemanticRetriever:
         self.index = defaultdict(list)
         self.vert_info = {}
         self._build_index()
+        self._load_custom_synonyms_on_init()
+
+    def _load_custom_synonyms_on_init(self):
+        """冷启动自动从数据库加载运营配置的自定义类目同义词"""
+        try:
+            from ..database import SessionLocal
+            from ..models.setting import SystemSetting
+            with SessionLocal() as db:
+                setting = db.query(SystemSetting).filter(SystemSetting.key == "custom_category_synonyms").first()
+                if setting and setting.value:
+                    self.load_custom_synonyms(setting.value)
+        except Exception as ex:
+            logger.debug(f"冷启动加载自定义同义词跳过: {ex}")
 
     @classmethod
     def get_instance(cls):

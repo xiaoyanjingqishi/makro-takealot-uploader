@@ -191,7 +191,8 @@ class MakroScraperService:
                             best_img = re.sub(r'/(?:100x100|125x125|200x200|275x275)/', '/original/', best_img)
 
                         title = p.get("title") or detail.get("Model Number") or fsn
-                        title_zh = TranslationService.translate_title(title)
+                        # 用户明确要求：采集时不进行大模型翻译，杜绝后台静默消耗 Token
+                        title_zh = detail.get("title_zh") or ""
 
                         logger.info(f"成功通过{'代理 ' + p_url if p_url else '直连'}从 Makro Seller API 解析商品: {title[:40]}")
                         return {
@@ -245,7 +246,8 @@ class MakroScraperService:
         cls,
         page_uri: str,
         cookie_dict: Optional[Dict[str, str]] = None,
-        proxy: Optional[str] = None
+        proxy: Optional[str] = None,
+        timeout: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         """
         调用 Makro 前台官方原生异步接口 /fccng/api/4/page/fetch 获取纯净结构化商品详情与竞争行情
@@ -280,12 +282,13 @@ class MakroScraperService:
 
         session = cls.get_buyer_session()
         proxies = {"http": proxy, "https": proxy} if proxy else None
+        req_timeout = timeout if timeout is not None else (6 if proxy else 12)
 
         try:
             kwargs = {
                 "headers": headers,
                 "data": payload,
-                "timeout": 15
+                "timeout": req_timeout
             }
             if cookie_dict:
                 kwargs["cookies"] = cookie_dict
@@ -294,6 +297,8 @@ class MakroScraperService:
 
             resp = session.post(api_url, **kwargs)
             if resp.status_code != 200:
+                if proxy and resp.status_code in (403, 418, 429, 502, 503):
+                    ProxyPoolService.report_failure(proxy)
                 logger.warning(f"Makro fccng API 响应 HTTP {resp.status_code}: {resp.text[:120]}")
                 return None
 
@@ -399,6 +404,8 @@ class MakroScraperService:
                 "blocked": False
             }
         except Exception as e:
+            if proxy:
+                ProxyPoolService.report_failure(proxy)
             logger.warning(f"请求 Makro fccng API 异常: {e}")
             return None
 
@@ -435,6 +442,23 @@ class MakroScraperService:
                         alt_api["url"] = f"https://www.makro.co.za{std_uri}"
                         return alt_api
 
+            # ★★★ 核心自愈：若注入了代理且代理抓取失败，自动秒级降级为本地纯净直连重试 ★★★
+            if proxy:
+                logger.info(f"代理 [{proxy}] 抓取未获取到有效报价，自动切换纯净直连重试自愈: {target_page_uri}")
+                direct_api = cls.fetch_buyer_page_api(target_page_uri, proxy=None, timeout=10)
+                if direct_api and (direct_api.get("price") or 0.0) > 0:
+                    direct_api["url"] = f"https://www.makro.co.za{target_page_uri}"
+                    ProxyPoolService.report_failure(proxy)
+                    return direct_api
+                if fsn:
+                    std_uri = f"/-/p/{fsn}?pid={fsn}"
+                    if std_uri != target_page_uri:
+                        alt_direct = cls.fetch_buyer_page_api(std_uri, proxy=None, timeout=10)
+                        if alt_direct and (alt_direct.get("price") or 0.0) > 0:
+                            alt_direct["url"] = f"https://www.makro.co.za{std_uri}"
+                            ProxyPoolService.report_failure(proxy)
+                            return alt_direct
+
         # 第二备用通道：HTML 页面解析与正则保底
         candidate_urls = []
         if url_or_fsn.startswith("http"):
@@ -465,10 +489,16 @@ class MakroScraperService:
             chosen_url = cur_url
             try:
                 # 纯净 Chrome 124 浏览器原生指纹直连 (严禁传入手写 Headers，防止与 TLS/H2 伪头冲突引发 PerimeterX 误杀)
+                req_timeout = 6 if proxy else 12
                 if proxy:
-                    resp = session.get(cur_url, timeout=15, allow_redirects=True, proxies={"http": proxy, "https": proxy})
+                    try:
+                        resp = session.get(cur_url, timeout=req_timeout, allow_redirects=True, proxies={"http": proxy, "https": proxy})
+                    except Exception as p_err:
+                        ProxyPoolService.report_failure(proxy)
+                        logger.warning(f"代理 [{proxy}] HTML请求异常 ({p_err})，自动降级为直连重试")
+                        resp = session.get(cur_url, timeout=12, allow_redirects=True)
                 else:
-                    resp = session.get(cur_url, timeout=15, allow_redirects=True)
+                    resp = session.get(cur_url, timeout=req_timeout, allow_redirects=True)
 
                 if resp.status_code != 200:
                     continue
@@ -478,6 +508,8 @@ class MakroScraperService:
 
                 if is_hit_bot:
                     logger.warning(f"Makro 前台反爬阻断拦截: {cur_url}")
+                    if proxy:
+                        ProxyPoolService.report_failure(proxy)
                     blocked = True
                     cls.reset_buyer_session()
                     break
@@ -673,6 +705,8 @@ class MakroScraperService:
                     break
 
             except Exception as req_err:
+                if proxy:
+                    ProxyPoolService.report_failure(proxy)
                 logger.warning(f"请求 Makro 前台链接 {cur_url} 异常: {req_err}")
                 cls.reset_buyer_session()
 
@@ -777,7 +811,8 @@ class MakroScraperService:
         cls,
         url_or_fsn: str,
         store: Any,
-        client_data: Optional[Dict[str, Any]] = None
+        client_data: Optional[Dict[str, Any]] = None,
+        proxy: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         综合解析入口：由后端直接访问 Makro 获取官方权威数据与前台在售数据
@@ -798,11 +833,14 @@ class MakroScraperService:
         official = cls.fetch_product_by_fsn_from_seller_api(fsn, store)
 
         # 2. 无论客户端传递何种参数，后端始终直接访问 Makro 前台获取买家真实售价、MRP 与 Buybox 情报
+        if proxy is None:
+            proxy = ProxyPoolService.get_proxy()
+
         canonical_target = cls.format_canonical_makro_url(fsn, item_id)
-        frontend_info = cls.scrape_buyer_frontend(canonical_target)
+        frontend_info = cls.scrape_buyer_frontend(canonical_target, proxy=proxy)
         if (frontend_info.get("price") or 0.0) <= 0 and url_or_fsn.startswith("http") and url_or_fsn != canonical_target:
             # 备用：尝试原链接直接抓取
-            alt_info = cls.scrape_buyer_frontend(url_or_fsn)
+            alt_info = cls.scrape_buyer_frontend(url_or_fsn, proxy=proxy)
             if (alt_info.get("price") or 0.0) > 0:
                 frontend_info = alt_info
 
@@ -842,7 +880,8 @@ class MakroScraperService:
         vertical = (official.get("vertical") if official else "") or frontend_info.get("vertical") or (client_data.get("vertical") if client_data else "") or "general"
         model_number = (official.get("model_number") if official else "") or (client_data.get("model_number") if client_data else "")
         barcode = (official.get("barcode") if official else "") or (client_data.get("barcode") if client_data else "")
-        title_zh = (official.get("title_zh") if official else "") or TranslationService.translate_title(title)
+        # 用户明确要求：采集时不进行大模型翻译，杜绝后台静默消耗 Token
+        title_zh = (official.get("title_zh") if official else "") or (client_data.get("title_zh") if client_data else "") or ""
 
         mrp = float(frontend_info.get("mrp") or 0.0)
         if mrp <= 0 and client_data and client_data.get("mrp"):

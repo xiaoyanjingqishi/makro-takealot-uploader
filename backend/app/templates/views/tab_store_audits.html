@@ -13,13 +13,13 @@
                 ]"
                 :key="st.key"
                 @click="changeStoreAuditStatus(st.key)"
-                :class="storeAudits.status === st.key ? (st.key === 'DRAFT' ? 'bg-rose-600 text-white shadow-xs font-semibold' : 'bg-slate-900 text-white shadow-xs font-semibold') : (st.key === 'DRAFT' && storeAudits.counts && storeAudits.counts.DRAFT > 0 ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 font-bold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium')"
+                :class="storeAudits?.status === st.key ? (st.key === 'DRAFT' ? 'bg-rose-600 text-white shadow-xs font-semibold' : 'bg-slate-900 text-white shadow-xs font-semibold') : (st.key === 'DRAFT' && storeAudits?.counts?.DRAFT > 0 ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 font-bold' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium')"
                 class="px-3 py-1.5 text-xs rounded-lg transition-all flex items-center space-x-1.5 cursor-pointer select-none"
               >
                 <span>{{ st.label }}</span>
                 <span 
-                  v-if="storeAudits.counts && storeAudits.counts[st.key] !== undefined"
-                  :class="storeAudits.status === st.key ? 'bg-white/20 text-white' : (st.key === 'DRAFT' && storeAudits.counts.DRAFT > 0 ? 'bg-rose-200/80 text-rose-900' : 'bg-slate-100 text-slate-600 border border-slate-200/60')"
+                  v-if="storeAudits?.counts && storeAudits.counts[st.key] !== undefined"
+                  :class="storeAudits.status === st.key ? 'bg-white/20 text-white' : (st.key === 'DRAFT' && storeAudits?.counts?.DRAFT > 0 ? 'bg-rose-200/80 text-rose-900' : 'bg-slate-100 text-slate-600 border border-slate-200/60')"
                   class="px-1.5 py-0.2 text-[10px] rounded-md font-mono tabular-nums font-bold"
                 >
                   {{ storeAudits.counts[st.key] }}

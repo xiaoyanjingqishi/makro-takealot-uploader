@@ -68,7 +68,15 @@
                 ⏹ 终止任务
               </button>
               <button 
-                v-else 
+                v-else-if="task.failed_items && task.failed_items.length > 0 && task.task_type === 'FULL_CRUISE_INSPECTION'"
+                @click="retryFailedCruiseItems(task)"
+                class="px-2 py-0.8 bg-rose-600 hover:bg-rose-700 text-white rounded-md text-[11px] font-medium transition cursor-pointer shadow-2xs active:scale-95"
+                title="重新仅对失败项发起巡检探测"
+              >
+                🔄 重试失败项 ({{ task.failed_items.length }})
+              </button>
+              <button 
+                v-if="task.status !== 'RUNNING'"
                 @click="dismissBgTask(task.id)" 
                 class="text-slate-400 hover:text-slate-700 font-bold px-1.5 py-0.5 rounded-md hover:bg-slate-100 transition cursor-pointer"
                 title="关闭此任务通知"

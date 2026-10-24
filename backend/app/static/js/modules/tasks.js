@@ -75,17 +75,26 @@ export const tasksMethods = {
             if (this.currentTab === 'piggyback') {
               this.loadPiggybackItems(this.piggyback.page);
             }
+            if (this.currentTab === 'store-products' || st.task_type === 'SYNC_STORE_LISTINGS') {
+              this.loadStoreProducts(1);
+            }
+            if (this.currentTab === 'reprice') {
+              this.loadRepriceItems(this.reprice.page);
+            }
+            // 巡检任务若有失败项保留 2 分钟供查阅与一键重试；其他任务 20 秒后平滑隐退
+            const dismissDelay = (st.task_type === 'FULL_CRUISE_INSPECTION' && (st.fail_count > 0 || st.blocked_count > 0)) ? 120000 : 20000;
             setTimeout(() => {
               this.dismissBgTask(st.id);
-            }, 12000);
+            }, dismissDelay);
           }
           this.activeBgTasks.splice(idx, 1, { ...prev, ...st });
         } else {
           this.activeBgTasks.push(st);
           if (st.status !== 'RUNNING') {
+            const dismissDelay = (st.task_type === 'FULL_CRUISE_INSPECTION' && (st.fail_count > 0 || st.blocked_count > 0)) ? 120000 : 20000;
             setTimeout(() => {
               this.dismissBgTask(st.id);
-            }, 12000);
+            }, dismissDelay);
           }
         }
       }

@@ -1,78 +1,210 @@
       <div v-if="currentTab === 'orders'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
-        <!-- 顶部指标卡片 (汇总与 SLA 预警) -->
-        <div class="shrink-0 space-y-2 pb-2">
-          <!-- 核心指标 5 卡片 -->
-          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-            <div 
-              @click="changeOrderStatus('all')"
-              :class="orders.status === 'all' ? 'ring-2 ring-slate-900 bg-white' : 'bg-white hover:bg-slate-50'"
-              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
+        <!-- 顶部视角切换器 (双重视角: 订单明细视角 vs PO 批次核算视角) -->
+        <div class="shrink-0 flex items-center justify-between pb-2 border-b border-slate-200/80 mb-2">
+          <div class="flex items-center space-x-1.5 bg-slate-200/70 p-1 rounded-xl">
+            <button 
+              @click="switchOrdersPerspective('orders')" 
+              :class="orders.activePerspective === 'orders' ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900 font-medium'" 
+              class="px-3.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center space-x-1.5 transition"
             >
-              <div class="text-[11px] font-semibold text-slate-500">📑 全部订单</div>
-              <div class="text-xl font-bold font-mono text-slate-900 mt-1">{{ orders.counts.all || 0 }}</div>
-            </div>
-            <div 
-              @click="changeOrderStatus('pending_rtd')"
-              :class="orders.status === 'pending_rtd' ? 'ring-2 ring-amber-500 bg-amber-50/40' : 'bg-white hover:bg-slate-50'"
-              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
+              <span>📦</span>
+              <span>订单明细视角 (单单算成本)</span>
+            </button>
+            <button 
+              @click="switchOrdersPerspective('po')" 
+              :class="orders.activePerspective === 'po' ? 'bg-purple-600 text-white font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900 font-medium'" 
+              class="px-3.5 py-1.5 rounded-lg text-xs cursor-pointer flex items-center space-x-1.5 transition"
             >
-              <div class="text-[11px] font-semibold text-amber-700 flex items-center justify-between">
-                <span>📦 待发货</span>
-                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+              <span>📑</span>
+              <span>PO 批次核算视角 (整批算盈亏)</span>
+              <span v-if="poListModal?.list?.length" class="text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold" :class="orders.activePerspective === 'po' ? 'bg-white/25 text-white' : 'bg-purple-100 text-purple-800'">
+                {{ poListModal.list.length }}
+              </span>
+            </button>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="openOrderFinanceConfigModal" 
+              class="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1"
+              title="调整平台扣点、基础运费及汇率"
+            >
+              <span>⚙️</span>
+              <span>结算参数</span>
+            </button>
+            <button 
+              @click="syncStoreOrders" 
+              :disabled="syncingOrders"
+              class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1 disabled:opacity-50 active:scale-95"
+            >
+              <span :class="{'animate-spin': syncingOrders}">🔄</span>
+              <span>{{ syncingOrders ? '同步中...' : '同步官方订单' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- ================= 1. 订单明细视角 ================= -->
+        <div v-if="orders.activePerspective === 'orders'" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <!-- 顶部固定控制区 (财务大盘与 7 阶履约看板) -->
+          <div class="shrink-0 space-y-2 pb-2">
+            <!-- 1. 核心财务与利润 5 大指标卡片 -->
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <!-- 累计销售额 -->
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+                <span>💰 累计销售额 (ZAR)</span>
+                <span class="text-[10px] bg-slate-100 px-1.5 py-0.2 rounded font-mono">GMV</span>
               </div>
-              <div class="text-xl font-bold font-mono text-amber-800 mt-1">{{ orders.counts.pending_rtd || 0 }}</div>
-            </div>
-            <div 
-              @click="changeOrderStatus('in_transit')"
-              :class="orders.status === 'in_transit' ? 'ring-2 ring-blue-500 bg-blue-50/40' : 'bg-white hover:bg-slate-50'"
-              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
-            >
-              <div class="text-[11px] font-semibold text-blue-700 flex items-center justify-between">
-                <span>🚚 运输中</span>
-                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+              <div class="text-lg font-bold font-mono text-slate-900 mt-1">
+                R{{ Number(orders?.financial_summary?.total_gmv_zar || 0).toFixed(2) }}
               </div>
-              <div class="text-xl font-bold font-mono text-blue-800 mt-1">{{ orders.counts.in_transit || 0 }}</div>
             </div>
-            <div 
-              @click="changeOrderStatus('completed')"
-              :class="orders.status === 'completed' ? 'ring-2 ring-emerald-500 bg-emerald-50/40' : 'bg-white hover:bg-slate-50'"
-              class="p-3 rounded-xl border border-slate-200/80 shadow-xs cursor-pointer transition select-none"
-            >
+
+            <!-- 预计最终回款 -->
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
               <div class="text-[11px] font-semibold text-emerald-700 flex items-center justify-between">
-                <span>✅ 已完成</span>
-                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span>💵 预计净回款 (CNY)</span>
+                <span class="text-[9.5px] bg-emerald-50 text-emerald-800 px-1.5 py-0.2 rounded font-mono font-bold">回款</span>
               </div>
-              <div class="text-xl font-bold font-mono text-emerald-800 mt-1">{{ orders.counts.completed || 0 }}</div>
+              <div class="text-lg font-bold font-mono text-emerald-600 mt-1">
+                ¥{{ Number(orders?.financial_summary?.total_payout_cny || 0).toFixed(2) }}
+              </div>
             </div>
-            <div 
-              @click="changeOrderStatus('sla_breached')"
-              :class="orders.status === 'sla_breached' ? 'ring-2 ring-rose-600 bg-rose-50' : 'bg-white hover:bg-rose-50/40'"
-              class="p-3 rounded-xl border border-rose-200/80 shadow-xs cursor-pointer transition select-none"
-            >
-              <div class="text-[11px] font-bold text-rose-700 flex items-center justify-between">
-                <span>🚨 SLA 超期预警</span>
-                <span class="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span>
+
+            <!-- 采购与国内快递 -->
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-indigo-700 flex items-center justify-between">
+                <span>📦 采购与国内物流</span>
+                <span class="text-[9.5px] bg-indigo-50 text-indigo-800 px-1.5 py-0.2 rounded font-mono">国内</span>
               </div>
-              <div class="text-xl font-bold font-mono text-rose-700 mt-1">{{ orders.counts.sla_breached || 0 }}</div>
+              <div class="text-lg font-bold font-mono text-indigo-900 mt-1">
+                ¥{{ (Number(orders?.financial_summary?.total_purchase_cny || 0) + Number(orders?.financial_summary?.total_domestic_cny || 0)).toFixed(2) }}
+              </div>
+            </div>
+
+            <!-- PO头程与损耗 -->
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-purple-700 flex items-center justify-between">
+                <span>🛫 PO头程与损耗</span>
+                <span class="text-[9.5px] bg-purple-50 text-purple-800 px-1.5 py-0.2 rounded font-mono">空运</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-purple-900 mt-1">
+                ¥{{ (Number(orders?.financial_summary?.total_po_head_haul_cny || 0) + Number(orders?.financial_summary?.total_po_loss_cny || 0)).toFixed(2) }}
+              </div>
+            </div>
+
+            <!-- 预估净利润 -->
+            <div class="p-2.5 rounded-xl border shadow-2xs transition-all"
+                 :class="(orders?.financial_summary?.total_profit_cny || 0) >= 0 ? 'bg-emerald-50/50 border-emerald-300' : 'bg-rose-50/50 border-rose-300'">
+              <div class="text-[11px] font-bold flex items-center justify-between"
+                   :class="(orders?.financial_summary?.total_profit_cny || 0) >= 0 ? 'text-emerald-800' : 'text-rose-800'">
+                <span>🏆 预估净利润 (CNY)</span>
+                <span class="text-[10px] font-mono px-1.5 py-0.2 rounded font-bold"
+                      :class="(orders?.financial_summary?.total_profit_cny || 0) >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'">
+                  {{ orders?.financial_summary?.margin_percent || 0 }}%
+                </span>
+              </div>
+              <div class="text-lg font-bold font-mono mt-1"
+                   :class="(orders?.financial_summary?.total_profit_cny || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'">
+                {{ (orders?.financial_summary?.total_profit_cny || 0) >= 0 ? '+' : '' }}¥{{ Number(orders?.financial_summary?.total_profit_cny || 0).toFixed(2) }}
+              </div>
             </div>
           </div>
 
-          <!-- 筛选与同步工具栏 -->
-          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-2.5 flex items-center justify-between flex-wrap gap-2">
-            <div class="flex items-center space-x-2">
+          <!-- 2. 7阶履约全生命周期流程导航条 -->
+          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-1.5 flex items-center justify-between overflow-x-auto custom-scrollbar gap-1 text-xs select-none">
+            <div class="flex items-center space-x-1 shrink-0">
+              <button 
+                v-for="st in [
+                  { key: 'all', label: '全部订单', icon: '📑' },
+                  { key: 'NEW', label: '新订单', icon: '🔵' },
+                  { key: 'PURCHASED', label: '已采购', icon: '🟣' },
+                  { key: 'SENT_TO_FORWARDER', label: '发送货代', icon: '🟪' },
+                  { key: 'AIR_FREIGHT', label: '货代空运', icon: '🛫' },
+                  { key: 'ARRIVED_SA', label: '到达南非', icon: '🛬' },
+                  { key: 'SA_PICKUP', label: '南非取件', icon: '📦' },
+                  { key: 'COMPLETED', label: '订单完结', icon: '🏁' },
+                  { key: 'CANCELLED_RTO', label: '异常退回', icon: '⚠️' }
+                ]"
+                :key="st.key"
+                @click="changeFulfillmentStatus(st.key)"
+                :class="orders.fulfillment_status === st.key ? 'bg-indigo-600 text-white font-bold shadow-xs' : 'bg-slate-50 hover:bg-slate-100 text-slate-700 font-medium'"
+                class="px-2.5 py-1.5 rounded-lg transition-all flex items-center space-x-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <span>{{ st.icon }}</span>
+                <span>{{ st.label }}</span>
+                <span 
+                  :class="orders.fulfillment_status === st.key ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'"
+                  class="text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold"
+                >
+                  {{ orders?.fulfillment_counts?.[st.key] || 0 }}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 3. 操作工具栏 (搜索、结算参数、PO总账、同步官方) -->
+          <div class="bg-white rounded-xl border border-slate-200/80 shadow-xs p-2.5 space-y-2">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+            <!-- 批量操作控制条 (勾选后激活) -->
+            <div v-if="orders.selectedIds && orders.selectedIds.length > 0" class="flex items-center space-x-2 animate-in fade-in flex-wrap gap-y-1">
+              <span class="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded-md">
+                已选中 {{ orders.selectedIds.length }} 笔订单
+              </span>
+              <!-- 批量打印 40×30mm 标签 -->
+              <button 
+                @click="downloadBatchLabels()" 
+                class="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1"
+                title="合并生成所选订单的 40×30mm 热敏打包防混标签 PDF (支持连打)"
+              >
+                <span>🏷️</span>
+                <span>批量打印 40×30 标签</span>
+              </button>
+              <button 
+                @click="openCreatePoModal" 
+                class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1"
+              >
+                <span>📦</span>
+                <span>合并生成 PO 批次</span>
+              </button>
+              <button 
+                @click="openAssignPoModal" 
+                class="px-3 py-1 bg-white hover:bg-indigo-50 border border-indigo-300 text-indigo-700 text-xs font-bold rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1"
+              >
+                <span>📥</span>
+                <span>归档至已有 PO</span>
+              </button>
+              <select 
+                @change="batchUpdateFulfillment($event.target.value); $event.target.value = ''"
+                class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-semibold text-slate-700 outline-none cursor-pointer hover:border-indigo-400"
+              >
+                <option value="">🔄 批量流转状态...</option>
+                <option value="NEW">🔵 新订单</option>
+                <option value="PURCHASED">🟣 已采购</option>
+                <option value="SENT_TO_FORWARDER">🟪 发送货代</option>
+                <option value="AIR_FREIGHT">🛫 货代空运</option>
+                <option value="ARRIVED_SA">🛬 到达南非</option>
+                <option value="SA_PICKUP">📦 南非取件</option>
+                <option value="COMPLETED">🏁 订单完结</option>
+                <option value="CANCELLED_RTO">⚠️ 异常/退回</option>
+              </select>
+            </div>
+            <div v-else class="flex items-center space-x-2">
               <span class="text-xs text-slate-500 font-medium">当前视图:</span>
               <span class="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">
-                {{ formatOrderState(orders.status) }}
+                {{ formatFulfillmentState(orders.fulfillment_status) }}
               </span>
             </div>
+
+            <!-- 右侧：搜索与功能按钮 -->
             <div class="flex items-center space-x-2">
               <div class="relative">
                 <input 
                   type="text" 
                   v-model="orders.search" 
                   @keyup.enter="loadStoreOrders(1)"
-                  placeholder="搜索订单号、运单号、买家..." 
-                  class="text-xs pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg w-52 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-2xs"
+                  placeholder="搜索订单、运单、买家、采购单号..." 
+                  class="text-xs pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg w-56 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none shadow-2xs"
                 />
                 <span class="absolute left-2.5 top-2 text-slate-400 text-xs">🔍</span>
               </div>
@@ -82,125 +214,476 @@
               >
                 搜索
               </button>
+              <!-- 结算参数配置 -->
+              <button 
+                @click="openOrderFinanceConfigModal" 
+                class="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-medium rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1"
+                title="调整平台扣点、基础运费及汇率"
+              >
+                <span>⚙️</span>
+                <span>结算参数</span>
+              </button>
+              <!-- PO 批次总账管理 -->
+              <button 
+                @click="openPoListModal" 
+                class="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-800 text-xs font-bold rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1"
+                title="查看 PO 空运拼单批次总览与财务利润账目"
+              >
+                <span>📑</span>
+                <span>PO 批次总账</span>
+              </button>
+              <!-- 同步官方订单 -->
               <button 
                 @click="syncStoreOrders" 
                 :disabled="syncingOrders"
-                class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1.5 disabled:opacity-50 active:scale-95"
+                class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1 disabled:opacity-50 active:scale-95"
               >
                 <span :class="{'animate-spin': syncingOrders}">🔄</span>
-                <span>{{ syncingOrders ? '同步中...' : '一键同步官方订单' }}</span>
+                <span>{{ syncingOrders ? '同步中...' : '同步官方订单' }}</span>
               </button>
+            </div>
+
+            <!-- 第二行：综合筛选条 (出单日期起止、打单状态、快捷时间) -->
+            <div class="pt-2 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2 text-xs">
+              <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                <span class="text-slate-500 font-medium flex items-center space-x-1">
+                  <span>📅</span>
+                  <span>出单日期:</span>
+                </span>
+                <input 
+                  type="date" 
+                  v-model="orders.order_date_start" 
+                  @change="loadStoreOrders(1)"
+                  class="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  title="起始出单日期 (北京时间)"
+                />
+                <span class="text-slate-400">至</span>
+                <input 
+                  type="date" 
+                  v-model="orders.order_date_end" 
+                  @change="loadStoreOrders(1)"
+                  class="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-700 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  title="截止出单日期 (北京时间)"
+                />
+                <!-- 快捷按钮组 -->
+                <div class="flex items-center space-x-1 ml-1">
+                  <button 
+                    @click="setDateFilter('today')" 
+                    class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium transition cursor-pointer"
+                  >
+                    今日
+                  </button>
+                  <button 
+                    @click="setDateFilter('7days')" 
+                    class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium transition cursor-pointer"
+                  >
+                    近7天
+                  </button>
+                  <button 
+                    @click="setDateFilter('30days')" 
+                    class="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium transition cursor-pointer"
+                  >
+                    近30天
+                  </button>
+                  <button 
+                    v-if="orders.order_date_start || orders.order_date_end"
+                    @click="setDateFilter('clear')" 
+                    class="px-2 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 text-[11px] font-medium transition cursor-pointer"
+                  >
+                    清空日期
+                  </button>
+                </div>
+              </div>
+
+              <!-- 标签打印状态筛选 -->
+              <div class="flex items-center space-x-2">
+                <span class="text-slate-500 font-medium flex items-center space-x-1">
+                  <span>🏷️</span>
+                  <span>标签打印:</span>
+                </span>
+                <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                  <button 
+                    @click="orders.label_printed = 'all'; loadStoreOrders(1)"
+                    :class="orders.label_printed === 'all' ? 'bg-white text-slate-900 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'"
+                    class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
+                  >
+                    全部
+                  </button>
+                  <button 
+                    @click="orders.label_printed = 'printed'; loadStoreOrders(1)"
+                    :class="orders.label_printed === 'printed' ? 'bg-emerald-600 text-white font-bold shadow-2xs' : 'text-slate-600 hover:text-emerald-700'"
+                    class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
+                  >
+                    🏷️ 已打单
+                  </button>
+                  <button 
+                    @click="orders.label_printed = 'unprinted'; loadStoreOrders(1)"
+                    :class="orders.label_printed === 'unprinted' ? 'bg-amber-600 text-white font-bold shadow-2xs' : 'text-slate-600 hover:text-amber-700'"
+                    class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
+                  >
+                    ⏳ 未打单
+                  </button>
+                </div>
+                <span class="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100" title="所有出单与履约时间均已精准转换为北京时间 (UTC+8)">
+                  时区: 北京时间 (UTC+8)
+                </span>
+              </div>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- 订单列表主体 -->
+        <!-- 订单列表主体表格 -->
         <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
           <div class="flex-1 overflow-y-auto custom-scrollbar">
             <table class="w-full text-left border-collapse text-xs">
               <thead class="sticky top-0 bg-slate-50/95 backdrop-blur-xs border-b border-slate-200/80 text-slate-500 font-semibold text-[11px] uppercase tracking-wider z-10">
                 <tr>
-                  <th class="py-3 px-3.5 w-44">订单号 / 发货单</th>
-                  <th class="py-3 px-3.5">商品明细 (标题 / 数量 / 金额)</th>
-                  <th class="py-3 px-3.5 w-44">买家与送货地址</th>
-                  <th class="py-3 px-3.5 w-40 text-center">发货截止 SLA</th>
-                  <th class="py-3 px-3.5 w-36">物流承运与单号</th>
-                  <th class="py-3 px-3.5 w-24 text-center">订单状态</th>
+                  <th class="py-3 px-3 w-10 text-center">
+                    <input 
+                      type="checkbox" 
+                      :checked="orders.items && orders.items.length > 0 && orders.selectedIds && orders.selectedIds.length === orders.items.length"
+                      @change="toggleSelectAllOrders"
+                      class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </th>
+                  <th class="py-3 px-3 w-36">订单号 / 发货单</th>
+                  <th class="py-3 px-3">商品明细 (放大首图 & 售价 & 称重)</th>
+                  <th class="py-3 px-3 w-32 text-center">7阶履约流转</th>
+                  <th class="py-3 px-3 w-40">采购追溯 (1688/国内快递)</th>
+                  <th class="py-3 px-3.5 w-60 text-right">成本与利润结算</th>
+                  <th class="py-3 px-3 w-36">买家与地址 / 官方物流</th>
+                  <th class="py-3 px-2 w-28 text-center">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100">
                 <tr v-if="orders.loading">
-                  <td colspan="6" class="text-center py-16 text-slate-400">
+                  <td colspan="8" class="text-center py-16 text-slate-400">
                     <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
                     <div>正在查询订单...</div>
                   </td>
                 </tr>
                 <tr v-else-if="!orders.items || orders.items.length === 0">
-                  <td colspan="6" class="text-center py-16 text-slate-400">
+                  <td colspan="8" class="text-center py-16 text-slate-400">
                     <div class="text-3xl mb-2">📑</div>
                     <div class="font-medium">当前无相关订单</div>
-                    <p class="text-xs text-slate-400 mt-1">系统已启动 30 分钟后台自动静默同步，也可点击右上角【一键同步官方订单】立即刷新</p>
+                    <p class="text-xs text-slate-400 mt-1">系统已启动 30 分钟后台自动静默同步，也可点击右上角【同步官方订单】立即刷新</p>
                   </td>
                 </tr>
-                <tr v-for="o in orders.items" :key="o.id" class="hover:bg-slate-50/70 transition-colors">
-                  <!-- 订单号 -->
-                  <td class="py-3 px-3.5 font-mono text-[11px]">
+                <tr 
+                  v-for="o in orders.items" 
+                  :key="o.id" 
+                  :class="orders.selectedIds && orders.selectedIds.includes(o.id) ? 'bg-indigo-50/40' : 'hover:bg-slate-50/70'"
+                  class="transition-colors"
+                >
+                  <!-- 勾选框 -->
+                  <td class="py-3 px-3 text-center">
+                    <input 
+                      type="checkbox" 
+                      :checked="orders.selectedIds && orders.selectedIds.includes(o.id)"
+                      @change="toggleSelectOrder(o.id)"
+                      class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  </td>
+
+                  <!-- 订单号 / 单号 -->
+                  <td class="py-3 px-3 font-mono text-[11px]">
                     <div class="font-bold text-slate-900 flex items-center space-x-1">
                       <span>#{{ o.order_id }}</span>
                     </div>
                     <div class="text-[10px] text-slate-400 mt-0.5 truncate" :title="o.shipment_id">单号: {{ o.shipment_id }}</div>
                     <div class="text-[10px] text-slate-400 mt-0.5">{{ o.order_date }}</div>
+                    <!-- 官方状态小标签与打单状态 -->
+                    <div class="mt-1 flex items-center space-x-1 flex-wrap gap-1">
+                      <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 border border-slate-200 font-sans">
+                        {{ formatOrderState(o.status) }}
+                      </span>
+                      <!-- 打单状态标记 (可点击快速切换) -->
+                      <button 
+                        @click.stop="toggleOrderLabelPrinted(o)"
+                        class="text-[10px] px-1.5 py-0.2 rounded font-sans cursor-pointer transition font-medium"
+                        :class="o.label_printed ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100' : 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100'"
+                        :title="o.label_printed ? `已打单 (点击可重置为未打单) ${o.label_printed_at || ''}` : '未打单 (点击可快速标记为已打单)'"
+                      >
+                        {{ o.label_printed ? '🏷️ 已打单' : '⏳ 未打单' }}
+                      </button>
+                    </div>
                   </td>
-                  <!-- 商品明细 -->
-                  <td class="py-3 px-3.5">
-                    <div v-if="o.order_items && o.order_items.length > 0" class="space-y-1.5">
-                      <div v-for="(oi, oiIdx) in o.order_items" :key="oiIdx" class="flex items-center space-x-2">
-                        <img 
-                          v-if="oi.image_url" 
-                          :src="cleanImageUrl(oi.image_url)" 
-                          @click="openImagePreview(cleanImageUrl(oi.image_url))"
-                          class="w-9 h-9 object-cover rounded border border-slate-200 cursor-pointer hover:opacity-85 shrink-0" 
-                        />
-                        <div class="min-w-0 flex-1">
-                          <div class="font-medium text-slate-900 text-xs line-clamp-1" :title="oi.title">{{ oi.title }}</div>
-                          <div class="text-[10.5px] text-slate-500 font-mono flex items-center space-x-2">
-                            <span>SKU: {{ oi.sku_id }}</span>
-                            <span class="text-indigo-600 font-bold">×{{ oi.quantity }}</span>
-                            <span class="text-slate-700 font-bold">R{{ oi.price || oi.selling_price || 0 }}</span>
+
+                  <!-- 商品明细 (显著放大首图至 64px + 醒目大号价格标签) -->
+                  <td class="py-3 px-3">
+                    <div v-if="o.order_items && o.order_items.length > 0" class="space-y-2">
+                      <div v-for="(oi, oiIdx) in o.order_items" :key="oiIdx" class="flex items-start space-x-2.5">
+                        <!-- 显著放大首图 (w-16 h-16 / 64px) + 点击全屏预览 -->
+                        <div class="relative group shrink-0">
+                          <img 
+                            v-if="oi.image_url" 
+                            :src="cleanImageUrl(oi.image_url)" 
+                            @click="openImagePreview(cleanImageUrl(oi.image_url))"
+                            class="w-16 h-16 object-cover rounded-lg border border-slate-200/90 shadow-2xs cursor-pointer group-hover:opacity-90 group-hover:ring-2 group-hover:ring-indigo-500 transition-all bg-white" 
+                            title="点击放大查看商品高清原图"
+                          />
+                          <div v-else class="w-16 h-16 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 text-xs">
+                            无图
+                          </div>
+                        </div>
+
+                        <div class="min-w-0 flex-1 space-y-1">
+                          <div class="font-medium text-slate-900 text-xs line-clamp-2 leading-relaxed" :title="oi.title">
+                            {{ oi.title }}
+                          </div>
+                          <!-- 醒目放大售价标签与 SKU -->
+                          <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                            <span class="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
+                              SKU: {{ oi.sku_id }}
+                            </span>
+                            <span class="text-xs font-bold text-indigo-600 font-mono">
+                              ×{{ oi.quantity }}
+                            </span>
+                            <!-- 醒目放大售价标签 -->
+                            <span class="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              R{{ oi.unit_price || oi.price || oi.selling_price || 0 }}
+                              <span v-if="oi.quantity > 1" class="text-[10px] text-emerald-600 font-sans font-normal ml-0.5">
+                                (总计: R{{ oi.total_price || (oi.price * oi.quantity) }})
+                              </span>
+                            </span>
+                            <!-- 🔗 一键跳转商品前台按钮 -->
+                            <a 
+                              v-if="oi.product_url || oi.fsn"
+                              :href="oi.product_url || `https://www.makro.co.za/-/p/${oi.fsn}?pid=${oi.fsn}`"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 transition shadow-2xs hover:shadow-xs cursor-pointer select-none"
+                              title="在新标签页中打开 Makro 官方买家前台商品详情"
+                            >
+                              <span>🔗</span>
+                              <span>前台商品</span>
+                            </a>
                           </div>
                         </div>
                       </div>
+                      <!-- 订单实测总重状态徽标 (已填写 / 未填写) -->
+                      <div class="pt-1 flex items-center space-x-2">
+                        <button 
+                          @click="openWeightModal(o)" 
+                          class="text-[10px] px-2 py-0.5 rounded-lg border font-mono font-bold transition cursor-pointer flex items-center space-x-1"
+                          :class="o.is_weight_measured ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100' : 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 animate-pulse'"
+                          :title="o.is_weight_measured ? `已填写实测重量: ${o.total_weight_g}g (${((o.total_weight_g || 0)/1000).toFixed(2)}kg)\n点击重新录入或编辑 SKU 克重` : '该订单尚未填写承重，点击填写'"
+                        >
+                          <span v-if="o.is_weight_measured">⚖️ 已填写: {{ o.total_weight_g }}g</span>
+                          <span v-else>⚖️ 未填写</span>
+                          <span v-if="o.is_weight_measured" class="text-[9px] text-emerald-600 font-sans font-normal">
+                            ({{ ((o.total_weight_g || 0)/1000).toFixed(2) }}kg)
+                          </span>
+                        </button>
+                      </div>
                     </div>
-                    <div v-else class="text-slate-400">总计: R{{ o.total_amount }} {{ o.currency }}</div>
-                  </td>
-                  <!-- 买家与收货地 -->
-                  <td class="py-3 px-3.5 text-xs">
-                    <div class="font-semibold text-slate-800">{{ o.buyer_name || '买家' }}</div>
-                    <div class="text-[11px] text-slate-500 mt-0.5">{{ o.shipping_city }} {{ o.shipping_state }} {{ o.shipping_pincode }}</div>
-                    <div class="text-[10.5px] text-slate-400 truncate max-w-xs mt-0.5" :title="o.shipping_address_line1">{{ o.shipping_address_line1 }}</div>
-                  </td>
-                  <!-- SLA 截止时间 / 送达时间 -->
-                  <td class="py-3 px-3.5 text-center">
-                    <div v-if="['completed', 'delivered', 'shipments_delivered'].includes(o.status)" class="inline-flex flex-col items-center">
-                      <span class="px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded font-semibold text-[10px]">
-                        已签收送达
+                    <div v-else class="text-slate-500 space-y-1">
+                      <span class="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                        总计: R{{ o.total_amount }} {{ o.currency }}
                       </span>
-                      <span v-if="o.delivered_date" class="font-mono text-[10px] text-slate-500 mt-0.5" title="买家签收时间">{{ o.delivered_date.slice(5, 16) }}</span>
+                      <div>
+                        <button 
+                          @click="openWeightModal(o)" 
+                          class="text-[10px] px-2 py-0.5 rounded-lg border font-mono font-bold bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 cursor-pointer"
+                        >
+                          ⚖️ 录入重量
+                        </button>
+                      </div>
                     </div>
-                    <div v-else-if="o.is_sla_breached" class="inline-flex flex-col items-center">
-                      <span class="px-2 py-0.8 bg-rose-600 text-white rounded font-bold text-[10px] animate-pulse">
-                        🚨 SLA 已超期!
-                      </span>
-                      <span class="font-mono text-[10px] text-rose-600 font-semibold mt-0.5">{{ o.dispatch_by_date }}</span>
-                    </div>
-                    <div v-else-if="o.dispatch_by_date" class="inline-flex flex-col items-center">
-                      <span class="px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded font-semibold text-[10px]">
-                        截止: {{ o.dispatch_by_date.slice(5, 16) }}
-                      </span>
-                    </div>
-                    <span v-else class="text-slate-300">-</span>
                   </td>
-                  <!-- 物流 -->
-                  <td class="py-3 px-3.5 text-xs">
-                    <div class="font-medium text-slate-800">{{ o.courier_name || o.delivery_vendor || '官方物流' }}</div>
-                    <div v-if="o.tracking_id" class="font-mono text-[10.5px] text-indigo-600 font-bold mt-0.5 flex items-center space-x-1">
-                      <span>{{ o.tracking_id }}</span>
+
+                  <!-- 7 阶履约流转控制器 (行内一键快速流转) -->
+                  <td class="py-3 px-3 text-center">
+                    <div class="space-y-1">
+                      <select 
+                        :value="o.fulfillment_status || 'NEW'"
+                        @change="updateOrderFulfillment(o, $event.target.value)"
+                        :class="getFulfillmentBadgeClass(o.fulfillment_status || 'NEW')"
+                        class="text-xs font-bold rounded-lg px-2 py-1 border shadow-2xs outline-none cursor-pointer text-center w-full transition-all focus:ring-2 focus:ring-indigo-500/20"
+                      >
+                        <option value="NEW">🔵 新订单</option>
+                        <option value="PURCHASED">🟣 已采购</option>
+                        <option value="SENT_TO_FORWARDER">🟪 发送货代</option>
+                        <option value="AIR_FREIGHT">🛫 货代空运</option>
+                        <option value="ARRIVED_SA">🛬 到达南非</option>
+                        <option value="SA_PICKUP">📦 南非取件</option>
+                        <option value="COMPLETED">🏁 订单完结</option>
+                        <option value="CANCELLED_RTO">⚠️ 异常/退回</option>
+                      </select>
+                      <div v-if="o.fulfillment_updated_at" class="text-[9.5px] text-slate-400 font-mono" title="履约状态更新时间">
+                        {{ o.fulfillment_updated_at.slice(5) }}
+                      </div>
                     </div>
-                    <span v-else class="text-[10px] text-slate-400">待揽收生成运单</span>
                   </td>
-                  <!-- 状态徽章 -->
-                  <td class="py-3 px-3.5 text-center">
-                    <span 
-                      :class="{
-                        'bg-amber-50 text-amber-700 border-amber-200': ['pending_rtd', 'packed', 'upcoming', 'pending_labels', 'shipments_to_pack', 'pending_handover', 'shipments_to_handover'].includes(o.status),
-                        'bg-blue-50 text-blue-700 border-blue-200': ['in_transit', 'shipped', 'picked_up', 'shipments_in_transit'].includes(o.status),
-                        'bg-emerald-50 text-emerald-700 border-emerald-200': ['completed', 'delivered', 'shipments_delivered'].includes(o.status),
-                        'bg-rose-50 text-rose-700 border-rose-200': ['cancelled', 'breached'].includes(o.status)
-                      }"
-                      class="px-2 py-0.8 rounded-md text-[11px] font-semibold border inline-block whitespace-nowrap"
+
+                  <!-- 采购追溯 (1688采购单号、国内物流单号与备注) -->
+                  <td class="py-3 px-3 text-xs space-y-1.5">
+                    <!-- 1688/采购单号 -->
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10px] text-slate-400 shrink-0">单号:</span>
+                      <input 
+                        type="text" 
+                        v-model="o.purchase_order_sn" 
+                        @blur="saveOrderProcurementCost(o)"
+                        @keyup.enter="saveOrderProcurementCost(o)"
+                        placeholder="1688采购订单号" 
+                        class="w-full text-[11px] font-mono px-1.5 py-0.5 border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 outline-none"
+                        title="按回车或失焦即自动保存采购单号"
+                      />
+                    </div>
+                    <!-- 国内寄往货代快递单号 -->
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10px] text-slate-400 shrink-0">快递:</span>
+                      <input 
+                        type="text" 
+                        v-model="o.domestic_tracking_no" 
+                        @blur="saveOrderProcurementCost(o)"
+                        @keyup.enter="saveOrderProcurementCost(o)"
+                        placeholder="发往货代快递单号" 
+                        class="w-full text-[11px] font-mono px-1.5 py-0.5 border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 outline-none"
+                        title="按回车或失焦即自动保存快递单号"
+                      />
+                    </div>
+                    <!-- 采购规格备注 -->
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10px] text-slate-400 shrink-0">备注:</span>
+                      <input 
+                        type="text" 
+                        v-model="o.purchase_notes" 
+                        @blur="saveOrderProcurementCost(o)"
+                        @keyup.enter="saveOrderProcurementCost(o)"
+                        placeholder="采购规格/供应商" 
+                        class="w-full text-[10.5px] px-1.5 py-0.5 border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 outline-none"
+                        title="按回车或失焦即自动保存备注"
+                      />
+                    </div>
+                  </td>
+
+                  <!-- 成本与利润结算 (回款、采购价、国内物流平摊、按重头程、单单利润) -->
+                  <td class="py-3 px-3.5 text-right font-mono tabular-nums text-xs space-y-1">
+                    <!-- 预计回款 -->
+                    <div class="flex items-center justify-between text-slate-600">
+                      <span class="text-[10.5px] text-slate-400 font-sans">预计回款:</span>
+                      <strong class="text-slate-800">¥{{ Number(o.calculated_payout || 0).toFixed(2) }}</strong>
+                    </div>
+
+                    <!-- 采购成本 (行内可直接修改) -->
+                    <div class="flex items-center justify-between">
+                      <span class="text-[10.5px] text-slate-400 font-sans">采购成本:</span>
+                      <div class="inline-flex items-center space-x-0.5">
+                        <span class="text-[10px] text-slate-400">¥</span>
+                        <input 
+                          type="number" 
+                          step="0.1" 
+                          v-model.number="o.purchase_cost" 
+                          @blur="saveOrderProcurementCost(o)"
+                          @keyup.enter="saveOrderProcurementCost(o)"
+                          class="w-14 text-right text-xs py-0.5 px-1 border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 font-bold font-mono outline-none"
+                          title="按回车或失焦即自动保存采购成本"
+                        />
+                      </div>
+                    </div>
+
+                    <!-- 国内运费 (只读平摊自 PO 批次) -->
+                    <div class="flex items-center justify-between">
+                      <span class="text-[10.5px] text-slate-400 font-sans">国内运费:</span>
+                      <div class="inline-flex items-center space-x-1" :title="o.po_info ? `平摊自 PO: ${o.po_info.po_number}\nPO国内快递总额: ¥${o.po_info.domestic_logistics_fee}\n本批包含 ${o.po_info.total_orders_in_po} 单` : '未归档至 PO 批次，归档后自动均摊'">
+                        <strong class="text-slate-700">¥{{ Number(o.allocated_domestic_fee || 0).toFixed(2) }}</strong>
+                        <span class="text-[9px] px-1 py-0.2 rounded font-sans" :class="o.po_info ? 'bg-purple-50 text-purple-700 border border-purple-200 font-bold' : 'bg-slate-100 text-slate-400'">
+                          {{ o.po_info ? 'PO平摊' : '待入PO' }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- 头程运费 (按单品克重核算) -->
+                    <div class="flex items-center justify-between">
+                      <span class="text-[10.5px] text-purple-700 font-sans">头程运费:</span>
+                      <div class="inline-flex items-center space-x-1" :title="`按重核算: ${((o.total_weight_g || 0)/1000).toFixed(2)}kg × ¥${o.air_freight_rate || 60}/kg`">
+                        <strong class="text-purple-900 font-bold">¥{{ Number(o.head_haul_cost || 0).toFixed(2) }}</strong>
+                        <span class="text-[9px] text-purple-600 font-sans">
+                          ({{ ((o.total_weight_g || 0)/1000).toFixed(2) }}kg)
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- 所属 PO -->
+                    <div class="flex items-center justify-between text-[10.5px]">
+                      <span class="text-slate-400 font-sans">PO批次:</span>
+                      <div v-if="o.po_info">
+                        <button 
+                          @click="switchOrdersPerspective('po')" 
+                          class="text-purple-700 bg-purple-50 hover:bg-purple-100 px-1.5 py-0.2 rounded border border-purple-200 font-mono font-bold cursor-pointer"
+                          :title="`PO: ${o.po_info.po_number}\n点击切换至 PO 批次视角`"
+                        >
+                          {{ o.po_info.po_number }}
+                        </button>
+                      </div>
+                      <span v-else class="text-slate-400 font-sans">未归档PO</span>
+                    </div>
+
+                    <!-- 单单净利润 (正绿负红醒目高亮) -->
+                    <div class="flex items-center justify-between pt-1 border-t border-slate-100">
+                      <span class="text-[11px] font-bold font-sans" :class="o.net_profit >= 0 ? 'text-emerald-800' : 'text-rose-800'">
+                        单单净利:
+                      </span>
+                      <span 
+                        :class="o.net_profit >= 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-rose-700 bg-rose-50 border-rose-200'"
+                        class="text-xs font-bold px-2 py-0.5 rounded border"
+                      >
+                        {{ o.net_profit >= 0 ? '+' : '' }}¥{{ Number(o.net_profit || 0).toFixed(2) }}
+                      </span>
+                    </div>
+                  </td>
+
+                  <!-- 买家、地址与 SLA 监控 -->
+                  <td class="py-3 px-3 text-xs">
+                    <div class="font-semibold text-slate-800 truncate" :title="o.buyer_name">{{ o.buyer_name || '买家' }}</div>
+                    <div class="text-[11px] text-slate-500 mt-0.5 truncate">{{ o.shipping_city }} {{ o.shipping_state }}</div>
+                    <div class="text-[10px] text-slate-400 truncate mt-0.5" :title="o.shipping_address_line1">{{ o.shipping_address_line1 }}</div>
+                    <!-- SLA 预警 -->
+                    <div class="mt-1">
+                      <span v-if="o.is_sla_breached" class="px-1.5 py-0.5 bg-rose-600 text-white rounded text-[10px] font-bold animate-pulse">
+                        🚨 SLA 超期
+                      </span>
+                      <span v-else-if="o.dispatch_by_date" class="text-[10px] text-slate-400 font-mono">
+                        发货截止: {{ o.dispatch_by_date.slice(5, 16) }}
+                      </span>
+                    </div>
+                    <!-- 运单号 -->
+                    <div v-if="o.tracking_id" class="text-[10px] font-mono text-indigo-600 font-bold mt-1 truncate" :title="o.tracking_id">
+                      运单: {{ o.tracking_id }}
+                    </div>
+                  </td>
+
+                  <!-- 操作列 (40×30 标签生成下载与称重录入) -->
+                  <td class="py-3 px-2 text-center space-y-1.5">
+                    <button 
+                      @click="downloadOrderLabel(o.id, o.order_id)" 
+                      class="w-full px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer flex items-center justify-center space-x-1"
+                      title="生成并下载 40×30mm 热敏打包防混标签 PDF (含 Code128 条形码 + 订单号 + 出单时间)"
                     >
-                      {{ formatOrderState(o.status) }}
-                    </span>
+                      <span>🏷️</span>
+                      <span>40×30标签</span>
+                    </button>
+                    <button 
+                      @click="openWeightModal(o)" 
+                      class="w-full px-2 py-1 rounded-lg text-xs font-medium transition cursor-pointer flex items-center justify-center space-x-1 border"
+                      :class="o.is_weight_measured ? 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200' : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 font-semibold'"
+                      :title="o.is_weight_measured ? '已填写克重，点击修改' : '尚未填写承重，点击录入'"
+                    >
+                      <span>⚖️</span>
+                      <span>{{ o.is_weight_measured ? '称重核算' : '称重核算(未填)' }}</span>
+                    </button>
+                    <!-- 状态轨迹按钮 (Requirement 7) -->
+                    <button 
+                      @click="openStatusHistoryModal(o)" 
+                      class="w-full px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-medium transition cursor-pointer flex items-center justify-center space-x-1"
+                      title="查看订单状态流转与操作审计轨迹"
+                    >
+                      <span>📜</span>
+                      <span>流转轨迹</span>
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -232,4 +715,1146 @@
         </div>
       </div>
 
-      <!-- ================= Tab: 用户与权限管理 (仅管理员可见) ================= -->
+        <!-- ================= 2. PO 批次核算视角 ================= -->
+        <div v-else-if="orders.activePerspective === 'po'" class="flex-1 min-h-0 flex flex-col overflow-hidden space-y-2.5">
+          <!-- 1. PO 顶部财务与利润核算大盘 -->
+          <div class="shrink-0 grid grid-cols-2 sm:grid-cols-6 gap-2.5">
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-slate-500">📑 PO 批次数</div>
+              <div class="text-lg font-bold font-mono text-purple-900 mt-1">
+                {{ poListModal?.list?.length || 0 }} <span class="text-xs font-sans font-normal text-slate-400">个批次</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-slate-500">📦 包含订单总数</div>
+              <div class="text-lg font-bold font-mono text-slate-800 mt-1">
+                {{ (poListModal?.list || []).reduce((acc, p) => acc + (p.orders_count || 0), 0) }} <span class="text-xs font-sans font-normal text-slate-400">单</span>
+              </div>
+            </div>
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-emerald-700">💵 批次总回款</div>
+              <div class="text-lg font-bold font-mono text-emerald-600 mt-1">
+                ¥{{ (poListModal?.list || []).reduce((acc, p) => acc + (p.total_payout_cny || 0), 0).toFixed(2) }}
+              </div>
+            </div>
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-indigo-700">🛒 采购与国内物流</div>
+              <div class="text-lg font-bold font-mono text-indigo-900 mt-1">
+                ¥{{ (poListModal?.list || []).reduce((acc, p) => acc + (p.total_purchase_cost_cny || 0) + (p.domestic_logistics_fee || 0), 0).toFixed(2) }}
+              </div>
+            </div>
+            <div class="p-2.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs">
+              <div class="text-[11px] font-semibold text-purple-700">🛫 货代头程与损耗</div>
+              <div class="text-lg font-bold font-mono text-purple-900 mt-1">
+                ¥{{ (poListModal?.list || []).reduce((acc, p) => acc + (p.head_haul_fee || 0) + (p.logistics_loss_fee || 0), 0).toFixed(2) }}
+              </div>
+            </div>
+            <div class="p-2.5 rounded-xl border shadow-2xs bg-emerald-50/50 border-emerald-300">
+              <div class="text-[11px] font-bold text-emerald-800 flex items-center justify-between">
+                <span>🏆 PO 批次净利润</span>
+              </div>
+              <div class="text-lg font-bold font-mono text-emerald-700 mt-1">
+                ¥{{ (poListModal?.list || []).reduce((acc, p) => acc + (p.net_profit_cny || 0), 0).toFixed(2) }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. PO 控制工具栏 -->
+          <div class="shrink-0 bg-white rounded-xl border border-slate-200/80 shadow-xs p-2.5 flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center space-x-2">
+              <span class="text-xs font-bold text-purple-900 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+                📑 PO 批次核算视角：整批看盈亏 · 国内快递实付核销 · 货代头程实算与对账分析
+              </span>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button 
+                @click="loadPoList" 
+                class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1"
+              >
+                <span>🔄</span>
+                <span>刷新 PO 账目</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 3. PO 批次卡片列表主体 -->
+          <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
+            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-3.5">
+              <div v-if="poListModal.loading" class="text-center py-16 text-slate-400">
+                <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <div>正在核算 PO 批次账目...</div>
+              </div>
+              <div v-else-if="!poListModal.list || poListModal.list.length === 0" class="text-center py-16 text-slate-400">
+                <div class="text-3xl mb-2">📦</div>
+                <div class="font-medium text-slate-700">暂无 PO 批次</div>
+                <p class="text-xs text-slate-400 mt-1">切换到【订单明细视角】，勾选订单后点击【合并生成 PO 批次】即可建立批次核算</p>
+              </div>
+              <div v-else class="space-y-3.5">
+                <div 
+                  v-for="po in poListModal.list" 
+                  :key="po.id"
+                  class="bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:border-purple-300 transition-all overflow-hidden"
+                >
+                  <!-- 卡片顶栏 -->
+                  <div class="p-3 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center space-x-2.5">
+                      <span class="text-xs font-mono font-bold bg-purple-100 text-purple-900 px-2 py-0.5 rounded-md border border-purple-200">
+                        {{ po.po_number }}
+                      </span>
+                      <span class="text-xs font-bold text-slate-800">{{ po.name }}</span>
+                      <span class="text-[10px] text-slate-400 font-mono">{{ po.created_at }}</span>
+                    </div>
+
+                    <div class="flex items-center space-x-2">
+                      <!-- 批量打印本批所有标签 (40×30mm) -->
+                      <button 
+                        @click="downloadPoLabels(po)"
+                        class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 rounded-lg text-xs font-bold cursor-pointer transition flex items-center space-x-1"
+                        title="一键将该 PO 批次名下所有订单合并生成 40×30mm PDF 连打标签"
+                      >
+                        <span>🏷️</span>
+                        <span>打印本批标签 ({{ po.orders_count }}单)</span>
+                      </button>
+                      <!-- 批量流转 -->
+                      <select 
+                        @change="batchFulfillPoOrders(po, $event.target.value); $event.target.value = ''"
+                        class="text-xs bg-white border border-slate-200 rounded-lg px-2 py-1 font-semibold text-slate-700 outline-none cursor-pointer hover:border-indigo-400"
+                      >
+                        <option value="">🔄 一键同步流转本批所有订单...</option>
+                        <option value="PURCHASED">🟣 全流转至: 已采购</option>
+                        <option value="SENT_TO_FORWARDER">🟪 全流转至: 发送货代</option>
+                        <option value="AIR_FREIGHT">🛫 全流转至: 货代空运</option>
+                        <option value="ARRIVED_SA">🛬 全流转至: 到达南非</option>
+                        <option value="SA_PICKUP">📦 全流转至: 南非取件</option>
+                        <option value="COMPLETED">🏁 全流转至: 订单完结</option>
+                      </select>
+                      <!-- 解散 PO -->
+                      <button 
+                        @click="disbandPo(po)" 
+                        class="px-2 py-1 text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg text-xs font-medium cursor-pointer transition"
+                      >
+                        解散PO
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 卡片中段: 行内可维护费用与物流信息 -->
+                  <div class="p-3 bg-white grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2.5 text-xs border-b border-slate-100">
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] font-semibold text-indigo-800 flex items-center justify-between">
+                        <span>📦 国内快递运费 (¥)</span>
+                      </span>
+                      <input 
+                        type="number" 
+                        step="1"
+                        v-model.number="po.domestic_logistics_fee" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-indigo-200 rounded-lg bg-indigo-50/30 focus:bg-white focus:border-indigo-500 font-mono font-bold outline-none" 
+                        title="发往货代的实际国内快递运费总额，失焦即自动保存并平摊给名下订单"
+                      />
+                      <div class="text-[10px] text-indigo-600">
+                        平摊: ¥{{ (Number(po.domestic_logistics_fee || 0) / Math.max(1, po.orders_count)).toFixed(2) }}/单
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] font-semibold text-purple-800 flex items-center justify-between">
+                        <span>🛫 货代头程实付 (¥)</span>
+                      </span>
+                      <input 
+                        type="number" 
+                        step="1"
+                        v-model.number="po.head_haul_fee" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-purple-200 rounded-lg bg-purple-50/30 focus:bg-white focus:border-purple-500 font-mono font-bold outline-none" 
+                        title="货代实收空运头程账单金额，失焦即自动保存"
+                      />
+                      <div class="text-[10px] text-purple-600">
+                        实收账单 (对账基准)
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] font-semibold text-purple-800">
+                        <span>🛡️ 物流损耗费 (¥)</span>
+                      </span>
+                      <input 
+                        type="number" 
+                        step="1"
+                        v-model.number="po.logistics_loss_fee" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-purple-200 rounded-lg bg-purple-50/30 focus:bg-white focus:border-purple-500 font-mono font-bold outline-none" 
+                        title="包装打木架或异常损耗费"
+                      />
+                      <div class="text-[10px] text-slate-400">
+                        平摊: ¥{{ (Number(po.logistics_loss_fee || 0) / Math.max(1, po.orders_count)).toFixed(2) }}/单
+                      </div>
+                    </div>
+
+                    <!-- 外箱箱规 (长×宽×高 cm) -->
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] font-semibold text-slate-700 flex items-center justify-between">
+                        <span>📐 箱规 长×宽×高 (cm)</span>
+                      </span>
+                      <div class="flex items-center space-x-1">
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          placeholder="长"
+                          v-model.number="po.box_length_cm" 
+                          @blur="updatePoDetails(po)"
+                          class="w-1/3 text-xs px-1 py-1 text-center border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                          title="外箱长 (cm)"
+                        />
+                        <span class="text-slate-400 text-[10px]">×</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          placeholder="宽"
+                          v-model.number="po.box_width_cm" 
+                          @blur="updatePoDetails(po)"
+                          class="w-1/3 text-xs px-1 py-1 text-center border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                          title="外箱宽 (cm)"
+                        />
+                        <span class="text-slate-400 text-[10px]">×</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          placeholder="高"
+                          v-model.number="po.box_height_cm" 
+                          @blur="updatePoDetails(po)"
+                          class="w-1/3 text-xs px-1 py-1 text-center border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                          title="外箱高 (cm)"
+                        />
+                      </div>
+                      <div class="text-[10px] text-slate-400 truncate font-mono">
+                        {{ po.box_dimensions_str || '未录入尺寸' }}
+                      </div>
+                    </div>
+
+                    <!-- 实测整箱毛重 (kg) -->
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] font-semibold text-purple-900 flex items-center justify-between">
+                        <span>⚖️ 实测整箱重 (kg)</span>
+                      </span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        v-model.number="po.package_weight_kg" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-purple-200 rounded-lg bg-purple-50/20 focus:bg-white focus:border-purple-500 font-mono font-bold outline-none" 
+                        placeholder="打包后实重"
+                        title="打包后的实际过秤重量 (kg)，失焦即自动保存"
+                      />
+                      <div class="text-[10px] text-purple-600 truncate font-mono">
+                        参考累计: {{ po.total_weight_kg }}kg
+                      </div>
+                    </div>
+
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] text-slate-500 font-semibold">货代名称</span>
+                      <input 
+                        type="text" 
+                        v-model="po.forwarder_name" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-indigo-500 outline-none" 
+                        placeholder="货代名称"
+                      />
+                    </div>
+
+                    <div class="space-y-1">
+                      <span class="text-[10.5px] text-slate-500 font-semibold">空运提单号 (AWB)</span>
+                      <input 
+                        type="text" 
+                        v-model="po.air_waybill_no" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                        placeholder="主单/转运单号"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- 财务与对账指标栏 -->
+                  <div class="p-3 bg-slate-50/50 flex items-center justify-between flex-wrap gap-3 text-xs font-mono">
+                    <div class="flex items-center space-x-4 flex-wrap gap-y-2">
+                      <div>
+                        <span class="text-[10px] text-slate-400 font-sans block">订单数</span>
+                        <strong class="text-slate-800">{{ po.orders_count }} 笔</strong>
+                      </div>
+                      <div>
+                        <span class="text-[10px] text-slate-400 font-sans block">箱规尺寸</span>
+                        <strong class="text-slate-800 font-mono">{{ po.box_dimensions_str || '未录入' }}</strong>
+                      </div>
+                      <div>
+                        <span class="text-[10px] text-slate-400 font-sans block">实测箱重 (对比累计)</span>
+                        <strong class="text-purple-900 font-bold font-mono">
+                          {{ po.package_weight_kg ? (po.package_weight_kg + ' kg') : (po.total_weight_kg + ' kg') }}
+                        </strong>
+                        <span class="text-[10px] text-slate-400 font-normal"> (累计: {{ po.total_weight_kg }}kg)</span>
+                      </div>
+                      <div>
+                        <span class="text-[10px] text-slate-400 font-sans block">销售额</span>
+                        <strong class="text-slate-800">R{{ po.total_sales_zar }}</strong>
+                      </div>
+                      <div>
+                        <span class="text-[10px] text-emerald-700 font-sans block">预计回款</span>
+                        <strong class="text-emerald-700">¥{{ po.total_payout_cny }}</strong>
+                      </div>
+                      <div>
+                        <span class="text-[10px] text-slate-500 font-sans block">PO实际总成本</span>
+                        <strong class="text-slate-800">¥{{ po.total_cost_cny }}</strong>
+                      </div>
+                      <div>
+                        <span class="text-[10px] font-sans font-bold block" :class="po.net_profit_cny >= 0 ? 'text-emerald-800' : 'text-rose-800'">
+                          PO 净利润 ({{ po.profit_margin_percent }}%)
+                        </span>
+                        <strong :class="po.net_profit_cny >= 0 ? 'text-emerald-700' : 'text-rose-700'">
+                          {{ po.net_profit_cny >= 0 ? '+' : '' }}¥{{ po.net_profit_cny }}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <!-- 头程对账差异 (Air Freight Reconciliation) -->
+                    <div class="flex items-center space-x-2">
+                      <div class="text-right">
+                        <div class="text-[10px] text-slate-400 font-sans">
+                          理论按重累加: ¥{{ po.sum_order_theoretical_head_haul }} vs 实付货代: ¥{{ po.head_haul_fee }}
+                        </div>
+                        <div class="mt-0.5">
+                          <span 
+                            :class="po.freight_diff_cny >= 0 ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-800 border-rose-300'"
+                            class="px-2 py-0.5 rounded-full border text-[11px] font-bold inline-flex items-center space-x-1"
+                          >
+                            <span>{{ po.freight_diff_cny >= 0 ? '✨ 头程结余' : '⚠️ 头程超支' }}</span>
+                            <span>{{ po.freight_diff_cny >= 0 ? '+' : '' }}¥{{ po.freight_diff_cny }}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <button 
+                        @click="togglePoExpand(po.id)" 
+                        class="px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 text-xs font-semibold cursor-pointer transition shadow-2xs flex items-center space-x-1"
+                      >
+                        <span>{{ poExpandedIds.includes(po.id) ? '🔼 收起' : '🔽 展开明细' }}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 手风琴展开: 该 PO 下关联订单子表格 -->
+                  <div v-if="poExpandedIds.includes(po.id)" class="border-t border-slate-200 bg-slate-50/70 p-3 animate-in fade-in">
+                    <div class="font-bold text-slate-700 text-xs mb-2 flex items-center justify-between">
+                      <span>📦 本批次包含的 {{ po.orders ? po.orders.length : 0 }} 笔订单明细：</span>
+                      <span class="text-[10px] text-slate-400">单单头程按克重核算 · 国内运费按 PO 均摊 ¥{{ (Number(po.domestic_logistics_fee || 0) / Math.max(1, po.orders_count)).toFixed(2) }}</span>
+                    </div>
+                    <div class="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                      <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-500 border-b border-slate-200 text-[10.5px]">
+                          <tr>
+                            <th class="py-2 px-3">订单号</th>
+                            <th class="py-2 px-2 text-center">商品图片</th>
+                            <th class="py-2 px-3">买家</th>
+                            <th class="py-2 px-3 text-right">售价 (ZAR)</th>
+                            <th class="py-2 px-3 text-right">预计回款 (¥)</th>
+                            <th class="py-2 px-3 text-right">实测重量</th>
+                            <th class="py-2 px-3 text-right">理论头程 (¥)</th>
+                            <th class="py-2 px-3 text-right">平摊国内 (¥)</th>
+                            <th class="py-2 px-3 text-right">采购成本 (¥)</th>
+                            <th class="py-2 px-3 text-center">状态</th>
+                            <th class="py-2 px-3 text-center">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 font-mono">
+                          <tr v-for="subO in po.orders" :key="subO.id" class="hover:bg-slate-50/60">
+                            <td class="py-2 px-3 font-bold text-slate-800">#{{ subO.order_id }}</td>
+                            <td class="py-2 px-2 text-center">
+                              <div class="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden shrink-0">
+                                <img 
+                                  v-if="subO.image_url" 
+                                  :src="cleanImageUrl(subO.image_url)" 
+                                  :alt="subO.sku || '商品图'" 
+                                  class="w-full h-full object-cover hover:scale-125 transition duration-150 cursor-pointer"
+                                  @click="openImagePreview(cleanImageUrl(subO.image_url))"
+                                  :title="`${subO.product_title || '商品图'}\n点击放大查看`"
+                                />
+                                <span v-else class="text-[9px] text-slate-400">无图</span>
+                              </div>
+                            </td>
+                            <td class="py-2 px-3 font-sans text-slate-600">{{ subO.buyer_name || '买家' }}</td>
+                            <td class="py-2 px-3 text-right text-emerald-700">R{{ subO.total_amount }}</td>
+                            <td class="py-2 px-3 text-right font-bold" :class="subO.fulfillment_status === 'CANCELLED_RTO' ? 'text-slate-400 line-through' : 'text-emerald-700'">
+                              ¥{{ (subO.payout_cny !== undefined ? subO.payout_cny : 0).toFixed(2) }}
+                              <span v-if="subO.fulfillment_status === 'CANCELLED_RTO'" class="text-[9px] text-rose-500 font-sans block">(异常退回)</span>
+                            </td>
+                            <td class="py-2 px-3 text-right">
+                              <span :class="subO.is_weight_measured ? 'text-slate-800 font-bold' : 'text-amber-600'">
+                                {{ subO.is_weight_measured ? `${subO.weight_g}g (${(subO.weight_g/1000).toFixed(2)}kg)` : '未填写' }}
+                              </span>
+                            </td>
+                            <td class="py-2 px-3 text-right text-purple-700 font-bold">¥{{ subO.head_haul_cost }}</td>
+                            <td class="py-2 px-3 text-right text-indigo-700">¥{{ (Number(po.domestic_logistics_fee || 0) / Math.max(1, po.orders_count)).toFixed(2) }}</td>
+                            <td class="py-2 px-3 text-right text-slate-700">¥{{ subO.purchase_cost }}</td>
+                            <td class="py-2 px-3 text-center font-sans">
+                              <span :class="getFulfillmentBadgeClass(subO.fulfillment_status)" class="text-[10px] px-1.5 py-0.5 rounded font-bold border">
+                                {{ formatFulfillmentState(subO.fulfillment_status) }}
+                              </span>
+                            </td>
+                            <td class="py-2 px-3 text-center font-sans space-x-1.5 whitespace-nowrap">
+                              <button 
+                                @click="downloadOrderLabel(subO.id, subO.order_id)" 
+                                class="text-[10px] text-emerald-700 hover:bg-emerald-50 border border-emerald-300 px-1.5 py-0.5 rounded cursor-pointer transition font-bold"
+                                title="下载 40×30mm 单张标签"
+                              >
+                                🏷️ 标签
+                              </button>
+                              <button 
+                                @click="removeOrderFromPo(po, subO)" 
+                                class="text-[10px] text-rose-600 hover:bg-rose-50 border border-rose-300 px-1.5 py-0.5 rounded cursor-pointer transition font-bold"
+                                title="一键将该订单从当前 PO 批次中剔除"
+                              >
+                                🗑️ 剔除
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ================= 订单与 PO 模态弹窗区 ================= -->
+
+        <!-- 1. 结算参数配置弹窗 -->
+        <div v-if="showOrderFinanceConfigModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div class="flex items-center space-x-2 text-slate-800 font-bold text-sm">
+                <span>⚙️ 回款与利润结算参数配置</span>
+              </div>
+              <button @click="showOrderFinanceConfigModal = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+            </div>
+            <div class="p-5 space-y-4 text-xs">
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-700">平台佣金扣点率 (%)</label>
+                <div class="relative">
+                  <input 
+                    type="number" 
+                    step="0.1" 
+                    v-model.number="orderFinanceConfig.commission_rate" 
+                    class="w-full text-xs pl-7 pr-3 py-2 border border-slate-200 rounded-lg font-mono font-bold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                  />
+                  <span class="absolute left-2.5 top-2 text-slate-400 font-mono text-xs">%</span>
+                </div>
+                <p class="text-[10.5px] text-slate-400">默认 17.5%，对应回款公式中的 (1 - 0.175 = 0.825)</p>
+              </div>
+
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-700">平台单笔基础运费 (ZAR)</label>
+                <div class="relative">
+                  <input 
+                    type="number" 
+                    step="1" 
+                    v-model.number="orderFinanceConfig.shipping_fee_zar" 
+                    class="w-full text-xs pl-7 pr-3 py-2 border border-slate-200 rounded-lg font-mono font-bold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                  />
+                  <span class="absolute left-2.5 top-2 text-slate-400 font-mono text-xs">R</span>
+                </div>
+                <p class="text-[10.5px] text-slate-400">默认 R70.00，每笔订单由 Makro 扣除的官方揽收运费</p>
+              </div>
+
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-700">南非兰特兑人民币结算汇率</label>
+                <div class="relative">
+                  <input 
+                    type="number" 
+                    step="0.001" 
+                    v-model.number="orderFinanceConfig.exchange_rate" 
+                    class="w-full text-xs pl-7 pr-3 py-2 border border-slate-200 rounded-lg font-mono font-bold focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                  />
+                  <span class="absolute left-2.5 top-2 text-slate-400 font-mono text-xs">¥</span>
+                </div>
+                <p class="text-[10.5px] text-slate-400">默认 0.39 (1 ZAR ≈ 0.39 CNY)，随外汇行情微调</p>
+              </div>
+
+              <div class="p-3 bg-indigo-50/70 rounded-xl border border-indigo-100 text-[11px] text-indigo-900 leading-relaxed">
+                📐 <strong>当前核算公式</strong>：<br>
+                最终回款 = ((销售价格 × {{ (1 - (orderFinanceConfig.commission_rate || 17.5) / 100).toFixed(3) }}) - {{ orderFinanceConfig.shipping_fee_zar || 70 }}) × {{ orderFinanceConfig.exchange_rate || 0.39 }}
+              </div>
+            </div>
+            <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <button 
+                @click="showOrderFinanceConfigModal = false" 
+                class="px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-medium cursor-pointer"
+              >
+                取消
+              </button>
+              <button 
+                @click="saveOrderFinanceConfig" 
+                class="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs cursor-pointer active:scale-95"
+              >
+                保存并重新核算
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. 合并生成 PO 批次弹窗 -->
+        <div v-if="showCreatePoModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-lg overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div class="flex items-center space-x-2 text-slate-800 font-bold text-sm">
+                <span>📦 合并订单生成新 PO 采购发货批次</span>
+                <span class="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-mono font-bold">
+                  已选 {{ orders.selectedIds.length }} 笔订单
+                </span>
+              </div>
+              <button @click="showCreatePoModal = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+            </div>
+            <div class="p-5 space-y-3.5 text-xs">
+              <div class="grid grid-cols-2 gap-3">
+                <div class="space-y-1">
+                  <label class="block font-semibold text-slate-700">PO 批次编号</label>
+                  <input 
+                    type="text" 
+                    v-model="poCreateForm.po_number" 
+                    class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg font-mono font-bold outline-none focus:border-indigo-500" 
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="block font-semibold text-slate-700">批次备注名</label>
+                  <input 
+                    type="text" 
+                    v-model="poCreateForm.name" 
+                    placeholder="如: 10月14日南非空运第1批" 
+                    class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-indigo-500" 
+                  />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div class="space-y-1">
+                  <label class="block font-semibold text-slate-700">货代服务商</label>
+                  <input 
+                    type="text" 
+                    v-model="poCreateForm.forwarder_name" 
+                    placeholder="如: 易达国际 / 顺丰国际" 
+                    class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg outline-none focus:border-indigo-500" 
+                  />
+                </div>
+                <div class="space-y-1">
+                  <label class="block font-semibold text-slate-700">货代空运提单号 (AWB)</label>
+                  <input 
+                    type="text" 
+                    v-model="poCreateForm.air_waybill_no" 
+                    placeholder="空运主单号 / 转运单号" 
+                    class="w-full text-xs px-3 py-1.5 border border-slate-200 rounded-lg font-mono outline-none focus:border-indigo-500" 
+                  />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-3">
+                <div class="space-y-1">
+                  <label class="block font-semibold text-indigo-800">PO 国内快递费 (RMB)</label>
+                  <div class="relative">
+                    <input 
+                      type="number" 
+                      step="1" 
+                      v-model.number="poCreateForm.domestic_logistics_fee" 
+                      class="w-full text-xs pl-7 pr-3 py-1.5 border border-indigo-200 rounded-lg font-mono font-bold focus:border-indigo-500 outline-none" 
+                    />
+                    <span class="absolute left-2.5 top-2 text-indigo-400 font-mono text-xs">¥</span>
+                  </div>
+                  <p class="text-[10px] text-indigo-600">每单平摊: ¥{{ (Number(poCreateForm.domestic_logistics_fee || 0) / Math.max(1, orders.selectedIds.length)).toFixed(2) }}</p>
+                </div>
+                <div class="space-y-1">
+                  <label class="block font-semibold text-purple-800">PO 头程物流费 (RMB)</label>
+                  <div class="relative">
+                    <input 
+                      type="number" 
+                      step="1" 
+                      v-model.number="poCreateForm.head_haul_fee" 
+                      class="w-full text-xs pl-7 pr-3 py-1.5 border border-purple-200 rounded-lg font-mono font-bold focus:border-purple-500 outline-none" 
+                    />
+                    <span class="absolute left-2.5 top-2 text-purple-400 font-mono text-xs">¥</span>
+                  </div>
+                  <p class="text-[10px] text-slate-400">实付货代账单</p>
+                </div>
+                <div class="space-y-1">
+                  <label class="block font-semibold text-purple-800">PO 物流损耗费 (RMB)</label>
+                  <div class="relative">
+                    <input 
+                      type="number" 
+                      step="1" 
+                      v-model.number="poCreateForm.logistics_loss_fee" 
+                      class="w-full text-xs pl-7 pr-3 py-1.5 border border-purple-200 rounded-lg font-mono font-bold focus:border-purple-500 outline-none" 
+                    />
+                    <span class="absolute left-2.5 top-2 text-purple-400 font-mono text-xs">¥</span>
+                  </div>
+                  <p class="text-[10px] text-slate-400">每单平摊: ¥{{ (Number(poCreateForm.logistics_loss_fee || 0) / Math.max(1, orders.selectedIds.length)).toFixed(2) }}</p>
+                </div>
+              </div>
+
+              <!-- 包装箱规尺寸与整箱实测称重 -->
+              <div class="p-3 bg-purple-50/50 rounded-xl border border-purple-100 space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-purple-900 flex items-center space-x-1">
+                    <span>📦</span>
+                    <span>外箱物流规格与实测称重</span>
+                  </span>
+                  <span v-if="poCreateForm.selected_orders_weight_kg > 0" class="text-[10.5px] text-purple-700 bg-purple-100/70 px-2 py-0.5 rounded-full font-mono">
+                    名下订单累计净重: {{ poCreateForm.selected_orders_weight_kg }} kg
+                  </span>
+                </div>
+                <div class="grid grid-cols-4 gap-2">
+                  <div class="space-y-1">
+                    <label class="block text-[11px] font-semibold text-slate-700">外箱长 (cm)</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      placeholder="长 cm"
+                      v-model.number="poCreateForm.box_length_cm" 
+                      class="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-lg font-mono focus:border-purple-500 bg-white outline-none" 
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="block text-[11px] font-semibold text-slate-700">外箱宽 (cm)</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      placeholder="宽 cm"
+                      v-model.number="poCreateForm.box_width_cm" 
+                      class="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-lg font-mono focus:border-purple-500 bg-white outline-none" 
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="block text-[11px] font-semibold text-slate-700">外箱高 (cm)</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      placeholder="高 cm"
+                      v-model.number="poCreateForm.box_height_cm" 
+                      class="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-lg font-mono focus:border-purple-500 bg-white outline-none" 
+                    />
+                  </div>
+                  <div class="space-y-1">
+                    <label class="block text-[11px] font-semibold text-purple-900">实测整箱重 (kg)</label>
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      placeholder="打包后实重"
+                      v-model.number="poCreateForm.package_weight_kg" 
+                      class="w-full text-xs px-2 py-1.5 border border-purple-200 rounded-lg font-mono font-bold focus:border-purple-500 bg-white outline-none" 
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-700">备注说明</label>
+                <textarea 
+                  v-model="poCreateForm.notes" 
+                  rows="2" 
+                  placeholder="如: 该批次包含3件易碎车载配件，货代已打木架包装"
+                  class="w-full text-xs p-2 border border-slate-200 rounded-lg outline-none focus:border-indigo-500"
+                ></textarea>
+              </div>
+            </div>
+            <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <button 
+                @click="showCreatePoModal = false" 
+                class="px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-medium cursor-pointer"
+              >
+                取消
+              </button>
+              <button 
+                @click="submitCreatePo" 
+                :disabled="poCreateForm.submitting"
+                class="px-5 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                {{ poCreateForm.submitting ? '正在创建...' : '确认合并生成 PO' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 归档至已有 PO 弹窗 -->
+        <div v-if="showAssignPoModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-md overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div class="flex items-center space-x-2 text-slate-800 font-bold text-sm">
+                <span>📥 归档订单至已有 PO 批次</span>
+              </div>
+              <button @click="showAssignPoModal = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+            </div>
+            <div class="p-5 space-y-3.5 text-xs">
+              <div class="space-y-1">
+                <label class="block font-semibold text-slate-700">选择目标 PO 批次</label>
+                <select 
+                  v-model="assignPoTargetPoId"
+                  class="w-full text-xs p-2 border border-slate-200 rounded-lg bg-slate-50 font-medium outline-none focus:border-indigo-500"
+                >
+                  <option :value="null">-- 从当前 PO 移出 (恢复未归档状态) --</option>
+                  <option v-for="p in poListModal.list" :key="p.id" :value="p.id">
+                    {{ p.po_number }} - {{ p.name }} (已有 {{ p.orders_count }} 单 · 头程 ¥{{ p.head_haul_fee }})
+                  </option>
+                </select>
+              </div>
+              <p class="text-slate-400 text-[11px] leading-relaxed">
+                归档后，该批订单将自动均摊所选 PO 的头程物流费与物流损耗费，并更新单单利润。
+              </p>
+            </div>
+            <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end space-x-2">
+              <button 
+                @click="showAssignPoModal = false" 
+                class="px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-medium cursor-pointer"
+              >
+                取消
+              </button>
+              <button 
+                @click="submitAssignPo" 
+                :disabled="assignPoSubmitting"
+                class="px-5 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                {{ assignPoSubmitting ? '正在处理...' : '确认归档' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. PO 批次财务总账管理弹窗 (全景看板与一键流转) -->
+        <div v-if="poListModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
+              <div class="flex items-center space-x-2 text-slate-800 font-bold text-sm">
+                <span>📑 PO 空运拼单批次管理与财务利润总账</span>
+              </div>
+              <button @click="poListModal.open = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-5 custom-scrollbar space-y-4">
+              <div v-if="poListModal.loading" class="text-center py-12 text-slate-400">
+                <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <div>正在计算 PO 批次账目...</div>
+              </div>
+              <div v-else-if="!poListModal.list || poListModal.list.length === 0" class="text-center py-12 text-slate-400">
+                <div class="text-3xl mb-2">📦</div>
+                <div>暂无 PO 批次，可在订单表格中勾选订单后点击【合并生成 PO 批次】</div>
+              </div>
+              <div v-else class="space-y-3.5">
+                <div 
+                  v-for="po in poListModal.list" 
+                  :key="po.id"
+                  class="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3 hover:border-indigo-300 transition-all"
+                >
+                  <!-- 顶部信息 -->
+                  <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center space-x-2">
+                      <span class="text-xs font-mono font-bold bg-purple-100 text-purple-900 px-2 py-0.5 rounded-md">
+                        {{ po.po_number }}
+                      </span>
+                      <span class="text-xs font-bold text-slate-800">{{ po.name }}</span>
+                      <span class="text-[10.5px] text-slate-400">({{ po.created_at }})</span>
+                    </div>
+                    <!-- 一键批量流转按钮组 -->
+                    <div class="flex items-center space-x-1.5">
+                      <select 
+                        @change="batchFulfillPoOrders(po, $event.target.value); $event.target.value = ''"
+                        class="text-[11px] bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 font-semibold text-slate-700 outline-none cursor-pointer hover:border-indigo-400"
+                      >
+                        <option value="">🔄 一键同步流转本批所有订单...</option>
+                        <option value="PURCHASED">🟣 全流转至: 已采购</option>
+                        <option value="SENT_TO_FORWARDER">🟪 全流转至: 发送货代</option>
+                        <option value="AIR_FREIGHT">🛫 全流转至: 货代空运</option>
+                        <option value="ARRIVED_SA">🛬 全流转至: 到达南非</option>
+                        <option value="SA_PICKUP">📦 全流转至: 南非取件</option>
+                        <option value="COMPLETED">🏁 全流转至: 订单完结</option>
+                      </select>
+                      <button 
+                        @click="disbandPo(po)" 
+                        class="px-2.5 py-1 text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg text-[11px] font-bold cursor-pointer transition"
+                      >
+                        解散PO
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 财务总账条卡 -->
+                  <div class="grid grid-cols-2 sm:grid-cols-7 gap-2 bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 text-xs font-mono">
+                    <div>
+                      <div class="text-[10px] text-slate-400 font-sans">订单数</div>
+                      <div class="font-bold text-slate-800 mt-0.5">{{ po.orders_count }} 笔</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] text-slate-400 font-sans">箱规与实重</div>
+                      <div class="font-bold text-slate-800 mt-0.5 text-[11px] truncate" :title="`尺寸: ${po.box_dimensions_str || '未录入'}\n实测整箱: ${po.package_weight_kg || po.total_weight_kg}kg\n订单累计: ${po.total_weight_kg}kg`">
+                        {{ po.box_dimensions_str || '未录箱规' }} · {{ po.package_weight_kg || po.total_weight_kg }}kg
+                      </div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] text-slate-400 font-sans">销售总额</div>
+                      <div class="font-bold text-slate-800 mt-0.5">R{{ po.total_sales_zar }}</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] text-emerald-600 font-sans font-semibold">预计回款</div>
+                      <div class="font-bold text-emerald-600 mt-0.5">¥{{ po.total_payout_cny }}</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] text-slate-400 font-sans">采购与国内</div>
+                      <div class="font-bold text-slate-700 mt-0.5">¥{{ (po.total_purchase_cost_cny + po.total_domestic_logistics_cny).toFixed(2) }}</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] text-purple-700 font-sans font-semibold">头程与损耗</div>
+                      <div class="font-bold text-purple-800 mt-0.5">¥{{ (po.head_haul_fee + po.logistics_loss_fee).toFixed(2) }}</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] font-sans font-bold" :class="po.net_profit_cny >= 0 ? 'text-emerald-700' : 'text-rose-700'">
+                        PO 净利润 ({{ po.profit_margin_percent }}%)
+                      </div>
+                      <div class="font-bold mt-0.5 text-sm" :class="po.net_profit_cny >= 0 ? 'text-emerald-700' : 'text-rose-700'">
+                        {{ po.net_profit_cny >= 0 ? '+' : '' }}¥{{ po.net_profit_cny }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 货代信息与头程损耗快捷修改 -->
+                  <div class="grid grid-cols-1 sm:grid-cols-7 gap-2 pt-1 text-xs">
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-slate-400 shrink-0">货代:</span>
+                      <input 
+                        type="text" 
+                        v-model="po.forwarder_name" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 font-medium outline-none" 
+                        placeholder="货代名称"
+                      />
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-slate-400 shrink-0">提单号:</span>
+                      <input 
+                        type="text" 
+                        v-model="po.air_waybill_no" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                        placeholder="空运提单号"
+                      />
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-slate-700 font-semibold shrink-0">箱规:</span>
+                      <div class="flex items-center space-x-0.5 w-full">
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          placeholder="长"
+                          v-model.number="po.box_length_cm" 
+                          @blur="updatePoDetails(po)"
+                          class="w-1/3 text-xs px-1 py-1 text-center border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                          title="长 cm"
+                        />
+                        <span class="text-slate-400 text-[10px]">×</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          placeholder="宽"
+                          v-model.number="po.box_width_cm" 
+                          @blur="updatePoDetails(po)"
+                          class="w-1/3 text-xs px-1 py-1 text-center border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                          title="宽 cm"
+                        />
+                        <span class="text-slate-400 text-[10px]">×</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          placeholder="高"
+                          v-model.number="po.box_height_cm" 
+                          @blur="updatePoDetails(po)"
+                          class="w-1/3 text-xs px-1 py-1 text-center border border-slate-200 rounded bg-slate-50 focus:bg-white focus:border-indigo-500 font-mono outline-none" 
+                          title="高 cm"
+                        />
+                      </div>
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-purple-900 font-semibold shrink-0">重(kg):</span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        v-model.number="po.package_weight_kg" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-purple-200 rounded bg-purple-50/20 focus:bg-white focus:border-purple-500 font-mono font-bold outline-none" 
+                        placeholder="实重"
+                        title="打包实测整箱重量 (kg)"
+                      />
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-indigo-700 font-semibold shrink-0">国内(¥):</span>
+                      <input 
+                        type="number" 
+                        v-model.number="po.domestic_logistics_fee" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-indigo-200 rounded bg-indigo-50/40 focus:bg-white focus:border-indigo-500 font-mono font-bold outline-none" 
+                        title="发往货代的实际国内快递运费总额"
+                      />
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-purple-700 font-semibold shrink-0">头程(¥):</span>
+                      <input 
+                        type="number" 
+                        v-model.number="po.head_haul_fee" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-purple-200 rounded bg-purple-50/40 focus:bg-white focus:border-purple-500 font-mono font-bold outline-none" 
+                      />
+                    </div>
+                    <div class="flex items-center space-x-1">
+                      <span class="text-[10.5px] text-purple-700 font-semibold shrink-0">损耗(¥):</span>
+                      <input 
+                        type="number" 
+                        v-model.number="po.logistics_loss_fee" 
+                        @blur="updatePoDetails(po)"
+                        class="w-full text-xs px-2 py-1 border border-purple-200 rounded bg-purple-50/40 focus:bg-white focus:border-purple-500 font-mono font-bold outline-none" 
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end shrink-0">
+              <button 
+                @click="poListModal.open = false" 
+                class="px-5 py-1.5 text-xs bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg cursor-pointer"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. 订单商品称重与头程核算弹窗 (40×30mm 流程支撑) -->
+        <div v-if="weightModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-lg overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div class="flex items-center space-x-2 text-slate-800 font-bold text-sm">
+                <span>⚖️ 订单商品称重与头程核算</span>
+                <span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-mono font-bold">
+                  #{{ weightModal.order?.order_id }}
+                </span>
+              </div>
+              <button @click="weightModal.open = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs">
+              <!-- 商品明细与克重录入列表 -->
+              <div class="space-y-2">
+                <label class="block font-semibold text-slate-700">商品清单与单品实测克重 (g)</label>
+                <div class="space-y-2 max-h-56 overflow-y-auto custom-scrollbar p-1">
+                  <div 
+                    v-for="(it, itIdx) in weightModal.items" 
+                    :key="itIdx" 
+                    class="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center space-x-3"
+                  >
+                    <img 
+                      v-if="it.image_url" 
+                      :src="cleanImageUrl(it.image_url)" 
+                      class="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0 bg-white" 
+                    />
+                    <div v-else class="w-12 h-12 rounded-lg bg-slate-200 flex items-center justify-center text-slate-400 shrink-0 text-[10px]">
+                      无图
+                    </div>
+
+                    <div class="min-w-0 flex-1">
+                      <div class="font-medium text-slate-900 text-xs truncate" :title="it.title">{{ it.title }}</div>
+                      <div class="text-[10.5px] text-slate-400 font-mono mt-0.5">SKU: {{ it.sku_id }} · 数量: ×{{ it.quantity }}</div>
+                    </div>
+
+                    <div class="shrink-0 space-y-0.5 text-right">
+                      <div class="flex items-center space-x-1">
+                        <input 
+                          type="number" 
+                          step="1" 
+                          v-model.number="it.weight_g" 
+                          @input="onWeightItemChange"
+                          placeholder="0"
+                          class="w-18 text-right text-xs py-1 px-1.5 border border-slate-300 rounded-lg font-mono font-bold bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                        />
+                        <span class="text-slate-500 font-mono text-xs">g</span>
+                      </div>
+                      <div class="text-[9.5px] text-slate-400 font-mono">
+                        小计: {{ (Number(it.weight_g || 0) * Number(it.quantity || 1)) }}g
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 总重量与跨境空运单价 -->
+              <div class="grid grid-cols-2 gap-3 bg-purple-50/50 p-3 rounded-xl border border-purple-100">
+                <div class="space-y-1">
+                  <label class="block font-semibold text-purple-900">整单总重量</label>
+                  <div class="flex items-center space-x-1.5">
+                    <input 
+                      type="number" 
+                      step="1" 
+                      v-model.number="weightModal.totalWeightG" 
+                      @input="onTotalWeightChange"
+                      class="w-full text-xs py-1.5 px-2 border border-purple-200 rounded-lg font-mono font-bold bg-white focus:border-purple-500 outline-none text-purple-900"
+                    />
+                    <span class="text-purple-700 font-mono font-bold text-xs shrink-0">g</span>
+                  </div>
+                  <div class="text-[10px] text-purple-600 font-mono">
+                    换算: {{ ((Number(weightModal.totalWeightG || 0)) / 1000).toFixed(2) }} kg
+                  </div>
+                </div>
+
+                <div class="space-y-1">
+                  <label class="block font-semibold text-purple-900">空运单价 (元/kg)</label>
+                  <div class="flex items-center space-x-1.5">
+                    <input 
+                      type="number" 
+                      step="1" 
+                      v-model.number="weightModal.airFreightRate" 
+                      class="w-full text-xs py-1.5 px-2 border border-purple-200 rounded-lg font-mono font-bold bg-white focus:border-purple-500 outline-none text-purple-900"
+                    />
+                    <span class="text-purple-700 font-mono font-bold text-xs shrink-0">¥/kg</span>
+                  </div>
+                  <div class="text-[10px] text-purple-600 font-mono">
+                    预估头程: ¥{{ (((Number(weightModal.totalWeightG || 0)) / 1000) * Number(weightModal.airFreightRate || 90)).toFixed(2) }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 智能记忆与同步选项 (运营自动化) -->
+              <div class="space-y-2 pt-1 border-t border-slate-100">
+                <label class="flex items-center space-x-2 text-slate-700 cursor-pointer select-none">
+                  <input type="checkbox" v-model="weightModal.syncToCatalog" class="rounded text-indigo-600 focus:ring-indigo-500" />
+                  <span class="font-medium text-[11.5px]">💾 同步记忆到商品资料库 (下次该 SKU 出单自动带出此重量)</span>
+                </label>
+                <label class="flex items-center space-x-2 text-slate-700 cursor-pointer select-none">
+                  <input type="checkbox" v-model="weightModal.propagateToSameSku" class="rounded text-indigo-600 focus:ring-indigo-500" />
+                  <span class="font-medium text-[11.5px]">🔄 智能扩散：同步填充当前所有同 SKU 且未称重的在途/历史订单</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between">
+              <button 
+                @click="downloadOrderLabel(weightModal.order?.id, weightModal.order?.order_id)" 
+                class="px-3 py-1.5 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold rounded-lg cursor-pointer flex items-center space-x-1"
+                title="生成并下载 40×30mm 热敏打包防混标签 PDF"
+              >
+                <span>🏷️</span>
+                <span>打印 40×30mm 标签</span>
+              </button>
+
+              <div class="flex items-center space-x-2">
+                <button 
+                  @click="weightModal.open = false" 
+                  class="px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-medium cursor-pointer"
+                >
+                  取消
+                </button>
+                <button 
+                  @click="saveOrderWeight" 
+                  :disabled="weightModal.submitting"
+                  class="px-5 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  {{ weightModal.submitting ? '正在核算...' : '保存并重新核算' }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- 5. 订单全生命周期状态流转与操作轨迹弹窗 (Requirement 7) -->
+        <div v-if="orderStatusHistoryModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh]">
+            <!-- 头部 -->
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <div class="flex items-center space-x-2">
+                <span class="text-lg">📜</span>
+                <div>
+                  <h3 class="font-bold text-slate-900 text-sm">订单状态流转与操作轨迹</h3>
+                  <div class="text-[11px] text-slate-400 font-mono">
+                    订单号: #{{ orderStatusHistoryModal.order?.order_id }} · 运单: {{ orderStatusHistoryModal.order?.tracking_id || '-' }}
+                  </div>
+                </div>
+              </div>
+              <button 
+                @click="closeStatusHistoryModal" 
+                class="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <!-- 时间轴内容主体 -->
+            <div class="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+              <div v-if="orderStatusHistoryModal.loading" class="text-center py-12 text-slate-400 text-xs">
+                <div class="inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <div>正在查询订单历史流转记录...</div>
+              </div>
+              <div v-else-if="!orderStatusHistoryModal.logs || orderStatusHistoryModal.logs.length === 0" class="text-center py-12 text-slate-400 text-xs">
+                <div class="text-2xl mb-1">📭</div>
+                <div>该订单暂无状态变更记录</div>
+              </div>
+              <div v-else class="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
+                <div 
+                  v-for="(log, lIdx) in orderStatusHistoryModal.logs" 
+                  :key="log.id || lIdx" 
+                  class="relative text-xs group"
+                >
+                  <!-- 节点小圆点 -->
+                  <div class="absolute -left-6 top-1 w-3 h-3 rounded-full border-2 border-white shadow-xs"
+                       :class="lIdx === 0 ? 'bg-indigo-600 ring-4 ring-indigo-100' : 'bg-slate-400'">
+                  </div>
+
+                  <div class="bg-slate-50 hover:bg-indigo-50/40 p-3 rounded-xl border border-slate-200/80 transition-all">
+                    <!-- 时间与操作人 -->
+                    <div class="flex items-center justify-between text-[11px] mb-1.5">
+                      <span class="font-mono font-bold text-slate-800 flex items-center space-x-1">
+                        <span>🕒</span>
+                        <span>{{ log.created_at }}</span>
+                        <span class="text-[9.5px] text-slate-400 font-sans font-normal">(北京时间)</span>
+                      </span>
+                      <span class="font-medium px-2 py-0.5 rounded text-[10px] bg-slate-200/80 text-slate-700 font-mono">
+                        👤 {{ log.operator || 'SYSTEM' }}
+                      </span>
+                    </div>
+
+                    <!-- 状态变更前后值 -->
+                    <div class="flex items-center space-x-2 font-mono text-[11.5px] mt-1">
+                      <span class="text-slate-500 line-through">{{ log.old_value || '无' }}</span>
+                      <span class="text-slate-400">➔</span>
+                      <span class="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                        {{ log.new_value }}
+                      </span>
+                    </div>
+
+                    <!-- 变动类型与备注 -->
+                    <div class="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-200/50 text-[10.5px]">
+                      <span class="text-slate-400 font-sans">
+                        类型: <strong class="text-slate-600">{{ log.change_type }}</strong>
+                      </span>
+                      <span v-if="log.notes" class="text-slate-600 font-sans truncate max-w-[280px]" :title="log.notes">
+                        💬 {{ log.notes }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部关闭按钮 -->
+            <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between text-xs">
+              <span class="text-slate-400 text-[11px]">共 {{ orderStatusHistoryModal.logs?.length || 0 }} 条轨迹记录</span>
+              <button 
+                @click="closeStatusHistoryModal" 
+                class="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg cursor-pointer transition"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>

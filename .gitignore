@@ -76,3 +76,4 @@ test_protocols.py
 服务器秘钥/
 *.pem
 makro-system-*-handover.zip
+reports/

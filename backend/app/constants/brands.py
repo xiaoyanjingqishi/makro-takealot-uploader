@@ -10,15 +10,27 @@ LUXURY_BRANDS = [
     "versace", "cartier", "coach", "michael kors"
 ]
 
-# 知名受保护品牌库 (包含数码科技、家电工具、运动潮流及顶级奢侈品)
+# 知名受保护品牌库 (包含数码科技、家电工具、汽摩大牌、户外动力机械、运动潮流及顶级奢侈品)
 FAMOUS_BRANDS = [
+    # 数码科技与消费电子
     "apple", "iphone", "ipad", "airpods", "airtag", "apple watch", "apple pencil", "macbook", "imac", "magsafe",
     "samsung", "galaxy", "dyson", "sony", "playstation", "playstation 5", "playstation 4", "ps4", "ps5", "ps5 slim", "ps5 pro",
     "nintendo switch", "nintendo", "steam deck", "xbox", "huawei", "xiaomi", "redmi", "dji", "gopro",
-    "philips", "makita", "bosch", "dewalt", "milwaukee", "dell", "hp",
-    "lenovo", "asus", "acer", "garmin", "fitbit", "bose", "jbl", "beats",
+    "philips", "dell", "hp", "lenovo", "asus", "acer", "garmin", "fitbit", "bose", "jbl", "beats", "kindle",
+    # 摄影器材
     "canon", "nikon", "sony alpha", "fujifilm", "olympus", "panasonic", "lumix", "pentax", "minolta", "leica", "hasselblad", "sigma", "tamron", "tokina", "insta360",
-    "nike", "adidas", "lego", "stanley", "rolex", "crocs", "kindle",
+    # 五金电动工具
+    "makita", "bosch", "dewalt", "milwaukee", "stanley", "black+decker", "black & decker", "ryobi", "craftsman",
+    # 园林机械与户外动力设备
+    "husqvarna", "stihl", "briggs & stratton", "briggs and stratton", "echo", "toro", "john deere",
+    # 汽车与摩托车知名整车大牌
+    "chevy", "chevrolet", "gmc", "cadillac", "ford", "toyota", "honda", "nissan", "bmw",
+    "mercedes", "benz", "mercedes-benz", "audi", "volkswagen", "vw", "hyundai", "kia",
+    "jeep", "dodge", "chrysler", "ram", "subaru", "lexus", "mazda", "porsche", "tesla",
+    "volvo", "land rover", "isuzu", "mitsubishi", "yamaha", "kawasaki", "suzuki",
+    # 运动潮流与奢侈腕表
+    "nike", "adidas", "lego", "rolex", "crocs",
+    # 国际顶级奢侈品
     "chanel", "louis vuitton", "gucci", "hermes", "prada", "dior", "balenciaga",
     "fendi", "burberry", "celine", "bottega veneta", "saint laurent", "ysl",
     "versace", "cartier", "coach", "michael kors"

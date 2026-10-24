@@ -442,18 +442,27 @@ export const productsMethods = {
 
     if (!confirm(confirmMsg)) return;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
     try {
       const res = await fetch('/api/products/batch-delete', {
         method: 'POST',
         headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ product_ids: this.selectedIds })
+        body: JSON.stringify({ product_ids: this.selectedIds }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       this.showToast(`✅ ${data.message || '操作成功'}`, isAbandonedTab ? 'info' : 'warning');
       this.selectedIds = [];
       this.loadProducts();
     } catch (e) {
-      alert('批量删除出错: ' + e);
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('批量删除请求超时，请稍后刷新查看', 'error');
+      } else {
+        alert('批量删除出错: ' + (e.message || e));
+      }
     }
   },
 
@@ -482,12 +491,16 @@ export const productsMethods = {
 
   async batchRestore() {
     if (this.selectedIds.length === 0) return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
     try {
       const res = await fetch('/api/products/batch-restore', {
         method: 'POST',
         headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ product_ids: this.selectedIds })
+        body: JSON.stringify({ product_ids: this.selectedIds }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok) {
         this.showToast(`✅ ${data.message || '批量恢复成功！'}`, 'success');
@@ -497,7 +510,12 @@ export const productsMethods = {
         alert('批量恢复失败: ' + (data.detail || data.message));
       }
     } catch (e) {
-      alert('批量恢复网络异常: ' + e);
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('批量恢复请求超时，请稍后刷新查看', 'error');
+      } else {
+        alert('批量恢复网络异常: ' + (e.message || e));
+      }
     }
   },
 
@@ -541,17 +559,23 @@ export const productsMethods = {
 
       // 优先尝试 /api/products/ids 极速端点
       let ids = [];
+      const idCtrl = new AbortController();
+      const idTimeout = setTimeout(() => idCtrl.abort(), 30000);
       try {
         const res = await fetch(`/api/products/ids?${filterParams.replace(/^&/, '')}`, {
-          headers: this.getAuthHeaders()
+          headers: this.getAuthHeaders(),
+          signal: idCtrl.signal
         });
+        clearTimeout(idTimeout);
         if (res.ok) {
           const data = await res.json();
           if (data && Array.isArray(data.ids)) {
             ids = data.ids;
           }
         }
-      } catch (_) {}
+      } catch (_) {
+        clearTimeout(idTimeout);
+      }
 
       // 若后端新路由未热重载则自适应回退到分页并发聚合兜底 (500条/页高速聚合)
       if (!ids || ids.length === 0) {
@@ -716,6 +740,8 @@ export const productsMethods = {
       }
     }
     this.isUpdatingBatchPrice = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
     try {
       const res = await fetch('/api/products/batch-update-price', {
         method: 'POST',
@@ -727,8 +753,10 @@ export const productsMethods = {
           multiplier: this.batchPriceForm.multiplier,
           fixed_offset: this.batchPriceForm.fixed_offset,
           mrp_ratio: this.settings.mrp_ratio || 1.5
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       let data = {};
       try {
         data = await res.json();
@@ -744,7 +772,12 @@ export const productsMethods = {
         alert('批量改价失败: ' + (data.detail || data.message || '未知错误'));
       }
     } catch (e) {
-      alert('批量改价网络异常: ' + e);
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        this.showToast('批量改价请求超时，请稍后刷新查看', 'error');
+      } else {
+        alert('批量改价网络异常: ' + (e.message || e));
+      }
     } finally {
       this.isUpdatingBatchPrice = false;
     }

@@ -18,18 +18,18 @@
               </div>
             </div>
 
-            <!-- 2. 在售挂靠 -->
+            <!-- 2. 已挂靠归档 -->
             <div 
               @click="selectKpiFilter('active')"
-              :class="piggyback.stage === 'ACTIVE_MONITOR' && piggyback.buybox_status === 'ALL' ? 'ring-2 ring-emerald-500 bg-emerald-50/60 shadow-xs' : 'hover:border-emerald-300 bg-white'"
+              :class="(piggyback.stage === 'PUBLISHED' || piggyback.stage === 'ACTIVE_MONITOR') && piggyback.buybox_status === 'ALL' ? 'ring-2 ring-emerald-500 bg-emerald-50/60 shadow-xs' : 'hover:border-emerald-300 bg-white'"
               class="p-2.5 rounded-xl border border-slate-200/90 shadow-2xs cursor-pointer transition-all hover:shadow-xs group select-none"
             >
               <div class="flex items-center justify-between text-slate-500 text-[11px] mb-0.5">
-                <span class="font-medium text-emerald-800">🟢 在售挂靠</span>
-                <span class="text-[9.5px] bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded-full font-mono font-semibold">Active</span>
+                <span class="font-medium text-emerald-800">📦 已挂靠归档</span>
+                <span class="text-[9.5px] bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded-full font-mono font-semibold">Published</span>
               </div>
               <div class="text-lg font-bold font-mono text-emerald-600 group-hover:text-emerald-700 transition-colors">
-                {{ piggyback.kpi.active_count }}
+                {{ piggyback.kpi.published_count !== undefined ? piggyback.kpi.published_count : piggyback.kpi.active_count }}
               </div>
             </div>
 
@@ -120,7 +120,7 @@
                     v-for="stg in [
                       { key: 'ALL', label: '全部', count: piggyback.kpi.total_count },
                       { key: 'STAGING', label: '待处理池', count: piggyback.kpi.staging_count },
-                      { key: 'ACTIVE_MONITOR', label: '在售跟价监控', count: piggyback.kpi.active_count },
+                      { key: 'PUBLISHED', label: '📦 已挂靠归档', count: (piggyback.kpi.published_count !== undefined ? piggyback.kpi.published_count : piggyback.kpi.active_count) },
                       { key: 'BLOCKED_FAILED', label: '异常拦截', count: piggyback.kpi.blocked_count },
                       { key: 'ABANDONED', label: '🗑️ 已弃用 (防重采池)', count: piggyback.kpi.abandoned_count }
                     ]"
@@ -759,6 +759,9 @@
           </div>
         </div>
 
+        <!-- 自动巡检实时进度条与成功/失败结果展示卡片 -->
+        {% include "components/cruise_progress_banner.html" %}
+
         <!-- 跟品商品主体数据表格区 -->
         <div class="flex-1 min-h-0 bg-white rounded-xl border border-slate-200/80 shadow-xs flex flex-col overflow-hidden">
           
@@ -1192,14 +1195,18 @@
                           'bg-sky-100 text-sky-800 animate-pulse': item.status === 'SUBMITTING',
                           'bg-amber-100 text-amber-800 animate-pulse': item.status === 'FETCHING',
                           'bg-slate-100 text-slate-700': item.status === 'PENDING',
-                          'bg-rose-100 text-rose-800': item.status === 'FAILED'
+                          'bg-amber-100 text-amber-900 border border-amber-300 font-semibold': item.status === 'FAILED' && item.error_message && (item.error_message.includes('类目资质受限') || item.error_message.includes('license')),
+                          'bg-rose-100 text-rose-800': item.status === 'FAILED' && (!item.error_message || (!item.error_message.includes('类目资质受限') && !item.error_message.includes('license')))
                         }"
                       >
                         <template v-if="item.status === 'ACTIVE'">🟢 挂靠成功</template>
                         <template v-else-if="item.status === 'SUBMITTING'">⏳ 提交中...</template>
                         <template v-else-if="item.status === 'FETCHING'">🔄 数据获取中...</template>
                         <template v-else-if="item.status === 'FAILED'">
-                          <template v-if="(item.error_message && (item.error_message.includes('挂靠') || item.error_message.includes('ATTRIBUTE_VALIDATION') || item.error_message.includes('sku_id') || item.error_message.includes('license'))) || (item.original_price > 0 && !(item.title && item.title.startsWith('[待获取]')))">
+                          <template v-if="item.error_message && (item.error_message.includes('类目资质受限') || item.error_message.includes('license'))">
+                            ⚠️ 需类目执照
+                          </template>
+                          <template v-else-if="(item.error_message && (item.error_message.includes('挂靠') || item.error_message.includes('ATTRIBUTE_VALIDATION') || item.error_message.includes('sku_id'))) || (item.original_price > 0 && !(item.title && item.title.startsWith('[待获取]')))">
                             ❌ 挂靠失败
                           </template>
                           <template v-else>
@@ -1222,7 +1229,10 @@
                       <span v-if="item.makro_listing_id && !item.is_abandoned" class="text-[9px] font-mono text-slate-400 truncate max-w-[100px]" :title="item.makro_listing_id">
                         {{ item.makro_listing_id }}
                       </span>
-                      <span v-if="item.error_message && !item.is_abandoned" class="text-[10px] text-rose-500 line-clamp-1 max-w-[110px]" :title="item.error_message">
+                      <span v-if="item.error_message && !item.is_abandoned" 
+                        class="text-[10px] line-clamp-1 max-w-[120px]" 
+                        :class="item.error_message.includes('类目资质受限') ? 'text-amber-800 font-medium' : 'text-rose-500'"
+                        :title="item.error_message">
                         {{ item.error_message }}
                       </span>
                     </div>
@@ -1255,9 +1265,9 @@
                       <button 
                         v-if="!item.is_abandoned && item.status !== 'ACTIVE' && (item.status === 'PENDING' || (item.status === 'FAILED' && item.original_price > 0 && !(item.title && item.title.startsWith('[待获取]'))))"
                         @click="handlePublishPiggyback(item)"
-                        :disabled="item.compliance_status === 'PROHIBITED' || item.status === 'SUBMITTING' || item.status === 'FETCHING'"
+                        :disabled="item.compliance_status === 'PROHIBITED' || item.status === 'SUBMITTING' || item.status === 'FETCHING' || (item.error_message && item.error_message.includes('类目资质受限'))"
                         class="px-2 py-1 bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-200 rounded font-medium text-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                        :title="item.status === 'FAILED' ? '重新向 Makro 提交挂靠上架 (不回退待处理池)' : (item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品')"
+                        :title="item.error_message && item.error_message.includes('类目资质受限') ? '该类目在 Makro 需专属经营执照，暂无法直接挂靠' : (item.status === 'FAILED' ? '重新向 Makro 提交挂靠上架 (不回退待处理池)' : (item.compliance_status === 'PROHIBITED' ? '红线侵权违禁品禁止发布' : '立即挂靠到 Makro 现有商品'))"
                       >
                         <span>🚀 {{ item.status === 'FAILED' ? '重新挂靠' : '跟品' }}</span>
                       </button>

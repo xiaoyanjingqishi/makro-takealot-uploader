@@ -94,13 +94,18 @@ def get_settings(
         jev_model=_get_str("jev_model", getattr(settings, "JEV_MODEL", "jev-latest")),
         jev_enabled=_get_bool("jev_enabled", getattr(settings, "JEV_ENABLED", True)),
         piggyback_auto_compliance=_get_bool("piggyback_auto_compliance", False),
+        dual_ai_compliance_enabled=_get_bool("dual_ai_compliance_enabled", getattr(settings, "DUAL_AI_COMPLIANCE_ENABLED", False)),
+        auto_translate_on_collect=_get_bool("auto_translate_on_collect", getattr(settings, "AUTO_TRANSLATE_ON_COLLECT", False)),
         piggyback_default_strategy=_get_str("piggyback_default_strategy", "MINUS_15"),
         piggyback_default_floor_mode=_get_str("piggyback_default_floor_mode", "PERCENT"),
         piggyback_default_floor_value=_get_float("piggyback_default_floor_value", 70.0),
         piggyback_default_inventory=_get_int("piggyback_default_inventory", 500),
         piggyback_cruise_concurrency=_get_int("piggyback_cruise_concurrency", 3),
         piggyback_collect_concurrency=_get_int("piggyback_collect_concurrency", 5),
-        piggyback_compliance_concurrency=_get_int("piggyback_compliance_concurrency", getattr(settings, "DEFAULT_PIGGYBACK_COMPLIANCE_CONCURRENCY", 100)),
+        piggyback_compliance_concurrency=_get_int("piggyback_compliance_concurrency", getattr(settings, "DEFAULT_PIGGYBACK_COMPLIANCE_CONCURRENCY", 15)),
+        crawler_proxy_enabled=_get_bool("crawler_proxy_enabled", False),
+        xiequ_proxy_api=_get_str("xiequ_proxy_api", getattr(settings, "XIEQU_PROXY_API", "")),
+        default_air_freight_rate=_get_float("default_air_freight_rate", getattr(settings, "DEFAULT_AIR_FREIGHT_RATE", 90.0)),
     )
 
 @router.post("", summary="保存或更新系统配置 (仅限系统管理员)")
@@ -173,6 +178,11 @@ def test_jev_connection(db: Session = Depends(get_db)):
     from ..services.jev_service import JevService
     res = JevService.test_connectivity(db=db)
     return res
+
+@router.post("/test-ai-models", summary="全面测试 Qwen 与 DeepSeek 文本与视觉多模态连通性")
+def test_ai_models(db: Session = Depends(get_db)):
+    from ..services.compliance_service import ComplianceService
+    return ComplianceService.test_ai_connectivity(db=db)
 
 
 @router.post("/calculate-cost-price", summary="1688全链路跨境成本与精准定价计算器")

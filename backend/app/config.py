@@ -7,8 +7,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Makro-Takealot 智能搬品系统"
     API_V1_STR: str = "/api"
-    SYSTEM_VERSION: str = "2.2.0"
-    EXTENSION_VERSION: str = "1.1.6"
+    SYSTEM_VERSION: str = "2.3.0"
+    EXTENSION_VERSION: str = "1.1.8"
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/makro_app.db"
 
     # 默认定价策略规则
@@ -52,8 +52,17 @@ class Settings(BaseSettings):
     # 默认批量上品并发线程数 (推荐 2~3，支持店铺间并发)
     DEFAULT_PUBLISH_CONCURRENCY: int = 2
 
-    # 默认跟品批量AI质检并发线程数 (默认 100 并发)
-    DEFAULT_PIGGYBACK_COMPLIANCE_CONCURRENCY: int = 100
+    # 默认跟品批量AI质检并发线程数 (平稳安全并发 15，避免瞬时海量请求刷爆 Token 与触发限流)
+    DEFAULT_PIGGYBACK_COMPLIANCE_CONCURRENCY: int = 15
+
+    # 双 AI 交叉质检显式总开关 (默认关闭，关闭时严格仅调用当前选定的主 AI 提供商)
+    DUAL_AI_COMPLIANCE_ENABLED: bool = False
+
+    # 采集商品时是否自动调用大模型翻译 (用户明确要求关闭：采集时不进行大模型翻译)
+    AUTO_TRANSLATE_ON_COLLECT: bool = False
+
+    # 默认跨境空运运费单价 (元/kg)
+    DEFAULT_AIR_FREIGHT_RATE: float = 90.0
 
     # 标题 SEO 关键词搜索意图拓展配置
     DEFAULT_SEO_TITLE_ENABLED: bool = True
@@ -61,7 +70,7 @@ class Settings(BaseSettings):
 
     # AI 清洗双模式配置: 'text' (纯文本快速清洗) 或 'vision' (图文多模态首图深度校准)
     DEFAULT_CLEANER_MODE: str = "text"
-    DEFAULT_QWEN_VISION_MODEL: str = "qwen-vl-plus"
+    DEFAULT_QWEN_VISION_MODEL: str = "qwen3-vl-plus"
 
     # Jev (TypeSafe AI) 决策模型配置
     JEV_API_KEY: str = "apikey_2226d311fb43caa74686bbcff3d030298c62_74872cb4dab92e7fb84afdeb3d6ccf73d8aa28d4746e728543e42efafcf88e1c"

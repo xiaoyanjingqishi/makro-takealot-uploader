@@ -86,25 +86,29 @@ def download_extension():
         except Exception:
             pass
 
-    if not zip_path.exists():
+    # 始终实时动态打包最新的 extension 目录，防止使用陈旧的静态压缩包缓存
+    if ext_dir.exists():
         import zipfile
-        if ext_dir.exists():
-            zip_path.parent.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-                for root, dirs, files in os.walk(ext_dir):
-                    for file in files:
-                        full_path = Path(root) / file
-                        arc_name = full_path.relative_to(ext_dir)
-                        z.write(full_path, arc_name)
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, dirs, files in os.walk(ext_dir):
+                for file in files:
+                    full_path = Path(root) / file
+                    arc_name = full_path.relative_to(ext_dir)
+                    z.write(full_path, arc_name)
+
     if not zip_path.exists():
         return Response(content="Extension package not found", status_code=404)
+
     return FileResponse(
         path=str(zip_path),
         filename=f"makro-extension-v{ext_ver}.zip",
         media_type="application/zip",
         headers={
             "Content-Disposition": f"attachment; filename=makro-extension-v{ext_ver}.zip",
-            "Cache-Control": "no-cache, no-store, must-revalidate"
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
         }
     )
 

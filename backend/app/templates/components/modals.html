@@ -867,7 +867,7 @@
                 <div class="bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-200/80 space-y-2">
                   <div class="flex items-center justify-between pb-1.5 border-b border-indigo-200/60">
                     <span class="font-bold text-indigo-900 text-xs flex items-center">
-                      <span class="mr-1">🐬</span>DeepSeek 视觉 (Flash-Vision)
+                      <span class="mr-1">🐬</span>DeepSeek 视觉 ({{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.model || 'deepseek-flash' }})
                     </span>
                     <span class="px-2 py-0.5 rounded text-[10px] font-bold" :class="getRiskBadgeClass(currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level)">
                       {{ currentComplianceItem.compliance_details?.deepseek_verdict?.image_audit?.risk_level || 'SAFE' }}
@@ -1236,3 +1236,156 @@
           </button>
           <button 
             @click="showMyDailySummaryModal = false" 
+            class="px-5 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition cursor-pointer shadow-xs active:scale-95"
+          >
+            知道了，继续加油
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 全局底价防穿确认拦截弹窗 (跟价监控与店铺商品通用) ================= -->
+    <div v-if="showPriceFloorWarningModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+      <div class="bg-white rounded-2xl shadow-2xl border border-rose-200/80 w-full max-w-md overflow-hidden">
+        <div class="px-5 py-4 border-b border-rose-100 flex items-center justify-between bg-rose-50/50">
+          <div class="flex items-center space-x-2 text-rose-700 font-bold text-sm">
+            <span>⚠️ 保本底价防穿安全警告</span>
+          </div>
+          <button @click="showPriceFloorWarningModal = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+        </div>
+        <div class="p-5 space-y-3 text-xs text-slate-700">
+          <div class="p-3 bg-rose-50 rounded-xl border border-rose-200/80 space-y-1">
+            <div class="font-semibold text-rose-900 truncate">
+              商品: {{ priceFloorWarning.title }}
+            </div>
+            <div class="flex items-center justify-between pt-1 font-mono">
+              <span>保本底价: <strong class="text-rose-700 text-sm">R{{ Number(priceFloorWarning.min_floor || 0).toFixed(2) }}</strong></span>
+              <span>目标售价: <strong class="text-indigo-600 text-sm">R{{ Number(priceFloorWarning.new_price || 0).toFixed(2) }}</strong></span>
+            </div>
+          </div>
+          <p class="text-slate-500 leading-relaxed">
+            当前设定的售价 <strong class="text-rose-600 font-mono">低于保本底价</strong>。降价销售可能导致单单亏损，系统建议重新核算采购与运费成本。如果您确认这是运营清仓促销或特殊策略，可点击下方「强制改价」。
+          </p>
+        </div>
+        <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end space-x-2">
+          <button 
+            @click="showPriceFloorWarningModal = false" 
+            class="px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-medium cursor-pointer"
+          >
+            取消修改
+          </button>
+          <button 
+            @click="confirmForceAdjustPrice" 
+            class="px-4 py-1.5 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg shadow-xs cursor-pointer active:scale-95"
+          >
+            ⚠️ 确认强制改价
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 全局批量修改售价弹窗 (跟价监控与店铺商品通用) ================= -->
+    <div v-if="showBatchAdjustPriceModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+      <div class="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-md overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div class="flex items-center space-x-2 text-slate-800 font-bold text-sm">
+            <span>🏷️ 批量调整我店售价</span>
+            <span class="text-xs font-mono font-normal bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full">
+              已选 {{ batchAdjustPriceForm.source === 'reprice' ? (reprice.selectedIds ? reprice.selectedIds.length : 0) : (selectedStoreProductSkus ? selectedStoreProductSkus.length : 0) }} 件
+            </span>
+          </div>
+          <button @click="showBatchAdjustPriceModal = false" class="text-slate-400 hover:text-slate-600 text-lg leading-none cursor-pointer">×</button>
+        </div>
+        <div class="p-5 space-y-4 text-xs">
+          <!-- 调价方式选择 -->
+          <div class="space-y-1.5">
+            <label class="block font-semibold text-slate-700">调价模式</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button 
+                type="button"
+                @click="batchAdjustPriceForm.mode = 'FIXED'"
+                :class="batchAdjustPriceForm.mode === 'FIXED' ? 'ring-2 ring-indigo-500 bg-indigo-50 font-bold text-indigo-700' : 'bg-slate-50 hover:bg-slate-100 text-slate-600'"
+                class="p-2 rounded-lg border border-slate-200 text-center transition cursor-pointer"
+              >
+                固定售价
+              </button>
+              <button 
+                type="button"
+                @click="batchAdjustPriceForm.mode = 'INCREASE_AMOUNT'"
+                :class="batchAdjustPriceForm.mode === 'INCREASE_AMOUNT' ? 'ring-2 ring-emerald-500 bg-emerald-50 font-bold text-emerald-700' : 'bg-slate-50 hover:bg-slate-100 text-slate-600'"
+                class="p-2 rounded-lg border border-slate-200 text-center transition cursor-pointer"
+              >
+                按金额上调
+              </button>
+              <button 
+                type="button"
+                @click="batchAdjustPriceForm.mode = 'DECREASE_AMOUNT'"
+                :class="batchAdjustPriceForm.mode === 'DECREASE_AMOUNT' ? 'ring-2 ring-rose-500 bg-rose-50 font-bold text-rose-700' : 'bg-slate-50 hover:bg-slate-100 text-slate-600'"
+                class="p-2 rounded-lg border border-slate-200 text-center transition cursor-pointer"
+              >
+                按金额下调
+              </button>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+              <button 
+                type="button"
+                @click="batchAdjustPriceForm.mode = 'INCREASE_PERCENT'"
+                :class="batchAdjustPriceForm.mode === 'INCREASE_PERCENT' ? 'ring-2 ring-emerald-500 bg-emerald-50 font-bold text-emerald-700' : 'bg-slate-50 hover:bg-slate-100 text-slate-600'"
+                class="p-2 rounded-lg border border-slate-200 text-center transition cursor-pointer"
+              >
+                按百分比上调 (%)
+              </button>
+              <button 
+                type="button"
+                @click="batchAdjustPriceForm.mode = 'DECREASE_PERCENT'"
+                :class="batchAdjustPriceForm.mode === 'DECREASE_PERCENT' ? 'ring-2 ring-rose-500 bg-rose-50 font-bold text-rose-700' : 'bg-slate-50 hover:bg-slate-100 text-slate-600'"
+                class="p-2 rounded-lg border border-slate-200 text-center transition cursor-pointer"
+              >
+                按百分比下调 (%)
+              </button>
+            </div>
+          </div>
+
+          <!-- 数值输入 -->
+          <div class="space-y-1.5">
+            <label class="block font-semibold text-slate-700">
+              <span v-if="batchAdjustPriceForm.mode === 'FIXED'">统一设定售价 (ZAR)</span>
+              <span v-else-if="batchAdjustPriceForm.mode.includes('AMOUNT')">调整金额 (ZAR)</span>
+              <span v-else>调整百分比 (%)</span>
+            </label>
+            <div class="relative">
+              <input 
+                type="number" 
+                step="0.01" 
+                v-model.number="batchAdjustPriceForm.value" 
+                class="w-full text-sm pl-7 pr-3 py-2 border border-slate-200 rounded-lg font-mono font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+              />
+              <span class="absolute left-2.5 top-2.5 text-slate-400 font-mono text-xs">
+                {{ batchAdjustPriceForm.mode.includes('PERCENT') ? '%' : 'R' }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 规则提示与多模块同步说明 -->
+          <div class="text-[11px] text-slate-500 bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-1">
+            <div>⚡ <strong>多模块双向同步</strong>：改价将同步更新 Makro 在售 Listing、跟价监控池与跟品库 target_price。</div>
+            <div>🛡️ <strong>安全防穿保护</strong>：若调整后价格低于该商品设定的保本底价，系统将智能拦截并提示。</div>
+          </div>
+        </div>
+        <div class="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-end space-x-2">
+          <button 
+            @click="showBatchAdjustPriceModal = false" 
+            class="px-4 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-medium cursor-pointer"
+          >
+            取消
+          </button>
+          <button 
+            @click="submitBatchAdjustPrice" 
+            :disabled="batchAdjustPriceForm.submitting"
+            class="px-5 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs cursor-pointer active:scale-95 disabled:opacity-50"
+          >
+            {{ batchAdjustPriceForm.submitting ? '正在批量调价...' : '确认批量改价' }}
+          </button>
+        </div>
+      </div>
+    </div>

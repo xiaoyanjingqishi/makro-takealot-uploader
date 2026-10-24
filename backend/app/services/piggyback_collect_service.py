@@ -8,6 +8,7 @@ from ..models.makro_piggyback import MakroPiggybackItem
 from ..models.setting import SystemSetting
 from .makro_scraper_service import MakroScraperService
 from .makro_piggyback_service import MakroPiggybackService
+from .proxy_service import ProxyPoolService
 
 logger = logging.getLogger("piggyback_collect")
 
@@ -166,13 +167,17 @@ class PiggybackCollectService:
                 "variant_name": item.variant_name
             }
 
+            proxy_ip = ProxyPoolService.get_proxy()
             try:
                 data = MakroScraperService.resolve_piggyback_product(
                     raw_target,
                     store=item.store,
-                    client_data=client_info
+                    client_data=client_info,
+                    proxy=proxy_ip
                 )
             except Exception as ex:
+                if proxy_ip:
+                    ProxyPoolService.report_failure(proxy_ip)
                 logger.warning(f"商品 [ID: {item.id}, FSN: {item.makro_product_id}] 静默拉取失败: {ex}")
                 item.status = "FAILED"
                 item.error_message = f"静默抓取失败: {str(ex)[:200]}"
@@ -191,6 +196,19 @@ class PiggybackCollectService:
             raw_url = data.get("makro_url") or MakroScraperService.format_canonical_makro_url(res_fsn, target_item_id)
             title = data.get("title") or item.title or res_fsn
             title_zh = data.get("title_zh") or title
+
+            # 采集自动调用大模型翻译中文标题 (受系统设置 auto_translate_on_collect 严格控制，默认关闭以保护 Token 额度)
+            s_auto_tr = db.query(SystemSetting).filter(SystemSetting.key == "auto_translate_on_collect").first()
+            auto_tr_enabled = (s_auto_tr.value.strip().lower() in ["true", "1", "yes"]) if (s_auto_tr and s_auto_tr.value) else False
+            if auto_tr_enabled and title and title != res_fsn:
+                try:
+                    from .translation_service import TranslationService
+                    tr_text = TranslationService.translate_title(title, db=db)
+                    if tr_text:
+                        title_zh = tr_text
+                except Exception as tr_err:
+                    logger.warning(f"跟品采集自动翻译异常，保留原文: {tr_err}")
+
             image_url = data.get("image_url") or item.image_url or ""
             seller_name = data.get("original_seller") or ""
             seller_count = int(data.get("seller_count") or 1)

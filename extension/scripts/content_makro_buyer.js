@@ -6,7 +6,7 @@
  * 3. 搜索页底部悬浮批量跟品工具栏 (全选/勾选批量/一键全采)
  */
 (function () {
-  console.log("[Makro-Piggyback] Makro 买家端全场景跟品助手已加载");
+  console.log(`%c[Makro-Piggyback v1.1.8] 买家端跟品助手已激活 -> ${window.location.href}`, "color: #38bdf8; font-weight: bold; font-size: 13px;");
 
   // -------------------------------------------------------------
   // 工具函数：安全解析南非兰特价格文本 (如 "R 199.00", "R 1,299.00", "R 199 00")
@@ -557,7 +557,7 @@
     // 1. 优先获取带有 data-id 的商品卡片容器 (标准 Flipkart/Makro 架构，data-id 为 16 位 FSN)
     const directCards = Array.from(document.querySelectorAll("[data-id]")).filter(el => {
       const id = (el.getAttribute("data-id") || "").trim();
-      return id.length >= 10 && !el.classList.contains("makro-card-piggyback-container");
+      return id.length >= 10 && !id.includes("{{") && !el.classList.contains("makro-card-piggyback-container");
     });
     if (directCards.length > 0) return directCards;
 
@@ -637,7 +637,7 @@
     return {
       fsn,
       item_id: itemId,
-      url: href || `https://www.makro.co.za/-/p/${itemId || fsn}?pid=${fsn}`,
+      url: (!href || href.includes(':8899')) ? `https://www.makro.co.za/-/p/${itemId || fsn}?pid=${fsn}` : href,
       title: title || undefined,
       image_url: imageUrl || undefined,
       price: price > 0 ? price : undefined,
@@ -653,9 +653,10 @@
     cards.forEach((card) => {
       if (card.querySelector(".makro-card-piggyback-container")) return;
 
-      // 设为相对定位便于徽章固定
-      if (getComputedStyle(card).position === "static") {
-        card.style.position = "relative";
+      // 优先挂载在内部 ._4ddWXP 容器中，确保绝对定位精确贴合商品卡片且不被上层遮挡
+      const mountTarget = card.querySelector("._4ddWXP") || card;
+      if (getComputedStyle(mountTarget).position === "static") {
+        mountTarget.style.position = "relative";
       }
 
       const fsn = card.getAttribute("data-id") || "";
@@ -666,16 +667,16 @@
         position: absolute;
         top: 8px;
         left: 8px;
-        z-index: 100;
+        z-index: 9999;
         display: flex;
         align-items: center;
         gap: 6px;
-        background: rgba(15, 23, 42, 0.85);
+        background: rgba(15, 23, 42, 0.88);
         backdrop-filter: blur(4px);
         padding: 4px 8px;
         border-radius: 6px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-        border: 1px solid rgba(255,255,255,0.15);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+        border: 1px solid rgba(255,255,255,0.2);
       `;
 
       badge.innerHTML = `
@@ -688,7 +689,7 @@
         </button>
       `;
 
-      card.appendChild(badge);
+      mountTarget.appendChild(badge);
 
       // 单卡片快速采集
       const qBtn = badge.querySelector(".makro-search-quick-btn");
@@ -745,6 +746,12 @@
       // 复选框变化更新底部计数
       badge.querySelector(".makro-search-cb").addEventListener("change", updateToolbarCount);
     });
+
+    const injectedCount = document.querySelectorAll(".makro-card-piggyback-container").length;
+    if (injectedCount > 0 && !window._makro_logged_cards) {
+      window._makro_logged_cards = true;
+      console.log(`%c[Makro-Piggyback v1.1.8] 成功扫描到 ${cards.length} 个商品卡片，完成采集按钮与复选框注入 (${injectedCount} 个已注入)`, "color: #10b981; font-weight: bold;");
+    }
 
     // 异步排重校验：检查当前页所有商品卡片是否已在跟品库中
     try {
@@ -827,7 +834,7 @@
       bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 999998;
+      z-index: 999999;
       background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
       color: #f8fafc;
       border-radius: 30px;
@@ -874,6 +881,11 @@
     `;
 
     document.body.appendChild(bar);
+
+    if (!window._makro_logged_toolbar) {
+      window._makro_logged_toolbar = true;
+      console.log("%c[Makro-Piggyback v1.1.8] 底部批量跟品工具栏已就绪", "color: #10b981; font-weight: bold;");
+    }
 
     // 全选/反选 (仅对未在库的新品生效)
     document.getElementById("makro-select-all-btn").addEventListener("click", () => {
@@ -1029,6 +1041,8 @@
   // 主入口调度：根据当前路由分发注入
   // -------------------------------------------------------------
   function dispatchInjection() {
+    const host = window.location.host;
+    const isMockSite = host.includes(":8899") || host.includes("127.0.0.1") || host.includes("localhost") || host.includes("192.168.110.145");
     const path = window.location.pathname;
     const search = window.location.search;
     const urlParams = new URLSearchParams(search);
@@ -1039,9 +1053,9 @@
       injectDetailPiggybackWidget();
     }
 
-    // 列表/搜索/类目页注入
+    // 列表/搜索/类目页注入 (离线模拟站点 8899 直接作为商品列表页处理)
     const cards = findProductCards();
-    if (cards.length > 0 || path.includes("/search") || path.includes("/c/") || search.includes("q=")) {
+    if (cards.length > 0 || isMockSite || path.includes("/search") || path.includes("/c/") || search.includes("q=")) {
       injectSearchCardButtons();
       injectSearchBatchToolbar();
     }
@@ -1069,6 +1083,25 @@
       setTimeout(dispatchInjection, 300);
     };
   }
+
+  // 监听 DOM 变化以支持异步加载渲染 (例如 8899 本地离线库异步加载 json 动态插卡)
+  try {
+    let debounceTimer = null;
+    const observer = new MutationObserver(() => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const cards = findProductCards();
+        if (cards.length > 0) {
+          injectSearchCardButtons();
+          injectSearchBatchToolbar();
+        }
+      }, 100);
+    });
+    observer.observe(document.body || document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+  } catch (e) {}
 
   // 定时轮询补刀，应对瀑布流懒加载
   setInterval(dispatchInjection, 2500);
