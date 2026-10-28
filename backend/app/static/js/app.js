@@ -535,7 +535,8 @@ const app = createApp({
             selectedIds: [],
             indicators: {},
             financial_summary: {},
-            activePerspective: 'orders' // 'orders' | 'po'
+            activePerspective: 'orders', // 'orders' | 'po'
+            poSearchQuery: ''
           },
           orderStatusHistoryModal: {
             open: false,
@@ -602,6 +603,7 @@ const app = createApp({
             total_net_buy: 0,
             total_sa_deducted: 0
           },
+          procurementIncludeAll: false,
           showCreatePoModal: false,
           poCreateForm: {
             po_number: '',

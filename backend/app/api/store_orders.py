@@ -31,15 +31,16 @@ router = APIRouter(prefix="/store-orders", tags=["店铺订单管理与履约"])
 # =========================================================================
 CHANGE_TYPE_MAP = {
     "FULFILLMENT_STATUS": "履约状态流转",
-    "WEIGHT_UPDATE": "录入实测重量",
-    "PO_ASSIGNMENT": "加入PO拼单批次",
-    "PO_REMOVAL": "移出PO拼单批次",
+    "WEIGHT_UPDATE": "称重数据录入",
+    "LABEL_PRINTED": "热敏标签打印",
+    "PO_ASSIGNMENT": "归档至PO批次",
+    "PO_REMOVAL": "从PO批次移出",
     "PROCUREMENT_UPDATE": "采购信息录入",
-    "INITIAL_SYNC": "官方订单首次同步",
-    "OFFICIAL_STATUS": "官方状态更新",
-    "STOCK_ALLOCATION": "南非现货调拨履约",
-    "STOCK_REALLOCATED_OUT": "滞留货品转出履约",
-    "BUFFER_STOCK_INFLOW": "异常订单滞留入库"
+    "INITIAL_SYNC": "官方初次同步",
+    "OFFICIAL_STATUS": "官方状态变更",
+    "STOCK_ALLOCATION": "南非现货调拨",
+    "STOCK_REALLOCATED_OUT": "库存调拨出库",
+    "BUFFER_STOCK_INFLOW": "异常退回滞留入库"
 }
 
 STATUS_ZH_MAP = {
@@ -53,20 +54,21 @@ STATUS_ZH_MAP = {
     "COMPLETED": "订单完结",
     "CANCELLED_RTO": "异常退回",
     "pending_rtd": "待打单出库",
-    "pending_labels": "待打单",
-    "pending_handover": "待交接",
+    "pending_labels": "待打印面单",
+    "pending_handover": "待交接货代",
     "packed": "已打包",
-    "rtd": "就绪待发",
+    "rtd": "已准备发运",
     "upcoming": "预备订单",
     "processing": "处理中",
-    "in_transit": "运输派送中",
+    "in_transit": "运输途中",
     "delivered": "已签收送达",
-    "shipments_delivered": "已送达",
+    "shipments_delivered": "已妥投送达",
     "cancelled": "已取消",
-    "returned": "已退货",
-    "PACKING": "正在打包",
-    "SHIPPED": "货代起运",
-    "PLANNING": "正在打包"
+    "returned": "退货完成",
+    "PRINTED": "已打单",
+    "UNPRINTED": "未打单",
+    "UNASSIGNED": "已取消归档",
+    "0g": "0克 (默认)"
 }
 
 def format_status_zh(code: Optional[str]) -> str:
@@ -1427,8 +1429,9 @@ def list_purchase_orders(
     if store_id:
         query = query.filter(or_(MakroPurchaseOrder.store_id == store_id, MakroPurchaseOrder.store_id == None))
 
-    if search and search.strip():
-        s_term = f"%{search.strip()}%"
+    search_str = search.strip() if isinstance(search, str) else ""
+    if search_str:
+        s_term = f"%{search_str}%"
         matching_order_po_ids = [r[0] for r in db.query(MakroOrder.po_id).filter(MakroOrder.order_id.ilike(s_term), MakroOrder.po_id.isnot(None)).distinct().all()]
         query = query.filter(
             or_(
@@ -1824,21 +1827,25 @@ def get_order_status_history(
     for log in logs:
         from_val = log.from_status or log.old_value
         to_val = log.to_status or log.new_value
-        from_zh = format_status_zh(from_val) if from_val else "-"
-        to_zh = format_status_zh(to_val) if to_val else "-"
+
+        from_zh = format_status_zh(from_val) if from_val else "无"
+        to_zh = format_status_zh(to_val) if to_val else "无"
+        change_type_zh = format_change_type_zh(log.change_type)
 
         hist_items.append({
             "id": log.id,
-            "change_type": log.change_type,
-            "change_type_zh": format_change_type_zh(log.change_type),
-            "old_value": from_val,
-            "from_status": from_val,
+            "change_type": change_type_zh,
+            "change_type_zh": change_type_zh,
+            "old_value": from_zh,
+            "old_value_zh": from_zh,
+            "from_status": from_zh,
             "from_status_zh": from_zh,
-            "new_value": to_val,
-            "to_status": to_val,
+            "new_value": to_zh,
+            "new_value_zh": to_zh,
+            "to_status": to_zh,
             "to_status_zh": to_zh,
-            "operator": log.operator or "系统",
-            "notes": log.note or log.notes or "-",
+            "operator": log.operator or "SYSTEM",
+            "notes": log.note or "",
             "created_at": log.created_at.strftime("%Y-%m-%d %H:%M:%S") if log.created_at else ""
         })
 
@@ -1849,10 +1856,6 @@ def get_order_status_history(
         "history": hist_items
     }
 
-
-# =========================================================================
-# 7. 南非滞留现货与缓冲库存池管理 (海外库存调拨引擎)
-# =========================================================================
 @router.get("/buffer-stocks", summary="查询海外滞留现货与缓冲库存池")
 def list_buffer_stocks(
     store_id: Optional[int] = Query(None),
@@ -1870,8 +1873,9 @@ def list_buffer_stocks(
         query = query.filter(MakroBufferStock.location == location)
     if status and status != "all":
         query = query.filter(MakroBufferStock.status == status)
-    if search and search.strip():
-        s = f"%{search.strip()}%"
+    search_str = search.strip() if isinstance(search, str) else ""
+    if search_str:
+        s = f"%{search_str}%"
         query = query.filter(
             or_(
                 MakroBufferStock.sku_id.ilike(s),
@@ -2079,11 +2083,18 @@ def allocate_buffer_stock(
 @router.get("/procurement-summary", summary="智能采购工作台汇总 (按SKU聚合订单需求并扣减现货计算净需采购量)")
 def get_procurement_summary(
     store_id: Optional[int] = Query(None),
+    include_all: bool = Query(False, description="是否包含已采购/PO打包的在途订单"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # 默认仅聚合【NEW 新订单】的真实待采买需求；当 include_all=True 时扩展包含 PURCHASED 和 PO_PACKING 做对比
+    if include_all:
+        allowed_fulfillment = ["NEW", "PURCHASED", "PO_PACKING"]
+    else:
+        allowed_fulfillment = ["NEW"]
+
     query = db.query(MakroOrder).filter(
-        MakroOrder.fulfillment_status.in_(["NEW", "PURCHASED", "PO_PACKING"]),
+        MakroOrder.fulfillment_status.in_(allowed_fulfillment),
         ~MakroOrder.status.in_(["completed", "delivered", "shipments_delivered", "cancelled"])
     )
     if store_id:
@@ -2092,7 +2103,7 @@ def get_procurement_summary(
     
     orders = query.all()
 
-    # 预加载可用滞留库存 (SA_WAREHOUSE 与 DOMESTIC_FORWARDER)
+    # 预载南非本地仓及国内货代仓现货 (AVAILABLE)
     buf_stocks = db.query(MakroBufferStock).filter(MakroBufferStock.status == "AVAILABLE").all()
     sku_sa_stock_map = {}
     sku_dom_stock_map = {}
@@ -2117,54 +2128,69 @@ def get_procurement_summary(
                     fsn = itm.get("fsn") or pd.get("fsn") or pd.get("product_id") or ""
 
                     if sku not in sku_aggregated:
+                        sa_q = sku_sa_stock_map.get(sku, 0)
+                        dom_q = sku_dom_stock_map.get(sku, 0)
                         sku_aggregated[sku] = {
                             "sku_id": sku,
                             "fsn": fsn,
                             "title": title,
                             "image_url": img,
                             "total_demand": 0,
-                            "sa_stock": sku_sa_stock_map.get(sku, 0),
-                            "domestic_stock": sku_dom_stock_map.get(sku, 0),
+                            "sa_stock": sa_q,
+                            "buffer_stock_available": sa_q,
+                            "domestic_stock": dom_q,
                             "net_procurement_needed": 0,
-                            "orders": []
+                            "net_procurement_demand": 0,
+                            "orders": [],
+                            "order_ids": [],
+                            "order_count": 0
                         }
                     sku_aggregated[sku]["total_demand"] += qty
                     sku_aggregated[sku]["orders"].append({
                         "order_id": o.id,
                         "order_sn": o.order_id,
-                        "order_date": o.order_date.strftime("%Y-%m-%d %H:%M") if o.order_date else "",
+                        "buyer_name": o.buyer_name or "",
                         "quantity": qty,
                         "fulfillment_status": o.fulfillment_status,
-                        "fulfillment_status_zh": format_status_zh(o.fulfillment_status),
-                        "purchase_cost": o.purchase_cost or 0.0,
-                        "purchase_order_sn": o.purchase_order_sn or ""
+                        "order_date": o.order_date.strftime("%Y-%m-%d %H:%M") if o.order_date else ""
                     })
+                    if o.order_id not in sku_aggregated[sku]["order_ids"]:
+                        sku_aggregated[sku]["order_ids"].append(o.order_id)
+                    sku_aggregated[sku]["order_count"] = len(sku_aggregated[sku]["order_ids"])
             except Exception:
                 pass
 
-    result_list = []
     total_demand_all = 0
     total_net_buy_all = 0
-    total_sa_deducted_all = 0
+    total_buffer_offset_all = 0
 
-    for sku, data in sku_aggregated.items():
-        net_buy = max(0, data["total_demand"] - data["sa_stock"] - data["domestic_stock"])
-        data["net_procurement_needed"] = net_buy
-        total_demand_all += data["total_demand"]
+    items = []
+    for sku, info in sku_aggregated.items():
+        demand = info["total_demand"]
+        sa_q = info["sa_stock"]
+        # 优先使用南非现货对冲
+        offset = min(demand, sa_q)
+        net_buy = max(0, demand - sa_q)
+
+        info["net_procurement_needed"] = net_buy
+        info["net_procurement_demand"] = net_buy
+        total_demand_all += demand
         total_net_buy_all += net_buy
-        total_sa_deducted_all += min(data["total_demand"], data["sa_stock"])
-        result_list.append(data)
+        total_buffer_offset_all += offset
 
-    # 排序：净采量高的排在前面
-    result_list.sort(key=lambda x: x["net_procurement_needed"], reverse=True)
+        items.append(info)
+
+    # 排序：净采购量大的优先排在前面
+    items.sort(key=lambda x: (x["net_procurement_demand"], x["total_demand"]), reverse=True)
 
     return {
         "success": True,
-        "total_skus": len(result_list),
-        "total_order_demand": total_demand_all,
+        "include_all": include_all,
+        "total_demand": total_demand_all,
         "total_net_buy": total_net_buy_all,
-        "total_sa_deducted": total_sa_deducted_all,
-        "items": result_list
+        "total_buffer_offset": total_buffer_offset_all,
+        "total_skus": len(items),
+        "items": items
     }
 
 @router.post("/buffer-stocks/create", summary="手动录入海外现货或盘点库存")

@@ -290,7 +290,11 @@ export const ordersMethods = {
     this.poListModal.loading = true;
     try {
       const cfg = this.orderFinanceConfig || {};
-      const url = `/api/store-orders/po/list?store_id=${this.selectedStoreId}&commission_rate=${cfg.commission_rate ?? 17.5}&shipping_fee_zar=${cfg.shipping_fee_zar ?? 70.0}&exchange_rate=${cfg.exchange_rate ?? 0.39}`;
+      const search = (this.orders?.poSearchQuery || this.poSearchQuery || '').trim();
+      let url = `/api/store-orders/po/list?store_id=${this.selectedStoreId}&commission_rate=${cfg.commission_rate ?? 17.5}&shipping_fee_zar=${cfg.shipping_fee_zar ?? 70.0}&exchange_rate=${cfg.exchange_rate ?? 0.39}`;
+      if (search) {
+        url += `&search=${encodeURIComponent(search)}`;
+      }
       const res = await fetch(url, { headers: this.getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
@@ -1115,7 +1119,8 @@ export const ordersMethods = {
     if (!this.selectedStoreId) return;
     this.procurementSummary.loading = true;
     try {
-      const res = await fetch(`/api/store-orders/procurement-summary?store_id=${this.selectedStoreId}`, {
+      const includeAll = Boolean(this.procurementIncludeAll);
+      const res = await fetch(`/api/store-orders/procurement-summary?store_id=${this.selectedStoreId}&include_all=${includeAll}`, {
         headers: this.getAuthHeaders()
       });
       if (res.ok) {

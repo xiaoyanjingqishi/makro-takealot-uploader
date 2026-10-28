@@ -945,6 +945,7 @@
                       >
                         <option value="">🔄 一键同步流转本批所有订单...</option>
                         <option value="PURCHASED">🟣 全流转至: 已采购</option>
+                        <option value="PO_PACKING">📦 全流转至: PO打包</option>
                         <option value="SENT_TO_FORWARDER">🟪 全流转至: 发送货代</option>
                         <option value="AIR_FREIGHT">🛫 全流转至: 货代空运</option>
                         <option value="ARRIVED_SA">🛬 全流转至: 到达南非</option>
@@ -1221,7 +1222,7 @@
                             <td class="py-2 px-3 font-sans text-slate-600">{{ subO.buyer_name || '买家' }}</td>
                             <!-- 专项 3: 发货截止时间与倒计时色标警告 -->
                             <td class="py-2 px-3 font-mono text-[11px]">
-                              <div v-if="subO.dispatch_by_date" class="text-slate-700">
+                              <div v-if="subO.dispatch_by_date && subO.dispatch_by_date !== '-'" class="text-slate-700 font-medium">
                                 {{ subO.dispatch_by_date.slice(5, 16) }}
                               </div>
                               <div v-if="subO.remaining_dispatch_time" class="mt-0.5">
@@ -1233,7 +1234,10 @@
                                   <span>{{ subO.remaining_dispatch_time.text }}</span>
                                 </span>
                               </div>
-                              <span v-else class="text-slate-400 text-[10px]">-</span>
+                              <div v-else-if="subO.fulfillment_status === 'COMPLETED' || subO.fulfillment_status === 'ARRIVED_SA'" class="text-[10px] text-emerald-600 font-medium mt-0.5">
+                                ✓ 已交付完结
+                              </div>
+                              <div v-else-if="!subO.dispatch_by_date || subO.dispatch_by_date === '-'" class="text-slate-400 text-[10px]">-</div>
                             </td>
                             <td class="py-2 px-3 text-right text-emerald-700">R{{ subO.total_amount }}</td>
                             <td class="py-2 px-3 text-right font-bold" :class="subO.fulfillment_status === 'CANCELLED_RTO' ? 'text-slate-400 line-through' : 'text-emerald-700'">
@@ -1496,8 +1500,26 @@
           <div class="shrink-0 bg-white rounded-xl border border-slate-200/80 shadow-xs p-2.5 flex items-center justify-between flex-wrap gap-2">
             <div class="flex items-center space-x-2">
               <span class="text-xs font-bold text-indigo-900 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-200">
-                🛒 智能采购工作台：聚合新订单需求 · 优先对冲南非现货 · 1688一键精准采买
+                🛒 智能采购工作台
               </span>
+              <div class="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                <button 
+                  type="button" 
+                  @click="procurementIncludeAll = false; loadProcurementSummary()" 
+                  :class="!procurementIncludeAll ? 'bg-white text-indigo-700 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'"
+                  class="px-2.5 py-1 rounded-md transition cursor-pointer"
+                >
+                  仅待采购新订单
+                </button>
+                <button 
+                  type="button" 
+                  @click="procurementIncludeAll = true; loadProcurementSummary()" 
+                  :class="procurementIncludeAll ? 'bg-white text-indigo-700 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'"
+                  class="px-2.5 py-1 rounded-md transition cursor-pointer"
+                >
+                  显示全部在途/已采订单
+                </button>
+              </div>
             </div>
             <button 
               @click="loadProcurementSummary" 
@@ -1564,19 +1586,19 @@
                     </td>
 
                     <td class="py-2.5 px-3 text-center">
-                      <span :class="pItem.buffer_stock_available > 0 ? 'text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200' : 'text-slate-400'">
-                        {{ pItem.buffer_stock_available }}
+                      <span :class="(pItem.buffer_stock_available || pItem.sa_stock) > 0 ? 'text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200' : 'text-slate-400'">
+                        {{ pItem.buffer_stock_available ?? pItem.sa_stock ?? 0 }}
                       </span>
                     </td>
 
                     <td class="py-2.5 px-3 text-center">
                       <strong class="text-emerald-700 font-bold text-base bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-300">
-                        {{ pItem.net_procurement_demand }}
+                        {{ pItem.net_procurement_demand ?? pItem.net_procurement_needed ?? 0 }}
                       </strong>
                     </td>
 
                     <td class="py-2.5 px-3 text-center font-sans text-xs">
-                      <span class="text-slate-600">{{ pItem.order_ids?.length || 0 }} 笔订单</span>
+                      <span class="text-slate-600">{{ (pItem.order_ids?.length ?? pItem.orders?.length ?? pItem.order_count) || 0 }} 笔订单</span>
                     </td>
 
                     <td class="py-2.5 px-3 text-center font-sans">
@@ -1938,6 +1960,7 @@
                       >
                         <option value="">🔄 一键同步流转本批所有订单...</option>
                         <option value="PURCHASED">🟣 全流转至: 已采购</option>
+                        <option value="PO_PACKING">📦 全流转至: PO打包</option>
                         <option value="SENT_TO_FORWARDER">🟪 全流转至: 发送货代</option>
                         <option value="AIR_FREIGHT">🛫 全流转至: 货代空运</option>
                         <option value="ARRIVED_SA">🛬 全流转至: 到达南非</option>
@@ -2297,17 +2320,17 @@
 
                     <!-- 状态变更前后值 -->
                     <div class="flex items-center space-x-2 font-mono text-[11.5px] mt-1">
-                      <span class="text-slate-500 line-through">{{ log.old_value || '无' }}</span>
+                      <span class="text-slate-500 line-through">{{ log.old_value_zh || log.old_value || '无' }}</span>
                       <span class="text-slate-400">➔</span>
                       <span class="font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-                        {{ log.new_value }}
+                        {{ log.new_value_zh || log.new_value }}
                       </span>
                     </div>
 
                     <!-- 变动类型与备注 -->
                     <div class="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-200/50 text-[10.5px]">
                       <span class="text-slate-400 font-sans">
-                        类型: <strong class="text-slate-600">{{ log.change_type }}</strong>
+                        类型: <strong class="text-slate-600">{{ log.change_type_zh || log.change_type }}</strong>
                       </span>
                       <span v-if="log.notes" class="text-slate-600 font-sans truncate max-w-[280px]" :title="log.notes">
                         💬 {{ log.notes }}
@@ -2329,7 +2352,9 @@
               </button>
             </div>
           </div>
-<!-- 6. 专项 1: 订单多采购单号与采购成本录入弹窗 -->
+        </div>
+
+        <!-- 6. 专项 1: 订单多采购单号与采购成本录入弹窗 -->
         <div v-if="procurementModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
           <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
             <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
