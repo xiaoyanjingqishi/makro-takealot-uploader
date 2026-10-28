@@ -521,6 +521,7 @@ export const ordersMethods = {
       'all': '全部阶段',
       'NEW': '新订单',
       'PURCHASED': '已采购',
+      'PO_PACKING': 'PO打包',
       'SENT_TO_FORWARDER': '发送货代',
       'AIR_FREIGHT': '货代空运',
       'ARRIVED_SA': '到达南非',
@@ -835,6 +836,326 @@ export const ordersMethods = {
     this.orderStatusHistoryModal.open = false;
     this.orderStatusHistoryModal.order = null;
     this.orderStatusHistoryModal.logs = [];
+  },
+// ================= 专项 10: 一键展开/收起所有 PO 明细 =================
+  expandAllPos() {
+    this.poExpandedIds = (this.poListModal.list || []).map(p => p.id);
+  },
+
+  collapseAllPos() {
+    this.poExpandedIds = [];
+  },
+
+  // ================= 专项 8: PO 状态流转与时效轨迹 =================
+  async changePoStatus(po, newStatus) {
+    if (!po || !newStatus || po.po_status === newStatus) return;
+    try {
+      const res = await fetch(`/api/store-orders/po/${po.id}/status`, {
+        method: 'PUT',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ po_status: newStatus })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        po.po_status = data.po_status;
+        po.status_updated_at = data.status_updated_at;
+        po.duration_text = data.duration_text;
+        po.status_timeline = data.status_timeline || [];
+        this.showToast(`✅ PO 状态已更新为: ${newStatus}`, 'success');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        this.showToast(`❌ 更新 PO 状态失败: ${err.detail || res.statusText}`, 'error');
+      }
+    } catch (e) {
+      this.showToast(`更新 PO 状态异常: ${e.message}`, 'error');
+    }
+  },
+
+  openPoTimelineModal(po) {
+    this.poTimelineModal = {
+      open: true,
+      po: po,
+      timeline: po.status_timeline || []
+    };
+  },
+
+  closePoTimelineModal() {
+    this.poTimelineModal = {
+      open: false,
+      po: null,
+      timeline: []
+    };
+  },
+
+  // ================= 专项 1: 多采购单记录录入与单单净利实时重算 =================
+  openProcurementModal(order) {
+    let records = [];
+    if (order.procurement_records && Array.isArray(order.procurement_records) && order.procurement_records.length > 0) {
+      records = JSON.parse(JSON.stringify(order.procurement_records));
+    } else if (order.purchase_order_sn || order.purchase_cost) {
+      records = [{
+        purchase_sn: order.purchase_order_sn || '',
+        purchase_cost: order.purchase_cost || 0,
+        domestic_tracking: order.domestic_tracking_no || '',
+        notes: order.purchase_notes || ''
+      }];
+    } else {
+      records = [{
+        purchase_sn: '',
+        purchase_cost: 0,
+        domestic_tracking: '',
+        notes: ''
+      }];
+    }
+
+    this.procurementModal = {
+      open: true,
+      order: order,
+      records: records,
+      submitting: false
+    };
+  },
+
+  closeProcurementModal() {
+    this.procurementModal.open = false;
+    this.procurementModal.order = null;
+    this.procurementModal.records = [];
+  },
+
+  addProcurementRow() {
+    this.procurementModal.records.push({
+      purchase_sn: '',
+      purchase_cost: 0,
+      domestic_tracking: '',
+      notes: ''
+    });
+  },
+
+  removeProcurementRow(index) {
+    if (this.procurementModal.records.length <= 1) {
+      this.procurementModal.records = [{
+        purchase_sn: '',
+        purchase_cost: 0,
+        domestic_tracking: '',
+        notes: ''
+      }];
+      return;
+    }
+    this.procurementModal.records.splice(index, 1);
+  },
+
+  calcProcurementModalTotal() {
+    return (this.procurementModal.records || []).reduce((acc, r) => acc + (parseFloat(r.purchase_cost) || 0), 0);
+  },
+
+  async submitProcurementRecords() {
+    const modal = this.procurementModal;
+    if (!modal.order) return;
+    modal.submitting = true;
+    try {
+      const res = await fetch('/api/store-orders/update-procurement-records', {
+        method: 'PUT',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          order_id: modal.order.id,
+          procurement_records: modal.records
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        modal.order.procurement_records = data.procurement_records;
+        modal.order.purchase_cost = data.purchase_cost;
+        modal.order.net_profit = data.net_profit;
+        modal.order.purchase_order_sn = data.purchase_order_sn;
+        modal.order.domestic_tracking_no = data.domestic_tracking_no;
+        this.showToast('✅ 多采购记录保存成功，净利润已重新核算', 'success');
+        this.closeProcurementModal();
+        if (this.orders.financial_summary) {
+          await this.loadStoreOrders(this.orders.page);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        this.showToast(`❌ 保存多采购记录失败: ${err.detail || res.statusText}`, 'error');
+      }
+    } catch (e) {
+      this.showToast(`保存多采购记录异常: ${e.message}`, 'error');
+    } finally {
+      modal.submitting = false;
+    }
+  },
+
+  // ================= 南非现货与滞留池 Hub =================
+  async loadBufferStocks() {
+    if (!this.selectedStoreId) return;
+    this.bufferStocks.loading = true;
+    try {
+      let url = `/api/store-orders/buffer-stocks?store_id=${this.selectedStoreId}`;
+      if (this.bufferStocks.location && this.bufferStocks.location !== 'all') {
+        url += `&location=${encodeURIComponent(this.bufferStocks.location)}`;
+      }
+      if (this.bufferStocks.status && this.bufferStocks.status !== 'all') {
+        url += `&status=${encodeURIComponent(this.bufferStocks.status)}`;
+      }
+      if (this.bufferStocks.search) {
+        url += `&search=${encodeURIComponent(this.bufferStocks.search)}`;
+      }
+      const res = await fetch(url, { headers: this.getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        this.bufferStocks.list = data.items || [];
+        this.bufferStocks.summary = data.summary || {};
+      } else {
+        this.showToast('载入滞留现货池失败', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      this.showToast(`载入滞留现货池异常: ${e.message}`, 'error');
+    } finally {
+      this.bufferStocks.loading = false;
+    }
+  },
+
+  async updateBufferStockStatus(item, newStatus) {
+    if (!item || item.status === newStatus) return;
+    try {
+      const res = await fetch(`/api/store-orders/buffer-stocks/${item.id}/status`, {
+        method: 'PUT',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (res.ok) {
+        item.status = newStatus;
+        this.showToast(`库存状态已更新为: ${newStatus}`, 'success');
+        this.loadBufferStocks();
+      } else {
+        this.showToast('更新库存状态失败', 'error');
+      }
+    } catch (e) {
+      this.showToast(`更新状态异常: ${e.message}`, 'error');
+    }
+  },
+
+  async updateBufferStockLabelFee(item, fee) {
+    if (!item) return;
+    try {
+      const res = await fetch(`/api/store-orders/buffer-stocks/${item.id}/status`, {
+        method: 'PUT',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ relabeling_fee_cny: parseFloat(fee) || 0.0 })
+      });
+      if (res.ok) {
+        item.relabeling_fee_cny = parseFloat(fee) || 0.0;
+        this.showToast('换标费已保存', 'success');
+      }
+    } catch (e) {
+      this.showToast('保存换标费异常', 'error');
+    }
+  },
+
+  // 现货调拨匹配弹窗
+  openStockAllocationModal(order, stockItem) {
+    this.stockAllocationModal = {
+      open: true,
+      targetOrder: order,
+      stock: stockItem,
+      relabeling_fee_cny: stockItem?.relabeling_fee_cny || 0.0,
+      notes: '南非滞留现货调拨匹配出库',
+      submitting: false
+    };
+  },
+
+  closeStockAllocationModal() {
+    this.stockAllocationModal = {
+      open: false,
+      targetOrder: null,
+      stock: null,
+      relabeling_fee_cny: 0.0,
+      notes: '',
+      submitting: false
+    };
+  },
+
+  async submitStockAllocation() {
+    const modal = this.stockAllocationModal;
+    if (!modal.targetOrder || !modal.stock) return;
+    modal.submitting = true;
+    try {
+      const res = await fetch('/api/store-orders/allocate-stock', {
+        method: 'POST',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          stock_id: modal.stock.id,
+          target_order_id: modal.targetOrder.id,
+          relabeling_fee_cny: parseFloat(modal.relabeling_fee_cny) || 0.0,
+          notes: modal.notes
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.showToast('✅ 现货调拨匹配成功！该订单已直接流转至【到达南非】，头程运费自动归零！', 'success');
+        this.closeStockAllocationModal();
+        if (this.orders.activePerspective === 'buffer') {
+          await this.loadBufferStocks();
+        } else {
+          await this.loadStoreOrders(this.orders.page);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        this.showToast(`❌ 调拨失败: ${err.detail || res.statusText}`, 'error');
+      }
+    } catch (e) {
+      this.showToast(`调拨异常: ${e.message}`, 'error');
+    } finally {
+      modal.submitting = false;
+    }
+  },
+
+  // ================= 智能采购工作台 =================
+  async loadProcurementSummary() {
+    if (!this.selectedStoreId) return;
+    this.procurementSummary.loading = true;
+    try {
+      const res = await fetch(`/api/store-orders/procurement-summary?store_id=${this.selectedStoreId}`, {
+        headers: this.getAuthHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.procurementSummary.list = data.items || [];
+        this.procurementSummary.total_demand = data.total_demand || 0;
+        this.procurementSummary.total_net_buy = data.total_net_buy || 0;
+        this.procurementSummary.total_buffer_offset = data.total_buffer_offset || 0;
+      }
+    } catch (e) {
+      console.error(e);
+      this.showToast(`载入采购概览异常: ${e.message}`, 'error');
+    } finally {
+      this.procurementSummary.loading = false;
+    }
+  },
+
+  // PO 卡片订单状态标签样式
+  getStatusSummaryBadgeClass(statusName) {
+    if (statusName.includes('到达南非') || statusName.includes('完结')) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    if (statusName.includes('空运') || statusName.includes('货代')) return 'bg-purple-50 text-purple-700 border-purple-200';
+    if (statusName.includes('打包') || statusName.includes('已采购')) return 'bg-blue-50 text-blue-700 border-blue-200';
+    if (statusName.includes('异常') || statusName.includes('退回')) return 'bg-rose-50 text-rose-700 border-rose-200';
+    return 'bg-slate-100 text-slate-700 border-slate-200';
+  },
+
+  // 状态中文映射辅助
+  formatStatusZh(st) {
+    const map = {
+      'NEW': '新订单',
+      'PURCHASED': '已采购',
+      'PO_PACKING': 'PO打包',
+      'SENT_TO_FORWARDER': '发送货代',
+      'AIR_FREIGHT': '货代空运',
+      'ARRIVED_SA': '到达南非',
+      'SA_PICKUP': '南非取件',
+      'COMPLETED': '订单完结',
+      'CANCELLED_RTO': '异常退回'
+    };
+    return map[st] || st;
   }
 };
 

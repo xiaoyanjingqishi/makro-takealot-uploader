@@ -567,6 +567,41 @@ const app = createApp({
             loading: false
           },
           poExpandedIds: [],
+          poSearchQuery: '',
+          procurementModal: {
+            open: false,
+            order: null,
+            records: [],
+            submitting: false
+          },
+          poTimelineModal: {
+            open: false,
+            po: null,
+            timeline: []
+          },
+          stockAllocationModal: {
+            open: false,
+            targetOrder: null,
+            stock: null,
+            relabeling_fee_cny: 0.0,
+            notes: '',
+            submitting: false
+          },
+          bufferStocks: {
+            list: [],
+            loading: false,
+            location: 'all',
+            status: 'all',
+            search: '',
+            summary: {}
+          },
+          procurementSummary: {
+            list: [],
+            loading: false,
+            total_demand: 0,
+            total_net_buy: 0,
+            total_sa_deducted: 0
+          },
           showCreatePoModal: false,
           poCreateForm: {
             po_number: '',

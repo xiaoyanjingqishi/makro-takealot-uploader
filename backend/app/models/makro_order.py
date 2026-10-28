@@ -62,10 +62,16 @@ class MakroOrder(Base):
     is_weight_measured = Column(Boolean, default=False, index=True) # 是否已填写实测克重
     air_freight_rate = Column(Float, default=0.0)          # 单单独立空运单价 (元/kg，0为使用系统默认)
 
-    # 采购与物流单号追溯
-    purchase_order_sn = Column(String(100), nullable=True) # 1688采购订单号 / 采购渠道单号
+    # 采购与物流单号追溯 (支持多笔采购单: [{'sn': '...', 'cost': 25.0, 'tracking_no': '...', 'notes': '...'}])
+    purchase_order_sn = Column(String(100), nullable=True) # 1688采购订单号 / 采购渠道单号 (主单号)
     purchase_notes = Column(String(255), nullable=True)    # 采购规格 / 供应商备注
     domestic_tracking_no = Column(String(100), nullable=True) # 国内寄往货代的快递单号
+    procurement_records_json = Column(Text, nullable=True) # 多笔采购明细 JSON 数组
+
+    # 履约发货来源与调拨追溯: DIRECT_PROCUREMENT (直采直发), SA_STOCK_ALLOCATION (南非现货调拨), DOMESTIC_STOCK_ALLOCATION (国内调拨)
+    fulfillment_type = Column(String(50), default='DIRECT_PROCUREMENT', index=True)
+    allocated_stock_id = Column(Integer, nullable=True, index=True) # 关联 makro_buffer_stocks.id
+    reallocated_from_order_sn = Column(String(100), nullable=True, index=True) # 现货来源订单号
 
     # 打包与打单追踪 (40x30mm 标签)
     label_printed = Column(Boolean, default=False, index=True) # 是否已打印标签

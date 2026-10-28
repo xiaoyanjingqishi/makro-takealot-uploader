@@ -12,6 +12,7 @@ from .makro_piggyback import MakroPiggybackItem
 from .makro_reprice_log import MakroRepriceLog
 from .store_product_reprice import StoreProductReprice
 from .makro_order_status_log import MakroOrderStatusLog
+from .makro_buffer_stock import MakroBufferStock
 
 __all__ = [
     "User",
@@ -30,6 +31,7 @@ __all__ = [
     "MakroAuditListing",
     "MakroPiggybackItem",
     "MakroRepriceLog",
-    "StoreProductReprice"
+    "StoreProductReprice",
+    "MakroBufferStock"
 ]
 

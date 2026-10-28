@@ -69,6 +69,14 @@ def run_system_migrations(engine, SessionLocal):
             if "is_weight_measured" not in order_cols:
                 conn.execute(text("ALTER TABLE makro_orders ADD COLUMN is_weight_measured BOOLEAN DEFAULT 0"))
                 conn.execute(text("UPDATE makro_orders SET is_weight_measured = 1 WHERE total_weight_g > 0"))
+            if "procurement_records_json" not in order_cols:
+                conn.execute(text("ALTER TABLE makro_orders ADD COLUMN procurement_records_json TEXT"))
+            if "fulfillment_type" not in order_cols:
+                conn.execute(text("ALTER TABLE makro_orders ADD COLUMN fulfillment_type VARCHAR(50) DEFAULT 'DIRECT_PROCUREMENT'"))
+            if "allocated_stock_id" not in order_cols:
+                conn.execute(text("ALTER TABLE makro_orders ADD COLUMN allocated_stock_id INTEGER"))
+            if "reallocated_from_order_sn" not in order_cols:
+                conn.execute(text("ALTER TABLE makro_orders ADD COLUMN reallocated_from_order_sn VARCHAR(100)"))
 
             # 确保 makro_order_status_logs 表与索引存在
             conn.execute(text("""
@@ -121,11 +129,66 @@ def run_system_migrations(engine, SessionLocal):
                 conn.execute(text("ALTER TABLE makro_purchase_orders ADD COLUMN box_height_cm FLOAT DEFAULT 0.0"))
             if "package_weight_kg" not in po_cols:
                 conn.execute(text("ALTER TABLE makro_purchase_orders ADD COLUMN package_weight_kg FLOAT DEFAULT 0.0"))
+            if "status_updated_at" not in po_cols:
+                conn.execute(text("ALTER TABLE makro_purchase_orders ADD COLUMN status_updated_at DATETIME"))
+            if "status_timeline_json" not in po_cols:
+                conn.execute(text("ALTER TABLE makro_purchase_orders ADD COLUMN status_timeline_json TEXT"))
 
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_po_number ON makro_purchase_orders(po_number)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_po_store_id ON makro_purchase_orders(store_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_po_id ON makro_orders(po_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_st ON makro_orders(fulfillment_status)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_fulfillment_type ON makro_orders(fulfillment_type)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_orders_allocated_stock ON makro_orders(allocated_stock_id)"))
+
+            # 确保海外滞留现货与缓冲库存表存在
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS makro_buffer_stocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    store_id INTEGER NOT NULL,
+                    sku_id VARCHAR(100) NOT NULL,
+                    fsn VARCHAR(100) NULL,
+                    title VARCHAR(500) NOT NULL,
+                    image_url VARCHAR(500) NULL,
+                    quantity INTEGER DEFAULT 1,
+                    location VARCHAR(50) DEFAULT 'SA_WAREHOUSE',
+                    status VARCHAR(50) DEFAULT 'AVAILABLE',
+                    source_order_id INTEGER NULL,
+                    source_order_sn VARCHAR(100) NULL,
+                    source_po_id INTEGER NULL,
+                    source_po_number VARCHAR(100) NULL,
+                    reallocated_to_order_id INTEGER NULL,
+                    reallocated_to_order_sn VARCHAR(100) NULL,
+                    reallocated_at DATETIME NULL,
+                    purchase_cost_cny FLOAT DEFAULT 0.0,
+                    head_haul_cost_cny FLOAT DEFAULT 0.0,
+                    relabeling_fee_cny FLOAT DEFAULT 0.0,
+                    notes TEXT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE,
+                    FOREIGN KEY (source_order_id) REFERENCES makro_orders(id) ON DELETE SET NULL,
+                    FOREIGN KEY (reallocated_to_order_id) REFERENCES makro_orders(id) ON DELETE SET NULL
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_buffer_stocks_store_id ON makro_buffer_stocks(store_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_buffer_stocks_sku ON makro_buffer_stocks(sku_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_buffer_stocks_status ON makro_buffer_stocks(status)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_buffer_stocks_location ON makro_buffer_stocks(location)"))
+
+            # 历史数据迁移：为存量已有采购成本/单号但无 procurement_records_json 的订单封装首条采购记录
+            try:
+                import json
+                existing_orders_res = conn.execute(text("SELECT id, purchase_cost, purchase_order_sn, domestic_tracking_no, purchase_notes FROM makro_orders WHERE procurement_records_json IS NULL AND (purchase_cost > 0 OR purchase_order_sn IS NOT NULL)")).fetchall()
+                for row in existing_orders_res:
+                    o_id, p_cost, p_sn, p_track, p_notes = row[0], row[1], row[2], row[3], row[4]
+                    rec = [{"sn": p_sn or "", "cost": float(p_cost or 0.0), "tracking_no": p_track or "", "notes": p_notes or ""}]
+                    conn.execute(text("UPDATE makro_orders SET procurement_records_json = :val WHERE id = :oid"), {"val": json.dumps(rec, ensure_ascii=False), "oid": o_id})
+                
+                # 初始化已有 PO 的 status_updated_at
+                conn.execute(text("UPDATE makro_purchase_orders SET status_updated_at = created_at WHERE status_updated_at IS NULL"))
+            except Exception as e:
+                logger.warning(f"历史订单采购与PO数据封装迁移提示: {e}")
 
 
             # 检查 stores 表

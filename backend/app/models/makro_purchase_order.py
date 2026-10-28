@@ -10,7 +10,10 @@ class MakroPurchaseOrder(Base):
     po_number = Column(String(100), unique=True, nullable=False, index=True)  # 如 PO20261014-001
     store_id = Column(Integer, ForeignKey("stores.id", ondelete="SET NULL"), nullable=True, index=True)
     name = Column(String(200), nullable=True)  # 批次名称/备注，如 "10月14日南非空运第1批"
-    status = Column(String(50), default="PLANNING", index=True)  # PLANNING, PURCHASED, SHIPPED, COMPLETED
+    # 批次状态: PACKING(正在打包), SENT_TO_FORWARDER(发送货代), AIR_FREIGHT(货代空运), ARRIVED_SA(到达南非), COMPLETED(已完结)
+    status = Column(String(50), default="PACKING", index=True)
+    status_updated_at = Column(DateTime, default=datetime.now)  # 最近状态变更时间
+    status_timeline_json = Column(Text, nullable=True)  # 状态流转轨迹与阶段耗时间隔 JSON 数组
 
     # 货代与空运追踪
     forwarder_name = Column(String(100), nullable=True)  # 货代公司名称 (如: 顺丰国际, 易达, 速派)
