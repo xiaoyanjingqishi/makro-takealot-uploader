@@ -579,6 +579,90 @@ def test_po_status_summary_distribution(headers, store):
         db.close()
 
 
+def test_buffer_stock_summary_and_location_management(headers, store):
+    """验证滞留池指标对齐、分仓精确筛选与换标费/仓库修改接口"""
+    db = SessionLocal()
+    stk_sa = None
+    stk_dom = None
+    try:
+        # 创建一个南非仓滞留记录与一个国内仓滞留记录
+        stk_sa = MakroBufferStock(
+            store_id=store.id,
+            sku_id="TEST_BUFFER_SKU_SA_1",
+            title="测试南非仓现货",
+            quantity=2,
+            purchase_cost_cny=30.0,
+            head_haul_cost_cny=15.0,
+            location="SA_WAREHOUSE",
+            status="AVAILABLE",
+            source_order_sn="TEST_ORDER_BUF_SA"
+        )
+        stk_dom = MakroBufferStock(
+            store_id=store.id,
+            sku_id="TEST_BUFFER_SKU_DOM_2",
+            title="测试国内仓现货",
+            quantity=3,
+            purchase_cost_cny=20.0,
+            head_haul_cost_cny=0.0,
+            location="DOMESTIC_FORWARDER",
+            status="AVAILABLE",
+            source_order_sn="TEST_ORDER_BUF_DOM"
+        )
+        db.add_all([stk_sa, stk_dom])
+        db.commit()
+        db.refresh(stk_sa)
+        db.refresh(stk_dom)
+
+        # 1. 验证全局看板数据指标契约
+        resp = client.get(f"/api/store-orders/buffer-stocks?store_id={store.id}", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        summary = data.get("summary", {})
+        assert summary.get("total_items", 0) >= 5
+        assert summary.get("available_count", 0) >= 5
+        assert summary.get("total_cost_cny", 0) > 0
+        assert summary.get("available_sa_count", 0) >= 2
+        assert summary.get("domestic_forwarder_count", 0) >= 3
+
+        # 2. 验证仓库字段 warehouse_location 与 location_zh 正确映射
+        items = data.get("items", [])
+        sa_item = next(it for it in items if it["id"] == stk_sa.id)
+        dom_item = next(it for it in items if it["id"] == stk_dom.id)
+        assert sa_item["warehouse_location"] == "南非本地仓"
+        assert dom_item["warehouse_location"] == "国内货代仓"
+
+        # 3. 验证仓库隔离筛选
+        resp_sa_only = client.get(f"/api/store-orders/buffer-stocks?store_id={store.id}&location=SA_WAREHOUSE", headers=headers)
+        assert resp_sa_only.status_code == 200
+        sa_ids = [it["id"] for it in resp_sa_only.json().get("items", [])]
+        assert stk_sa.id in sa_ids
+        assert stk_dom.id not in sa_ids
+
+        resp_dom_only = client.get(f"/api/store-orders/buffer-stocks?store_id={store.id}&location=DOMESTIC_FORWARDER", headers=headers)
+        assert resp_dom_only.status_code == 200
+        dom_ids = [it["id"] for it in resp_dom_only.json().get("items", [])]
+        assert stk_dom.id in dom_ids
+        assert stk_sa.id not in dom_ids
+
+        # 4. 验证行内修改换标费与移仓更新
+        resp_update = client.put(
+            f"/api/store-orders/buffer-stocks/{stk_dom.id}/status",
+            json={"location": "SA_WAREHOUSE", "relabeling_fee_cny": 8.5},
+            headers=headers
+        )
+        assert resp_update.status_code == 200, resp_update.text
+        db.refresh(stk_dom)
+        assert stk_dom.location == "SA_WAREHOUSE"
+        assert stk_dom.relabeling_fee_cny == 8.5
+
+    finally:
+        if stk_sa and stk_sa.id:
+            db.query(MakroBufferStock).filter(MakroBufferStock.id == stk_sa.id).delete()
+        if stk_dom and stk_dom.id:
+            db.query(MakroBufferStock).filter(MakroBufferStock.id == stk_dom.id).delete()
+        db.commit()
+        db.close()
+
 if __name__ == "__main__":
     import sys
     sys.stdout.reconfigure(encoding="utf-8")
@@ -622,4 +706,8 @@ if __name__ == "__main__":
     test_po_status_summary_distribution(headers, store)
     print("✓ PASSED: PO status distribution count tags")
 
-    print("\n🎉 ALL 9 ADVANCED TESTS PASSED PERFECTLY!")
+    print("10. test_buffer_stock_summary_and_location_management...")
+    test_buffer_stock_summary_and_location_management(headers, store)
+    print("✓ PASSED: Buffer stock summary alignment & warehouse management")
+
+    print("\n🎉 ALL 10 ADVANCED TESTS PASSED PERFECTLY!")

@@ -243,7 +243,9 @@ class CreateBufferStockRequest(BaseModel):
     notes: Optional[str] = None
 
 class UpdateBufferStockStatusRequest(BaseModel):
-    status: str  # AVAILABLE, REALLOCATED, REFUNDED_1688, SCRAPPED
+    status: Optional[str] = None  # AVAILABLE, REALLOCATED, REFUNDED_1688, SCRAPPED, DISCARDED
+    location: Optional[str] = None  # SA_WAREHOUSE, DOMESTIC_FORWARDER, IN_TRANSIT_AIR
+    relabeling_fee_cny: Optional[float] = None
     notes: Optional[str] = None
 
 def _verify_store_access(user: User, store_id: int, db: Session) -> Store:
@@ -1892,17 +1894,30 @@ def list_buffer_stocks(
     base_all = db.query(MakroBufferStock)
     if store_id:
         base_all = base_all.filter(MakroBufferStock.store_id == store_id)
-    
-    available_sa_stocks = base_all.filter(MakroBufferStock.location == "SA_WAREHOUSE", MakroBufferStock.status == "AVAILABLE").all()
+
+    all_stocks = base_all.all()
+    available_stocks = [s for s in all_stocks if s.status == "AVAILABLE"]
+    allocated_stocks = [s for s in all_stocks if s.status == "REALLOCATED"]
+
+    available_sa_stocks = [s for s in available_stocks if s.location == "SA_WAREHOUSE"]
     total_sa_qty = sum(s.quantity for s in available_sa_stocks)
-    total_sa_val = round(sum((s.purchase_cost_cny + s.head_haul_cost_cny) * s.quantity for s in available_sa_stocks), 2)
-    
-    in_transit_qty = sum(s.quantity for s in base_all.filter(MakroBufferStock.location == "IN_TRANSIT_AIR", MakroBufferStock.status == "AVAILABLE").all())
-    domestic_qty = sum(s.quantity for s in base_all.filter(MakroBufferStock.location == "DOMESTIC_FORWARDER", MakroBufferStock.status == "AVAILABLE").all())
-    reallocated_qty = sum(s.quantity for s in base_all.filter(MakroBufferStock.status == "REALLOCATED").all())
-    recovered_val = round(sum((s.purchase_cost_cny + s.head_haul_cost_cny) * s.quantity for s in base_all.filter(MakroBufferStock.status == "REALLOCATED").all()), 2)
-    
+    total_sa_val = round(sum(((float(s.purchase_cost_cny or 0.0)) + float(s.head_haul_cost_cny or 0.0)) * s.quantity for s in available_sa_stocks), 2)
+
+    in_transit_qty = sum(s.quantity for s in available_stocks if s.location == "IN_TRANSIT_AIR")
+    domestic_qty = sum(s.quantity for s in available_stocks if s.location == "DOMESTIC_FORWARDER")
+    reallocated_qty = sum(s.quantity for s in allocated_stocks)
+    recovered_val = round(sum(((float(s.purchase_cost_cny or 0.0)) + float(s.head_haul_cost_cny or 0.0)) * s.quantity for s in allocated_stocks), 2)
+
+    total_items = sum(s.quantity for s in all_stocks)
+    total_cost_cny = round(sum(((float(s.purchase_cost_cny or 0.0)) + float(s.head_haul_cost_cny or 0.0)) * s.quantity for s in available_stocks), 2)
+    available_count = sum(s.quantity for s in available_stocks)
+    allocated_count = reallocated_qty
+
     summary = {
+        "total_items": total_items,
+        "total_cost_cny": total_cost_cny,
+        "available_count": available_count,
+        "allocated_count": allocated_count,
         "available_sa_count": total_sa_qty,
         "available_sa_value_cny": total_sa_val,
         "in_transit_air_count": in_transit_qty,
@@ -1955,7 +1970,8 @@ def list_buffer_stocks(
             "quantity_original": st.quantity,
             "unit_cost_cny": st.purchase_cost_cny,
             "location": st.location,
-            "location_zh": "南非本地仓现货" if st.location == "SA_WAREHOUSE" else ("国际空运在途" if st.location == "IN_TRANSIT_AIR" else "国内货代滞留"),
+            "warehouse_location": "南非本地仓" if st.location == "SA_WAREHOUSE" else ("国内货代仓" if st.location == "DOMESTIC_FORWARDER" else "国际空运在途"),
+            "location_zh": "南非本地仓" if st.location == "SA_WAREHOUSE" else ("国内货代仓" if st.location == "DOMESTIC_FORWARDER" else "国际空运在途"),
             "status": st.status,
             "status_zh": "闲置可用" if st.status == "AVAILABLE" else ("已调拨履约" if st.status == "REALLOCATED" else ("已1688退款" if st.status == "REFUNDED_1688" else "已报废/核销")),
             "source_order_id": st.source_order_id,
@@ -2223,7 +2239,7 @@ def create_buffer_stock(
         "message": f"成功录入现货库存 [{stock.sku_id}]，件数: {stock.quantity}"
     }
 
-@router.put("/buffer-stocks/{stock_id}/status", summary="更新滞留现货状态 (核销/报废/1688已退款)")
+@router.put("/buffer-stocks/{stock_id}/status", summary="更新滞留现货状态 (核销/报废/1688已退款/换标费/仓库)")
 def update_buffer_stock_status(
     stock_id: int,
     req: UpdateBufferStockStatusRequest,
@@ -2235,12 +2251,22 @@ def update_buffer_stock_status(
         raise HTTPException(status_code=404, detail="库存记录不存在")
     _verify_store_access(current_user, stock.store_id, db)
 
-    valid_statuses = ["AVAILABLE", "REALLOCATED", "REFUNDED_1688", "SCRAPPED"]
-    if req.status not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"无效状态: {req.status}")
-
     old_st = stock.status
-    stock.status = req.status
+    if req.status:
+        valid_statuses = ["AVAILABLE", "REALLOCATED", "REFUNDED_1688", "SCRAPPED", "DISCARDED"]
+        if req.status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"无效状态: {req.status}")
+        stock.status = req.status
+
+    if req.location:
+        valid_locations = ["SA_WAREHOUSE", "DOMESTIC_FORWARDER", "IN_TRANSIT_AIR"]
+        if req.location not in valid_locations:
+            raise HTTPException(status_code=400, detail=f"无效仓库: {req.location}")
+        stock.location = req.location
+
+    if req.relabeling_fee_cny is not None:
+        stock.relabeling_fee_cny = max(0.0, float(req.relabeling_fee_cny))
+
     if req.notes:
         stock.notes = f"{stock.notes or ''} [{req.notes.strip()}]"
 
@@ -2250,5 +2276,7 @@ def update_buffer_stock_status(
         "stock_id": stock.id,
         "old_status": old_st,
         "new_status": stock.status,
-        "message": f"库存状态已由 [{old_st}] 更新为 [{stock.status}]"
+        "location": stock.location,
+        "relabeling_fee_cny": stock.relabeling_fee_cny,
+        "message": "库存信息已更新"
     }

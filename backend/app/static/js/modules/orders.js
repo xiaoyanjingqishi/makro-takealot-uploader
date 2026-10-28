@@ -1039,6 +1039,33 @@ export const ordersMethods = {
     }
   },
 
+  filterBufferStockLocation(loc) {
+    this.bufferStocks.location = loc;
+    this.loadBufferStocks();
+  },
+
+  async changeBufferStockLocation(item, newLocation) {
+    if (!item || item.location === newLocation) return;
+    try {
+      const res = await fetch(`/api/store-orders/buffer-stocks/${item.id}/status`, {
+        method: 'PUT',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ location: newLocation })
+      });
+      if (res.ok) {
+        item.location = newLocation;
+        item.warehouse_location = newLocation === 'SA_WAREHOUSE' ? '南非本地仓' : (newLocation === 'DOMESTIC_FORWARDER' ? '国内货代仓' : '国际空运在途');
+        item.location_zh = item.warehouse_location;
+        this.showToast(`库存已移转至: ${item.warehouse_location}`, 'success');
+        this.loadBufferStocks();
+      } else {
+        this.showToast('修改仓库归属失败', 'error');
+      }
+    } catch (e) {
+      this.showToast(`修改仓库异常: ${e.message}`, 'error');
+    }
+  },
+
   async updateBufferStockLabelFee(item, fee) {
     if (!item) return;
     try {
