@@ -2280,3 +2280,380 @@ def update_buffer_stock_status(
         "relabeling_fee_cny": stock.relabeling_fee_cny,
         "message": "库存信息已更新"
     }
+
+
+@router.get("/operations-dashboard", summary="运营大盘：近期订单走向、走势曲线、SLA时效预警与热卖爆品")
+def get_operations_dashboard(
+    store_id: Optional[int] = Query(None, description="店铺 ID 过滤"),
+    days: int = Query(14, description="分析跨度天数，默认 14 天"),
+    commission_rate: float = Query(17.5, description="平台扣点率 (%)"),
+    shipping_fee_zar: float = Query(70.0, description="平台单笔运费 (ZAR)"),
+    exchange_rate: float = Query(0.39, description="汇率"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if store_id:
+        _verify_store_access(current_user, store_id, db)
+
+    days = max(3, min(days, 90))
+    c_rate = float(commission_rate) if isinstance(commission_rate, (int, float)) else 17.5
+    s_fee = float(shipping_fee_zar) if isinstance(shipping_fee_zar, (int, float)) else 70.0
+    e_rate = float(exchange_rate) if isinstance(exchange_rate, (int, float)) else 0.39
+
+    setting_rate_row = db.query(SystemSetting).filter(SystemSetting.key == "default_air_freight_rate").first()
+    global_air_rate = float(setting_rate_row.value) if setting_rate_row and setting_rate_row.value else 90.0
+
+    now = datetime.now()
+    start_date = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    store = db.query(Store).filter(Store.id == store_id).first() if store_id else None
+    store_name = store.name if store else "全部店铺"
+
+    orders_query = db.query(MakroOrder)
+    if store_id:
+        orders_query = orders_query.filter(MakroOrder.store_id == store_id)
+    all_orders = orders_query.all()
+
+    # 查询当前可对冲的南非本地现货
+    buf_query = db.query(MakroBufferStock).filter(
+        MakroBufferStock.location == "SA_WAREHOUSE",
+        MakroBufferStock.status == "AVAILABLE"
+    )
+    if store_id:
+        buf_query = buf_query.filter(MakroBufferStock.store_id == store_id)
+    sa_buffer_items = buf_query.all()
+    sa_buffer_skus = {b.sku_id for b in sa_buffer_items}
+
+    # 按天初始化字典
+    date_order_map = {}
+    for i in range(days):
+        d_str = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
+        date_order_map[d_str] = []
+
+    sku_counter = {}
+
+    for o in all_orders:
+        o_date = o.order_date
+        if o_date:
+            d_str = o_date.strftime("%Y-%m-%d")
+            if d_str in date_order_map:
+                date_order_map[d_str].append(o)
+
+                # 提取此时间窗内的商品 SKU 贡献
+                if o.raw_items_json:
+                    try:
+                        for itm in json.loads(o.raw_items_json):
+                            sku = itm.get("sku_id") or itm.get("sku") or itm.get("fsn") or "UNKNOWN"
+                            pd = itm.get("product_details") or {}
+                            title = itm.get("title") or pd.get("title") or f"商品 ({sku})"
+                            qty = int(itm.get("quantity") or 1)
+                            img = itm.get("image_url") or pd.get("product_image") or pd.get("large_product_image") or ""
+                            pricing = itm.get("pricing") or {}
+                            price = float(pricing.get("total_price") or itm.get("price") or 0.0)
+
+                            if sku not in sku_counter:
+                                sku_counter[sku] = {
+                                    "sku_id": sku,
+                                    "title": title,
+                                    "image_url": img,
+                                    "quantity_sold": 0,
+                                    "order_count": 0,
+                                    "sales_zar": 0.0,
+                                    "purchase_cost_cny": 0.0,
+                                    "has_sa_buffer": sku in sa_buffer_skus
+                                }
+                            sku_counter[sku]["quantity_sold"] += qty
+                            sku_counter[sku]["order_count"] += 1
+                            sku_counter[sku]["sales_zar"] += price
+                            sku_counter[sku]["purchase_cost_cny"] += float(o.purchase_cost or 0.0)
+                    except Exception:
+                        pass
+
+    # 计算每日走向时序数据
+    trends = []
+    window_gmv_zar = 0.0
+    window_payout_cny = 0.0
+    window_profit_cny = 0.0
+    window_orders_count = 0
+    window_cancelled_count = 0
+
+    for d_str in sorted(date_order_map.keys()):
+        d_orders = date_order_map[d_str]
+        d_count = len(d_orders)
+        window_orders_count += d_count
+        d_gmv = sum(float(x.total_amount or 0.0) for x in d_orders)
+        window_gmv_zar += d_gmv
+
+        d_payout = 0.0
+        d_cost = 0.0
+        d_cancelled = 0
+
+        for x in d_orders:
+            st_ful = x.fulfillment_status or "NEW"
+            is_abn = st_ful in ["CANCELLED_RTO", "cancelled", "returned"]
+            if is_abn:
+                d_cancelled += 1
+                payout = 0.0
+            else:
+                zar_n = (float(x.total_amount or 0.0) * (1.0 - c_rate / 100.0)) - s_fee
+                payout = round(max(0.0, zar_n) * e_rate, 2)
+            d_payout += payout
+
+            p_c = float(x.purchase_cost or 0.0)
+            is_w_m = bool(getattr(x, "is_weight_measured", False))
+            if is_abn and not is_w_m:
+                h_c = 0.0
+            else:
+                o_rate = float(x.air_freight_rate) if (x.air_freight_rate and x.air_freight_rate > 0) else global_air_rate
+                if x.total_weight_g is not None and x.total_weight_g > 0:
+                    h_c = (float(x.total_weight_g) / 1000.0) * o_rate
+                else:
+                    h_c = float(x.independent_head_haul or 0.0)
+            d_cost += (p_c + h_c + float(x.domestic_logistics_fee or 0.0))
+
+        window_cancelled_count += d_cancelled
+        d_profit = round(d_payout - d_cost, 2)
+        window_payout_cny += d_payout
+        window_profit_cny += d_profit
+
+        trends.append({
+            "date": d_str,
+            "date_short": d_str[5:],
+            "orders_count": d_count,
+            "gmv_zar": round(d_gmv, 2),
+            "payout_cny": round(d_payout, 2),
+            "est_profit_cny": d_profit,
+            "cancelled_count": d_cancelled
+        })
+
+    # DoD (日环比) 与 WoW (周同比)
+    today_str = now.strftime("%Y-%m-%d")
+    yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    last_week_today_str = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    today_orders_list = [o for o in all_orders if o.order_date and o.order_date.strftime("%Y-%m-%d") == today_str]
+    yesterday_orders_list = [o for o in all_orders if o.order_date and o.order_date.strftime("%Y-%m-%d") == yesterday_str]
+    last_week_orders_list = [o for o in all_orders if o.order_date and o.order_date.strftime("%Y-%m-%d") == last_week_today_str]
+
+    today_cnt = len(today_orders_list)
+    yesterday_cnt = len(yesterday_orders_list)
+    last_week_cnt = len(last_week_orders_list)
+
+    today_gmv = round(sum(float(x.total_amount or 0.0) for x in today_orders_list), 2)
+    yesterday_gmv = round(sum(float(x.total_amount or 0.0) for x in yesterday_orders_list), 2)
+    last_week_gmv = round(sum(float(x.total_amount or 0.0) for x in last_week_orders_list), 2)
+
+    # 今日预估净利润
+    today_profit = 0.0
+    for x in today_orders_list:
+        st_ful = x.fulfillment_status or "NEW"
+        if st_ful not in ["CANCELLED_RTO", "cancelled", "returned"]:
+            zar_n = (float(x.total_amount or 0.0) * (1.0 - c_rate / 100.0)) - s_fee
+            payout = max(0.0, zar_n) * e_rate
+            p_c = float(x.purchase_cost or 0.0)
+            today_profit += (payout - p_c)
+    today_profit = round(today_profit, 2)
+
+    def calc_pct_change(current: float, prev: float) -> float:
+        if prev == 0:
+            return 100.0 if current > 0 else 0.0
+        return round(((current - prev) / prev) * 100.0, 1)
+
+    dod_order_pct = calc_pct_change(today_cnt, yesterday_cnt)
+    wow_order_pct = calc_pct_change(today_cnt, last_week_cnt)
+    dod_gmv_pct = calc_pct_change(today_gmv, yesterday_gmv)
+    wow_gmv_pct = calc_pct_change(today_gmv, last_week_gmv)
+
+    # 7 阶履约流转漏斗
+    stage_names = [
+        ("NEW", "新订单待采", "📦"),
+        ("PURCHASED", "已采购在途", "🟣"),
+        ("PO_PACKING", "国内PO打包", "📦"),
+        ("SENT_TO_FORWARDER", "已发国内货代", "🟪"),
+        ("AIR_FREIGHT", "国际空运途中", "🛫"),
+        ("ARRIVED_SA", "到达南非", "🛬"),
+        ("COMPLETED", "订单交付完结", "🏁"),
+        ("CANCELLED_RTO", "异常退回/取消", "🚨")
+    ]
+
+    pipeline = []
+    for code, name, icon in stage_names:
+        st_orders = [o for o in all_orders if (o.fulfillment_status or "NEW") == code]
+        cnt = len(st_orders)
+        st_gmv = sum(float(o.total_amount or 0.0) for o in st_orders)
+        
+        stay_days_list = []
+        for o in st_orders:
+            ref_time = o.fulfillment_updated_at or o.order_date or o.created_at
+            if ref_time:
+                diff_d = max(0.0, (now - ref_time).total_seconds() / 86400.0)
+                stay_days_list.append(diff_d)
+        avg_stay = round(sum(stay_days_list) / len(stay_days_list), 1) if stay_days_list else 0.0
+        is_bottleneck = (code in ["NEW", "PO_PACKING"] and avg_stay > 2.0 and cnt > 0)
+        
+        pipeline.append({
+            "status": code,
+            "name_zh": name,
+            "icon": icon,
+            "count": cnt,
+            "total_zar": round(st_gmv, 2),
+            "avg_stay_days": avg_stay,
+            "is_bottleneck": is_bottleneck
+        })
+
+    # SLA 警戒雷达
+    breached_orders = []
+    urgent_12h_orders = []
+    warning_24h_orders = []
+    safe_over24h_orders = []
+
+    unfinished_orders = [
+        o for o in all_orders 
+        if (o.fulfillment_status or "NEW") not in ["COMPLETED", "completed", "delivered", "CANCELLED_RTO", "cancelled", "returned"]
+    ]
+
+    for o in unfinished_orders:
+        d_date = o.dispatch_by_date
+        if not d_date:
+            continue
+        o_dict = {
+            "id": o.id,
+            "order_id": o.order_id,
+            "tracking_id": o.tracking_id or "-",
+            "buyer_name": o.buyer_name or "买家",
+            "deadline": d_date.strftime("%m-%d %H:%M"),
+            "total_amount": o.total_amount,
+            "fulfillment_status": o.fulfillment_status or "NEW"
+        }
+        if d_date < now:
+            diff_h = round((now - d_date).total_seconds() / 3600.0, 1)
+            o_dict["delay_text"] = f"已超时 {diff_h}小时"
+            breached_orders.append(o_dict)
+        else:
+            diff_hours = (d_date - now).total_seconds() / 3600.0
+            diff_h_int = max(1, int(diff_hours))
+            o_dict["remaining_text"] = f"剩余 {diff_h_int}小时"
+            if diff_hours <= 12:
+                urgent_12h_orders.append(o_dict)
+            elif diff_hours <= 24:
+                warning_24h_orders.append(o_dict)
+            else:
+                safe_over24h_orders.append(o_dict)
+
+    sla_radar = {
+        "breached": {"count": len(breached_orders), "orders": breached_orders[:6]},
+        "urgent_12h": {"count": len(urgent_12h_orders), "orders": urgent_12h_orders[:6]},
+        "warning_24h": {"count": len(warning_24h_orders), "orders": warning_24h_orders[:6]},
+        "safe_over24h": {"count": len(safe_over24h_orders), "orders": safe_over24h_orders[:6]}
+    }
+
+    # 爆品动销排行榜 Top 10
+    top_skus = sorted(sku_counter.values(), key=lambda x: (x["quantity_sold"], x["sales_zar"]), reverse=True)[:10]
+    for idx, s_item in enumerate(top_skus, 1):
+        s_item["rank"] = idx
+        s_item["sales_zar"] = round(s_item["sales_zar"], 2)
+        est_sales_cny = s_item["sales_zar"] * (1.0 - c_rate / 100.0) * e_rate
+        p_cost = s_item["purchase_cost_cny"]
+        est_margin = round(((est_sales_cny - p_cost) / est_sales_cny * 100.0), 1) if est_sales_cny > 0 else 0.0
+        s_item["margin_pct"] = max(0.0, est_margin)
+
+    # 运营行动待办清单
+    action_items = []
+    new_orders_cnt = len([o for o in all_orders if (o.fulfillment_status or "NEW") == "NEW"])
+    if new_orders_cnt > 0:
+        action_items.append({
+            "type": "PROCUREMENT_NEEDED",
+            "badge": "急需采购",
+            "badge_color": "rose",
+            "title": f"有 {new_orders_cnt} 笔新订单待安排 1688 采购",
+            "desc": "新订单已同步，尽早采买可避免国内快递延误致使超期",
+            "action_text": "前往采购工作台",
+            "target_perspective": "procurement",
+            "urgency": "critical"
+        })
+
+    danger_cnt = len(urgent_12h_orders) + len(breached_orders)
+    if danger_cnt > 0:
+        action_items.append({
+            "type": "SLA_EXPIRING",
+            "badge": "时效告急",
+            "badge_color": "amber",
+            "title": f"有 {danger_cnt} 笔订单已超期或发货时效不足 12 小时",
+            "desc": "需优先打印 40×30mm 面单或联系货代极速交仓发运",
+            "action_text": "立即筛选处理",
+            "target_perspective": "orders",
+            "urgency": "critical"
+        })
+
+    sa_avail_cnt = len(sa_buffer_items)
+    if sa_avail_cnt > 0:
+        action_items.append({
+            "type": "SA_STOCK_ALLOCATION",
+            "badge": "现货对冲",
+            "badge_color": "emerald",
+            "title": f"南非本地仓现有 {sa_avail_cnt} 件闲置滞留现货",
+            "desc": "新出的同款 SKU 订单可直接在南非本地调拨，免出国内国际运费",
+            "action_text": "进入南非现货池",
+            "target_perspective": "buffer",
+            "urgency": "medium"
+        })
+
+    po_packing_cnt = len([o for o in all_orders if (o.fulfillment_status or "NEW") in ["PURCHASED", "PO_PACKING"] and not o.po_id])
+    if po_packing_cnt > 0:
+        action_items.append({
+            "type": "PO_CONSOLIDATION",
+            "badge": "组包发货",
+            "badge_color": "purple",
+            "title": f"有 {po_packing_cnt} 笔国内就绪订单尚未打包入 PO 批次",
+            "desc": "合并生成新 PO 批次后可统一打印连打面单并录入头程对账",
+            "action_text": "组建新 PO 批次",
+            "target_perspective": "po",
+            "urgency": "normal"
+        })
+
+    # 走势洞察文本
+    recent_trend_slice = trends[-3:] if len(trends) >= 3 else trends
+    if len(recent_trend_slice) >= 2 and recent_trend_slice[-1]["orders_count"] >= recent_trend_slice[-2]["orders_count"]:
+        trend_insight = f"📈 近期订单呈现平稳增长动能，过去 3 天出单活跃；主力动销集中在家居、户外及车载品类，请密切关注供应链备货与空运排产。"
+    else:
+        trend_insight = f"📊 近期出单节奏平稳，建议结合【Makro跟品】与【跟价监控】巡检 Buybox 夺车状态，提升商品曝光与转化率。"
+
+    greeting = f"早安！今日店铺出单动能良好，已有 {today_cnt} 笔新订单，{len(urgent_12h_orders) + len(breached_orders)} 笔临近发货截止，请重点跟进。"
+
+    avg_margin = round((window_profit_cny / window_payout_cny * 100.0), 1) if window_payout_cny > 0 else 0.0
+    avg_order_value = round((window_gmv_zar / window_orders_count), 2) if window_orders_count > 0 else 0.0
+
+    return {
+        "success": True,
+        "scope": {
+            "store_id": store_id,
+            "store_name": store_name,
+            "days": days,
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": now.strftime("%Y-%m-%d")
+        },
+        "greeting": greeting,
+        "trend_insight": trend_insight,
+        "kpi": {
+            "window_orders": window_orders_count,
+            "window_gmv_zar": round(window_gmv_zar, 2),
+            "window_payout_cny": round(window_payout_cny, 2),
+            "window_net_profit_cny": round(window_profit_cny, 2),
+            "avg_net_margin_pct": avg_margin,
+            "avg_order_value_zar": avg_order_value,
+            "today_orders": today_cnt,
+            "today_gmv_zar": today_gmv,
+            "today_profit_cny": today_profit,
+            "dod_order_pct": dod_order_pct,
+            "wow_order_pct": wow_order_pct,
+            "dod_gmv_pct": dod_gmv_pct,
+            "wow_gmv_pct": wow_gmv_pct,
+            "danger_orders_count": danger_cnt,
+            "window_cancelled_count": window_cancelled_count
+        },
+        "trends": trends,
+        "pipeline": pipeline,
+        "sla_radar": sla_radar,
+        "top_skus": top_skus,
+        "action_items": action_items
+    }

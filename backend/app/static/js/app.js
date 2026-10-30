@@ -535,8 +535,15 @@ const app = createApp({
             selectedIds: [],
             indicators: {},
             financial_summary: {},
-            activePerspective: 'orders', // 'orders' | 'po'
+            activePerspective: 'dashboard', // 'dashboard' | 'orders' | 'po'
             poSearchQuery: ''
+          },
+          orderDashboard: {
+            loading: false,
+            days: 14,
+            data: null,
+            activeChartMetric: 'orders', // 'orders' | 'gmv' | 'profit'
+            hoveredPoint: null
           },
           orderStatusHistoryModal: {
             open: false,

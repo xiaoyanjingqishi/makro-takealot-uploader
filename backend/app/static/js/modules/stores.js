@@ -22,7 +22,11 @@ export const storesMethods = {
       } else if (this.currentTab === 'store_audits') {
         this.loadStoreAudits(1);
       } else if (this.currentTab === 'orders') {
-        this.loadStoreOrders(1);
+        if (this.orders?.activePerspective === 'dashboard') {
+          this.loadOrderDashboard();
+        } else {
+          this.loadStoreOrders(1);
+        }
       }
     }
   },

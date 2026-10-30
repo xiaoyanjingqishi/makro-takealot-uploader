@@ -475,7 +475,11 @@ export const coreMethods = {
       this.loadStoreAudits(1);
     }
     if (tabId === 'orders') {
-      this.loadStoreOrders(1);
+      if (this.orders?.activePerspective === 'dashboard') {
+        this.loadOrderDashboard();
+      } else {
+        this.loadStoreOrders(1);
+      }
     }
     if (tabId === 'users' && this.currentUser && this.currentUser.role === 'ADMIN') {
       this.loadUsers();

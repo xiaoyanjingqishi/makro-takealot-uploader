@@ -550,13 +550,19 @@ export const ordersMethods = {
     return map[st] || 'bg-slate-100 text-slate-700 border-slate-200';
   },
 
-  // 视角切换: 订单明细视角 vs PO 批次核算视角
+  // 视角切换: 运营大盘 / 订单明细 / PO批次 / 南非现货 / 采购工作台
   switchOrdersPerspective(persp) {
     this.orders.activePerspective = persp;
-    if (persp === 'po') {
+    if (persp === 'dashboard') {
+      this.loadOrderDashboard();
+    } else if (persp === 'po') {
       this.loadPoList();
+    } else if (persp === 'buffer') {
+      this.loadBufferStocks();
+    } else if (persp === 'procurement') {
+      this.loadProcurementSummary();
     } else {
-      this.loadStoreOrders(this.orders.page);
+      this.loadStoreOrders(this.orders.page || 1);
     }
   },
 
@@ -1188,6 +1194,99 @@ export const ordersMethods = {
       'CANCELLED_RTO': '异常退回'
     };
     return map[st] || st;
+  },
+
+  // ================= 运营走向大盘 (Order Operations Dashboard) =================
+  async loadOrderDashboard(days) {
+    if (!this.selectedStoreId) return;
+    this.orderDashboard.loading = true;
+    try {
+      const d = days || this.orderDashboard.days || 14;
+      this.orderDashboard.days = d;
+      const cfg = this.orderFinanceConfig || {};
+      const url = `/api/store-orders/operations-dashboard?store_id=${this.selectedStoreId}&days=${d}&commission_rate=${cfg.commission_rate ?? 17.5}&shipping_fee_zar=${cfg.shipping_fee_zar ?? 70.0}&exchange_rate=${cfg.exchange_rate ?? 0.39}`;
+      const res = await fetch(url, { headers: this.getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        this.orderDashboard.data = data;
+      } else {
+        this.showToast('加载运营大盘失败', 'error');
+      }
+    } catch (e) {
+      console.error('加载运营大盘异常:', e);
+      this.showToast(`加载运营大盘异常: ${e.message}`, 'error');
+    } finally {
+      this.orderDashboard.loading = false;
+    }
+  },
+
+  switchDashboardTimeRange(days) {
+    this.orderDashboard.days = days;
+    this.loadOrderDashboard(days);
+  },
+
+  switchDashboardChartMetric(metric) {
+    this.orderDashboard.activeChartMetric = metric;
+  },
+
+  jumpFromDashboardToAction(action) {
+    if (!action) return;
+    const target = action.target_perspective || action;
+    this.switchOrdersPerspective(target);
+  },
+
+  filterOrdersFromDashboard(statusFilter) {
+    if (statusFilter && statusFilter !== 'all') {
+      this.orders.fulfillment_status = statusFilter;
+    } else {
+      this.orders.fulfillment_status = 'all';
+    }
+    this.switchOrdersPerspective('orders');
+  },
+
+  getSvgChartData(trends, metric, width = 960, height = 220, padX = 45, padY = 25) {
+    if (!trends || trends.length === 0) return { linePath: '', areaPath: '', points: [], maxVal: 1 };
+    
+    let key = 'orders_count';
+    if (metric === 'gmv') key = 'gmv_zar';
+    else if (metric === 'profit') key = 'est_profit_cny';
+
+    const vals = trends.map(t => Number(t[key] || 0));
+    const maxVal = Math.max(...vals, 1);
+    const usableW = width - padX * 2;
+    const usableH = height - padY * 2;
+    const n = trends.length;
+
+    const points = trends.map((t, idx) => {
+      const v = Number(t[key] || 0);
+      const x = Math.round(padX + (idx / Math.max(1, n - 1)) * usableW);
+      const y = Math.round(height - padY - (v / maxVal) * usableH);
+      return {
+        x,
+        y,
+        val: v,
+        date: t.date,
+        dateShort: t.date_short,
+        raw: t
+      };
+    });
+
+    let linePath = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+      const p0 = points[i - 1];
+      const p1 = points[i];
+      const cx = Math.round((p0.x + p1.x) / 2);
+      linePath += ` C ${cx} ${p0.y}, ${cx} ${p1.y}, ${p1.x} ${p1.y}`;
+    }
+
+    const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`;
+
+    return {
+      linePath,
+      areaPath,
+      points,
+      maxVal
+    };
   }
 };
 
