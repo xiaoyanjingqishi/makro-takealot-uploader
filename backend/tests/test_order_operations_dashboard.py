@@ -52,7 +52,7 @@ def test_operations_dashboard_endpoint_structure():
 
     # 2. 验证 KPI 矩阵
     kpi = data.get("kpi", {})
-    for key in ["window_orders", "window_gmv_zar", "window_payout_cny", "window_net_profit_cny", "avg_net_margin_pct", "avg_order_value_zar", "today_orders", "today_gmv_zar", "dod_order_pct", "wow_order_pct"]:
+    for key in ["window_orders", "window_gmv_zar", "window_payout_cny", "window_net_profit_cny", "avg_net_margin_pct", "avg_order_value_zar", "today_orders", "today_gmv_zar", "dod_order_pct", "wow_order_pct", "danger_orders_count"]:
         assert key in kpi, f"Missing KPI key: {key}"
 
     # 3. 验证走向时序数组
@@ -76,9 +76,13 @@ def test_operations_dashboard_endpoint_structure():
     assert "AIR_FREIGHT" in stage_codes
     assert "COMPLETED" in stage_codes
 
-    # 5. 验证 SLA 发货四色雷达
+    # 5. 验证 SLA 发货四色雷达 (跨境梯队)
     sla_radar = data.get("sla_radar", {})
     assert "breached" in sla_radar
+    assert "urgent_under_5d" in sla_radar
+    assert "warning_5_to_15d" in sla_radar
+    assert "safe_over_15d" in sla_radar
+    # 兼容性别名
     assert "urgent_12h" in sla_radar
     assert "warning_24h" in sla_radar
     assert "safe_over24h" in sla_radar
@@ -118,37 +122,109 @@ def test_operations_dashboard_days_window():
 def test_operations_dashboard_sla_classification():
     headers = setup_auth_override()
     db = SessionLocal()
-    store = db.query(Store).filter(Store.name == "hzh").first() or db.query(Store).first()
     
-    test_order_urgent = None
+    # 创建独立隔离店铺，杜绝历史订单干扰分类测试
+    test_store = Store(name="test_sla_isolated_store", seller_id="test_sla_seller")
+    db.add(test_store)
+    db.commit()
+    db.refresh(test_store)
+
+    test_orders = []
     try:
         now = datetime.now()
-        # 创建一个发货截止在 5 小时以后的订单 (应落入 urgent_12h)
-        test_order_urgent = MakroOrder(
-            store_id=store.id,
+        # 1. 逾期订单 (< 0 天)
+        o_breached = MakroOrder(
+            store_id=test_store.id,
             seller_id="test_seller",
-            order_id="TEST_SLA_URGENT_999",
+            order_id="TEST_SLA_BREACHED_001",
             status="Processing",
             fulfillment_status="NEW",
-            total_amount=500.0,
-            order_date=now - timedelta(days=1),
-            dispatch_by_date=now + timedelta(hours=5)
+            total_amount=100.0,
+            order_date=now - timedelta(days=5),
+            dispatch_by_date=now - timedelta(days=2)
         )
-        db.add(test_order_urgent)
+        # 2. 紧急临界订单 (< 5 天)
+        o_urgent = MakroOrder(
+            store_id=test_store.id,
+            seller_id="test_seller",
+            order_id="TEST_SLA_URGENT_002",
+            status="Processing",
+            fulfillment_status="NEW",
+            total_amount=200.0,
+            order_date=now - timedelta(days=1),
+            dispatch_by_date=now + timedelta(days=3)
+        )
+        # 3. 临界预警订单 (5 - 15 天)
+        o_warning = MakroOrder(
+            store_id=test_store.id,
+            seller_id="test_seller",
+            order_id="TEST_SLA_WARNING_003",
+            status="Processing",
+            fulfillment_status="NEW",
+            total_amount=300.0,
+            order_date=now - timedelta(days=1),
+            dispatch_by_date=now + timedelta(days=10)
+        )
+        # 4. 时效充裕订单 (> 15 天)
+        o_safe = MakroOrder(
+            store_id=test_store.id,
+            seller_id="test_seller",
+            order_id="TEST_SLA_SAFE_004",
+            status="Processing",
+            fulfillment_status="NEW",
+            total_amount=400.0,
+            order_date=now - timedelta(days=1),
+            dispatch_by_date=now + timedelta(days=20)
+        )
+        test_orders = [o_breached, o_urgent, o_warning, o_safe]
+        for o in test_orders:
+            db.add(o)
         db.commit()
-        db.refresh(test_order_urgent)
+        for o in test_orders:
+            db.refresh(o)
 
-        resp = client.get(f"/api/store-orders/operations-dashboard?store_id={store.id}&days=7", headers=headers)
+        resp = client.get(f"/api/store-orders/operations-dashboard?store_id={test_store.id}&days=7", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        urgent_orders = data["sla_radar"]["urgent_12h"]["orders"]
-        matched = [o for o in urgent_orders if o["order_id"] == "TEST_SLA_URGENT_999"]
-        assert len(matched) == 1, "Urgent order not found in urgent_12h radar"
-        assert "剩余" in matched[0]["remaining_text"]
+        radar = data["sla_radar"]
+
+        # 检查各梯队精确计数
+        assert radar["breached"]["count"] == 1
+        assert radar["urgent_under_5d"]["count"] == 1
+        assert radar["warning_5_to_15d"]["count"] == 1
+        assert radar["safe_over_15d"]["count"] == 1
+
+        # 检查逾期
+        breached_ids = [x["order_id"] for x in radar["breached"]["orders"]]
+        assert "TEST_SLA_BREACHED_001" in breached_ids
+        breached_item = radar["breached"]["orders"][0]
+        assert "已超时" in breached_item["delay_text"]
+
+        # 检查紧急临界 (<5天)
+        urgent_ids = [x["order_id"] for x in radar["urgent_under_5d"]["orders"]]
+        assert "TEST_SLA_URGENT_002" in urgent_ids
+        urgent_item = radar["urgent_under_5d"]["orders"][0]
+        assert "剩余" in urgent_item["remaining_text"]
+        assert "天" in urgent_item["remaining_text"]
+
+        # 检查临界预警 (5-15天)
+        warning_ids = [x["order_id"] for x in radar["warning_5_to_15d"]["orders"]]
+        assert "TEST_SLA_WARNING_003" in warning_ids
+
+        # 检查时效充裕 (>15天)
+        safe_ids = [x["order_id"] for x in radar["safe_over_15d"]["orders"]]
+        assert "TEST_SLA_SAFE_004" in safe_ids
+
+        # 检查 KPI danger_orders_count = breached (1) + urgent_under_5d (1) = 2
+        assert data["kpi"]["danger_orders_count"] == 2
+
     finally:
-        if test_order_urgent and test_order_urgent.id:
-            db.query(MakroOrder).filter(MakroOrder.id == test_order_urgent.id).delete()
-            db.commit()
+        for o in test_orders:
+            if o and o.id:
+                db.query(MakroOrder).filter(MakroOrder.id == o.id).delete()
+        if test_store and test_store.id:
+            db.query(Store).filter(Store.id == test_store.id).delete()
+        db.commit()
         db.close()
 
 if __name__ == "__main__":
@@ -158,5 +234,5 @@ if __name__ == "__main__":
     test_operations_dashboard_days_window()
     print("✓ PASSED: Operations dashboard time range window switching (7, 14, 30 days)")
     test_operations_dashboard_sla_classification()
-    print("✓ PASSED: Operations dashboard SLA radar urgency classification")
+    print("✓ PASSED: Operations dashboard SLA radar cross-border classification (<0d, <5d, 5-15d, >15d)")
     print("\n🎉 ALL OPERATIONS DASHBOARD TESTS PASSED PERFECTLY!")

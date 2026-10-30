@@ -2501,11 +2501,11 @@ def get_operations_dashboard(
             "is_bottleneck": is_bottleneck
         })
 
-    # SLA 警戒雷达
+    # SLA 警戒雷达 (跨境物流时效梯队: >15天 / 5-15天 / <5天 / 已逾期)
     breached_orders = []
-    urgent_12h_orders = []
-    warning_24h_orders = []
-    safe_over24h_orders = []
+    urgent_under_5d_orders = []
+    warning_5_to_15d_orders = []
+    safe_over_15d_orders = []
 
     unfinished_orders = [
         o for o in all_orders 
@@ -2525,26 +2525,44 @@ def get_operations_dashboard(
             "total_amount": o.total_amount,
             "fulfillment_status": o.fulfillment_status or "NEW"
         }
+        diff_days = (d_date - now).total_seconds() / 86400.0
         if d_date < now:
-            diff_h = round((now - d_date).total_seconds() / 3600.0, 1)
-            o_dict["delay_text"] = f"已超时 {diff_h}小时"
+            diff_d_abs = abs(round(diff_days, 1))
+            if diff_d_abs >= 1.0:
+                o_dict["delay_text"] = f"已超时 {diff_d_abs}天"
+            else:
+                diff_h = max(0.1, round(abs((now - d_date).total_seconds() / 3600.0), 1))
+                o_dict["delay_text"] = f"已超时 {diff_h}小时"
             breached_orders.append(o_dict)
         else:
-            diff_hours = (d_date - now).total_seconds() / 3600.0
-            diff_h_int = max(1, int(diff_hours))
-            o_dict["remaining_text"] = f"剩余 {diff_h_int}小时"
-            if diff_hours <= 12:
-                urgent_12h_orders.append(o_dict)
-            elif diff_hours <= 24:
-                warning_24h_orders.append(o_dict)
+            if diff_days >= 1.0:
+                o_dict["remaining_text"] = f"剩余 {round(diff_days, 1)}天"
             else:
-                safe_over24h_orders.append(o_dict)
+                diff_h = max(1, int((d_date - now).total_seconds() / 3600.0))
+                o_dict["remaining_text"] = f"剩余 {diff_h}小时"
+            
+            if diff_days < 5.0:
+                urgent_under_5d_orders.append(o_dict)
+            elif diff_days <= 15.0:
+                warning_5_to_15d_orders.append(o_dict)
+            else:
+                safe_over_15d_orders.append(o_dict)
+
+    # 按截止时间紧迫程度排序（最临近超期的排在最前）
+    breached_orders.sort(key=lambda x: x.get("deadline", ""))
+    urgent_under_5d_orders.sort(key=lambda x: x.get("deadline", ""))
+    warning_5_to_15d_orders.sort(key=lambda x: x.get("deadline", ""))
+    safe_over_15d_orders.sort(key=lambda x: x.get("deadline", ""))
 
     sla_radar = {
-        "breached": {"count": len(breached_orders), "orders": breached_orders[:6]},
-        "urgent_12h": {"count": len(urgent_12h_orders), "orders": urgent_12h_orders[:6]},
-        "warning_24h": {"count": len(warning_24h_orders), "orders": warning_24h_orders[:6]},
-        "safe_over24h": {"count": len(safe_over24h_orders), "orders": safe_over24h_orders[:6]}
+        "breached": {"count": len(breached_orders), "orders": breached_orders[:10]},
+        "urgent_under_5d": {"count": len(urgent_under_5d_orders), "orders": urgent_under_5d_orders[:10]},
+        "warning_5_to_15d": {"count": len(warning_5_to_15d_orders), "orders": warning_5_to_15d_orders[:10]},
+        "safe_over_15d": {"count": len(safe_over_15d_orders), "orders": safe_over_15d_orders[:10]},
+        # 兼容性别名供向下兼容
+        "urgent_12h": {"count": len(urgent_under_5d_orders), "orders": urgent_under_5d_orders[:10]},
+        "warning_24h": {"count": len(warning_5_to_15d_orders), "orders": warning_5_to_15d_orders[:10]},
+        "safe_over24h": {"count": len(safe_over_15d_orders), "orders": safe_over_15d_orders[:10]}
     }
 
     # 爆品动销排行榜 Top 10
@@ -2572,13 +2590,13 @@ def get_operations_dashboard(
             "urgency": "critical"
         })
 
-    danger_cnt = len(urgent_12h_orders) + len(breached_orders)
+    danger_cnt = len(urgent_under_5d_orders) + len(breached_orders)
     if danger_cnt > 0:
         action_items.append({
             "type": "SLA_EXPIRING",
             "badge": "时效告急",
             "badge_color": "amber",
-            "title": f"有 {danger_cnt} 笔订单已超期或发货时效不足 12 小时",
+            "title": f"有 {danger_cnt} 笔订单已超期或发货时效不足 5 天",
             "desc": "需优先打印 40×30mm 面单或联系货代极速交仓发运",
             "action_text": "立即筛选处理",
             "target_perspective": "orders",
@@ -2618,7 +2636,7 @@ def get_operations_dashboard(
     else:
         trend_insight = f"📊 近期出单节奏平稳，建议结合【Makro跟品】与【跟价监控】巡检 Buybox 夺车状态，提升商品曝光与转化率。"
 
-    greeting = f"早安！今日店铺出单动能良好，已有 {today_cnt} 笔新订单，{len(urgent_12h_orders) + len(breached_orders)} 笔临近发货截止，请重点跟进。"
+    greeting = f"早安！今日店铺出单动能良好，已有 {today_cnt} 笔新订单，{danger_cnt} 笔临近发货截止 (<5天/逾期)，请重点跟进。"
 
     avg_margin = round((window_profit_cny / window_payout_cny * 100.0), 1) if window_payout_cny > 0 else 0.0
     avg_order_value = round((window_gmv_zar / window_orders_count), 2) if window_orders_count > 0 else 0.0

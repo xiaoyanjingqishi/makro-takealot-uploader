@@ -1244,27 +1244,72 @@ export const ordersMethods = {
     this.switchOrdersPerspective('orders');
   },
 
-  getSvgChartData(trends, metric, width = 960, height = 220, padX = 45, padY = 25) {
-    if (!trends || trends.length === 0) return { linePath: '', areaPath: '', points: [], maxVal: 1 };
+  getSvgChartData(trends, metric, width = 960, height = 200, padX = 52, padTop = 40, padBottom = 32) {
+    if (!trends || trends.length === 0) {
+      return { linePath: '', areaPath: '', points: [], yTicks: [], maxVal: 1, rawMax: 0 };
+    }
     
     let key = 'orders_count';
     if (metric === 'gmv') key = 'gmv_zar';
     else if (metric === 'profit') key = 'est_profit_cny';
 
+    const formatTick = (val, m) => {
+      if (m === 'gmv') return `R${Math.round(val).toLocaleString()}`;
+      if (m === 'profit') return `¥${Math.round(val).toLocaleString()}`;
+      return `${Math.round(val)}单`;
+    };
+
     const vals = trends.map(t => Number(t[key] || 0));
-    const maxVal = Math.max(...vals, 1);
+    const rawMax = Math.max(...vals, 1);
+    // 留出 35% 顶部安全净空，确保最高点不顶格，留出充足视觉空间与常驻微标展示
+    let maxVal = Math.ceil(rawMax * 1.35);
+    if (metric === 'orders' && maxVal < 5) maxVal = 5;
+    if (maxVal <= 0) maxVal = 1;
+
     const usableW = width - padX * 2;
-    const usableH = height - padY * 2;
+    const usableH = height - padTop - padBottom;
     const n = trends.length;
+
+    // Y 轴 3 档基准刻度与水平标尺线
+    const midVal = Math.round(maxVal / 2);
+    const yTicks = [
+      {
+        val: maxVal,
+        y: padTop,
+        label: formatTick(maxVal, metric)
+      },
+      {
+        val: midVal,
+        y: Math.round(padTop + usableH / 2),
+        label: formatTick(midVal, metric)
+      },
+      {
+        val: 0,
+        y: height - padBottom,
+        label: metric === 'gmv' ? 'R0' : (metric === 'profit' ? '¥0' : '0')
+      }
+    ];
 
     const points = trends.map((t, idx) => {
       const v = Number(t[key] || 0);
       const x = Math.round(padX + (idx / Math.max(1, n - 1)) * usableW);
-      const y = Math.round(height - padY - (v / maxVal) * usableH);
+      const y = Math.round(height - padBottom - (v / maxVal) * usableH);
+
+      // X 轴日期智能抽样，防止 30 天日期文字挤压重叠
+      let showLabel = true;
+      if (n > 16) {
+        showLabel = (idx % 3 === 0) || (idx === n - 1);
+      } else if (n > 8) {
+        showLabel = (idx % 2 === 0) || (idx === n - 1);
+      }
+
       return {
         x,
         y,
         val: v,
+        valFormatted: metric === 'gmv' ? `R${v.toFixed(2)}` : (metric === 'profit' ? `¥${v.toFixed(2)}` : `${v}单`),
+        isPeak: (v === rawMax && rawMax > 0),
+        showLabel,
         date: t.date,
         dateShort: t.date_short,
         raw: t
@@ -1279,13 +1324,18 @@ export const ordersMethods = {
       linePath += ` C ${cx} ${p0.y}, ${cx} ${p1.y}, ${p1.x} ${p1.y}`;
     }
 
-    const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padY} L ${points[0].x} ${height - padY} Z`;
+    const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padBottom} L ${points[0].x} ${height - padBottom} Z`;
 
     return {
       linePath,
       areaPath,
       points,
-      maxVal
+      yTicks,
+      rawMax,
+      maxVal,
+      padX,
+      padTop,
+      padBottom
     };
   }
 };
