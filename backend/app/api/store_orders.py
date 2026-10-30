@@ -834,6 +834,40 @@ def update_order_procurement_cost(
     if req.domestic_tracking_no is not None:
         order.domestic_tracking_no = req.domestic_tracking_no.strip()
 
+    # 保持与 procurement_records_json 强一致同步 (专项 3)
+    records = []
+    if order.procurement_records_json:
+        try:
+            records = json.loads(order.procurement_records_json)
+        except Exception:
+            records = []
+    
+    if not records:
+        records = [{
+            "purchase_order_sn": order.purchase_order_sn or "",
+            "purchase_sn": order.purchase_order_sn or "",
+            "sn": order.purchase_order_sn or "",
+            "purchase_cost": float(order.purchase_cost or 0.0),
+            "cost": float(order.purchase_cost or 0.0),
+            "domestic_tracking": order.domestic_tracking_no or "",
+            "tracking_no": order.domestic_tracking_no or "",
+            "notes": order.purchase_notes or ""
+        }]
+    else:
+        records[0]["purchase_order_sn"] = order.purchase_order_sn or ""
+        records[0]["purchase_sn"] = order.purchase_order_sn or ""
+        records[0]["sn"] = order.purchase_order_sn or ""
+        records[0]["purchase_cost"] = float(order.purchase_cost or 0.0)
+        records[0]["cost"] = float(order.purchase_cost or 0.0)
+        records[0]["domestic_tracking"] = order.domestic_tracking_no or ""
+        records[0]["tracking_no"] = order.domestic_tracking_no or ""
+        records[0]["notes"] = order.purchase_notes or ""
+        if len(records) > 1:
+            total_sum = round(sum(float(r.get("purchase_cost", 0) or r.get("cost", 0)) for r in records), 2)
+            order.purchase_cost = total_sum
+
+    order.procurement_records_json = json.dumps(records, ensure_ascii=False)
+
     db.add(MakroOrderStatusLog(
         order_id=order.id,
         order_sn=order.order_id,
@@ -853,6 +887,7 @@ def update_order_procurement_cost(
         "purchase_order_sn": order.purchase_order_sn,
         "purchase_notes": order.purchase_notes,
         "domestic_tracking_no": order.domestic_tracking_no,
+        "procurement_records": records,
         "message": f"订单 #{order.order_id} 采购信息与单号已保存"
     }
 
@@ -1167,10 +1202,26 @@ def create_po_and_assign_orders(
     # 默认自动带入所选订单的累计重量作为参考，可自由修改为打包后的整箱过秤重量
     pkg_weight = round(float(req.package_weight_kg), 2) if (req.package_weight_kg is not None and req.package_weight_kg > 0) else orders_weight_kg
 
+    now = datetime.now()
+    user_name = current_user.username if current_user else "MANUAL"
+    init_timeline = [{
+        "status": "正在打包",
+        "from_status": "新建批次",
+        "from_status_zh": "新建批次",
+        "to_status": "正在打包",
+        "to_status_zh": "正在打包",
+        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "interval_from_prev": "创建批次",
+        "duration": "创建批次",
+        "duration_seconds": 0,
+        "operator": user_name
+    }]
+
     po = MakroPurchaseOrder(
         po_number=po_sn,
         store_id=req.store_id,
-        name=req.name or f"南非空运批次 {datetime.now().strftime('%m月%d日')}",
+        name=req.name or f"南非空运批次 {now.strftime('%m月%d日')}",
         forwarder_name=req.forwarder_name or "",
         air_waybill_no=req.air_waybill_no or "",
         domestic_logistics_fee=max(0.0, round(float(req.domestic_logistics_fee or 0.0), 2)),
@@ -1181,7 +1232,9 @@ def create_po_and_assign_orders(
         box_height_cm=max(0.0, round(float(req.box_height_cm or 0.0), 1)),
         package_weight_kg=max(0.0, pkg_weight),
         notes=req.notes or "",
-        status="PLANNING"
+        status="正在打包",
+        status_updated_at=now,
+        status_timeline_json=json.dumps(init_timeline, ensure_ascii=False)
     )
     db.add(po)
     db.flush()
@@ -1556,13 +1609,27 @@ def list_purchase_orders(
             except Exception:
                 pass
 
+        st_raw = p.status or "正在打包"
+        st_map = {
+            "PLANNING": "正在打包",
+            "PACKING": "正在打包",
+            "PO_PACKING": "正在打包",
+            "SENT_TO_FORWARDER": "发送货代",
+            "AIR_FREIGHT": "货代空运",
+            "ARRIVED_SA": "到达南非",
+            "COMPLETED": "到达南非"
+        }
+        cur_st = st_map.get(st_raw, st_raw)
+
         results.append({
             "id": p.id,
             "po_number": p.po_number,
             "name": p.name,
-            "status": p.status or "PACKING",
-            "status_zh": format_status_zh(p.status or "PACKING"),
+            "status": cur_st,
+            "po_status": cur_st,
+            "status_zh": cur_st,
             "status_updated_at": p.status_updated_at.strftime("%Y-%m-%d %H:%M:%S") if p.status_updated_at else (p.created_at.strftime("%Y-%m-%d %H:%M:%S") if p.created_at else ""),
+            "duration_text": time_in_status_str,
             "time_in_current_status": time_in_status_str,
             "status_summary": status_summary,
             "status_timeline": timeline,
@@ -1668,6 +1735,47 @@ def batch_update_po_orders_fulfillment(
             operator=operator_name,
             notes=f"PO [{po.po_number}] 批量同步流转 (保持异常退回单不变)"
         ))
+
+    # 联动同步更新 PO 批次自身状态与时间轴
+    target_po_st = None
+    if req.target_status == "PO_PACKING":
+        target_po_st = "正在打包"
+    elif req.target_status == "SENT_TO_FORWARDER":
+        target_po_st = "发送货代"
+    elif req.target_status == "AIR_FREIGHT":
+        target_po_st = "货代空运"
+    elif req.target_status in ["ARRIVED_SA", "SA_PICKUP", "COMPLETED"]:
+        target_po_st = "到达南非"
+
+    if target_po_st and po.status != target_po_st:
+        old_po_st = po.status or "正在打包"
+        last_updated = po.status_updated_at or po.created_at or now
+        delta_sec = max(0, (now - last_updated).total_seconds())
+        dur_str = format_duration(delta_sec)
+        
+        timeline = []
+        if po.status_timeline_json:
+            try:
+                timeline = json.loads(po.status_timeline_json)
+            except Exception:
+                pass
+        
+        timeline.append({
+            "status": target_po_st,
+            "from_status": old_po_st,
+            "from_status_zh": old_po_st,
+            "to_status": target_po_st,
+            "to_status_zh": target_po_st,
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "interval_from_prev": dur_str,
+            "duration": dur_str,
+            "duration_seconds": int(delta_sec),
+            "operator": operator_name
+        })
+        po.status = target_po_st
+        po.status_updated_at = now
+        po.status_timeline_json = json.dumps(timeline, ensure_ascii=False)
 
     db.commit()
     return {

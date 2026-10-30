@@ -143,8 +143,10 @@ export const ordersMethods = {
     }
   },
 
-  // 行内保存单笔订单采购成本与快递单号
+  // 行内显式保存单笔订单采购信息与成本 (防误触优化)
   async saveOrderProcurementCost(order) {
+    if (!order) return;
+    order._saving = true;
     try {
       const res = await fetch('/api/store-orders/update-procurement-cost', {
         method: 'PUT',
@@ -160,13 +162,19 @@ export const ordersMethods = {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        this.showToast(`✅ 订单 #${order.order_id} 采购成本与单号已保存`, 'success');
+        order._dirty = false;
+        if (data.procurement_records) {
+          order.procurement_records = data.procurement_records;
+        }
+        this.showToast(`✅ 订单 #${order.order_id} 采购信息与成本已成功保存`, 'success');
         await this.loadStoreOrders(this.orders.page);
       } else {
         this.showToast(`❌ 保存失败: ${data.detail || data.message || '未知错误'}`, 'error');
       }
     } catch (e) {
       this.showToast('保存采购信息网络异常: ' + e.message, 'error');
+    } finally {
+      order._saving = false;
     }
   },
 
@@ -313,8 +321,10 @@ export const ordersMethods = {
     this.poListModal.open = true;
   },
 
-  // 行内快速更新 PO 信息 (国内快递费、头程费、损耗费、提单号等)
+  // 显式保存 PO 批次信息 (国内快递费、头程费、损耗费、箱规与提单号等，防误触设计)
   async updatePoDetails(po) {
+    if (!po) return;
+    po._saving = true;
     try {
       const res = await fetch(`/api/store-orders/po/update/${po.id}`, {
         method: 'PUT',
@@ -335,15 +345,22 @@ export const ordersMethods = {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        this.showToast(`✅ PO [${po.po_number}] 箱规、实重与费用已更新`, 'success');
+        po._dirty = false;
+        this.showToast(`✅ PO [${po.po_number}] 箱规、实重与费用参数已成功保存`, 'success');
         await this.loadPoList();
         await this.loadStoreOrders(this.orders.page);
       } else {
-        this.showToast(`❌ 更新 PO 失败: ${data.detail || data.message || '未知错误'}`, 'error');
+        this.showToast(`❌ 保存 PO 失败: ${data.detail || data.message || '未知错误'}`, 'error');
       }
     } catch (e) {
-      this.showToast('更新 PO 网络异常: ' + e.message, 'error');
+      this.showToast('保存 PO 批次网络异常: ' + e.message, 'error');
+    } finally {
+      po._saving = false;
     }
+  },
+
+  async savePoDetailsWithFeedback(po) {
+    return this.updatePoDetails(po);
   },
 
   // PO 内所有订单一键批量流转
