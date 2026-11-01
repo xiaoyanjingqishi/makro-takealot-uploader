@@ -28,6 +28,9 @@ export const repriceMethods = {
       if (this.reprice.search && this.reprice.search.trim()) {
         url += `&search=${encodeURIComponent(this.reprice.search.trim())}`;
       }
+      if (this.reprice.has_orders && this.reprice.has_orders !== 'ALL') {
+        url += `&has_orders=${encodeURIComponent(this.reprice.has_orders)}`;
+      }
       if (this.reprice.min_price !== '' && this.reprice.min_price !== null && this.reprice.min_price !== undefined) {
         url += `&min_my_price=${encodeURIComponent(this.reprice.min_price)}`;
       }
@@ -166,6 +169,12 @@ export const repriceMethods = {
   },
 
   // 5. 来源筛选切换 (支持 Toggle 反选)
+  // 出单状态筛选切换 (支持 Toggle 反选)
+  changeRepriceHasOrders(hasOrders) {
+    this.reprice.has_orders = this.reprice.has_orders === hasOrders ? 'ALL' : hasOrders;
+    this.loadRepriceItems(1);
+  },
+
   changeRepriceSource(sourceType) {
     this.reprice.source_type = this.reprice.source_type === sourceType ? 'ALL' : sourceType;
     this.loadRepriceItems(1);

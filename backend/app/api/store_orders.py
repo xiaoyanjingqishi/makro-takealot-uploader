@@ -232,7 +232,7 @@ class CreateBufferStockRequest(BaseModel):
     store_id: int
     sku_id: str
     fsn: Optional[str] = None
-    title: str
+    title: Optional[str] = None
     image_url: Optional[str] = None
     quantity: int = 1
     location: str = "SA_WAREHOUSE"
@@ -2317,26 +2317,149 @@ def get_procurement_summary(
         "items": items
     }
 
-@router.post("/buffer-stocks/create", summary="手动录入海外现货或盘点库存")
+@router.get("/buffer-stocks/lookup-sku", summary="根据 SKU 智能检索商品信息与历史现货数据")
+def lookup_sku_for_buffer_stock(
+    store_id: int = Query(..., description="店铺 ID"),
+    sku: str = Query(..., description="商品 SKU"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    _verify_store_access(current_user, store_id, db)
+    sku_clean = sku.strip()
+    if not sku_clean:
+        raise HTTPException(status_code=400, detail="SKU 不能为空")
+
+    title = ""
+    image_url = ""
+    fsn = ""
+    source = ""
+    reference_cost = 0.0
+
+    # 1. 查询 MakroListing (官方店铺在线商品)
+    listing = db.query(MakroListing).filter(
+        MakroListing.sku_id.ilike(sku_clean),
+        MakroListing.store_id == store_id
+    ).first()
+    if not listing:
+        listing = db.query(MakroListing).filter(MakroListing.sku_id.ilike(sku_clean)).first()
+
+    if listing:
+        title = listing.title or ""
+        image_url = listing.image_url or ""
+        fsn = listing.product_id or ""
+        source = "LISTING"
+
+    # 2. 若未找到，查询 MakroPiggybackItem
+    if not title:
+        piggy = db.query(MakroPiggybackItem).filter(
+            MakroPiggybackItem.seller_sku.ilike(sku_clean),
+            MakroPiggybackItem.store_id == store_id
+        ).first()
+        if not piggy:
+            piggy = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.seller_sku.ilike(sku_clean)).first()
+        if piggy:
+            title = piggy.title or piggy.title_zh or ""
+            image_url = piggy.image_url or ""
+            fsn = piggy.makro_product_id or ""
+            source = "PIGGYBACK"
+
+    # 3. 若仍未找到，从 MakroOrder 历史订单中检索
+    if not title:
+        orders = db.query(MakroOrder).filter(
+            MakroOrder.store_id == store_id,
+            MakroOrder.raw_items_json.isnot(None)
+        ).order_by(MakroOrder.id.desc()).all()
+        for o in orders:
+            if o.raw_items_json and sku_clean.lower() in o.raw_items_json.lower():
+                try:
+                    items = json.loads(o.raw_items_json)
+                    for it in items:
+                        if (it.get('sku') or '').lower() == sku_clean.lower() or (it.get('seller_sku') or '').lower() == sku_clean.lower():
+                            pd = it.get('product_details') or {}
+                            title = pd.get('title') or it.get('title') or ""
+                            image_url = pd.get('product_image') or pd.get('large_product_image') or it.get('image_url') or ""
+                            fsn = it.get('fsn') or it.get('product_id') or ""
+                            reference_cost = float(o.purchase_cost or 0.0) / max(1, it.get('quantity', 1))
+                            source = "ORDER"
+                            break
+                except Exception:
+                    pass
+            if title:
+                break
+
+    # 4. 查询当前该 SKU 在各仓库已有闲置库存数量
+    existing_stocks = db.query(MakroBufferStock).filter(
+        MakroBufferStock.store_id == store_id,
+        MakroBufferStock.sku_id.ilike(sku_clean),
+        MakroBufferStock.status == "AVAILABLE"
+    ).all()
+    existing_sa = sum(s.quantity for s in existing_stocks if s.location == "SA_WAREHOUSE")
+    existing_domestic = sum(s.quantity for s in existing_stocks if s.location == "DOMESTIC_FORWARDER")
+    existing_transit = sum(s.quantity for s in existing_stocks if s.location == "IN_TRANSIT_AIR")
+    total_existing = sum(s.quantity for s in existing_stocks)
+
+    if not reference_cost and existing_stocks:
+        reference_cost = float(existing_stocks[0].purchase_cost_cny or 0.0)
+
+    return {
+        "found": bool(title or fsn or existing_stocks),
+        "sku": sku_clean,
+        "title": title or f"商品 SKU: {sku_clean}",
+        "image_url": image_url,
+        "fsn": fsn,
+        "source": source or ("BUFFER_STOCK" if existing_stocks else "MANUAL"),
+        "reference_cost": round(reference_cost, 2),
+        "existing_stock_count": total_existing,
+        "existing_sa_count": existing_sa,
+        "existing_domestic_count": existing_domestic,
+        "existing_transit_count": existing_transit
+    }
+
+@router.post("/buffer-stocks/create", summary="手动录入海外现货或盘点")
 def create_buffer_stock(
     req: CreateBufferStockRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     _verify_store_access(current_user, req.store_id, db)
+    sku_clean = req.sku_id.strip()
+    if not sku_clean:
+        raise HTTPException(status_code=400, detail="商品 SKU 不能为空")
+
+    title_clean = (req.title or "").strip()
+    img_clean = req.image_url or ""
+    fsn_clean = (req.fsn or "").strip()
+
+    # 若缺少标题或主图，自动调用检索补齐
+    if not title_clean or not img_clean:
+        lst = db.query(MakroListing).filter(MakroListing.sku_id.ilike(sku_clean)).first()
+        if lst:
+            if not title_clean: title_clean = lst.title or ""
+            if not img_clean: img_clean = lst.image_url or ""
+            if not fsn_clean: fsn_clean = lst.product_id or ""
+        else:
+            piggy = db.query(MakroPiggybackItem).filter(MakroPiggybackItem.seller_sku.ilike(sku_clean)).first()
+            if piggy:
+                if not title_clean: title_clean = piggy.title or piggy.title_zh or ""
+                if not img_clean: img_clean = piggy.image_url or ""
+                if not fsn_clean: fsn_clean = piggy.makro_product_id or ""
+
+    if not title_clean:
+        title_clean = f"商品 SKU: {sku_clean}"
+
     stock = MakroBufferStock(
         store_id=req.store_id,
-        sku_id=req.sku_id.strip(),
-        fsn=(req.fsn or "").strip(),
-        title=req.title.strip(),
-        image_url=req.image_url or "",
+        sku_id=sku_clean,
+        fsn=fsn_clean,
+        title=title_clean,
+        image_url=img_clean,
         quantity=max(1, req.quantity),
         location=req.location,
-        status=req.status,
+        status=req.status or "AVAILABLE",
         purchase_cost_cny=max(0.0, round(float(req.purchase_cost_cny or 0.0), 2)),
         head_haul_cost_cny=max(0.0, round(float(req.head_haul_cost_cny or 0.0), 2)),
         relabeling_fee_cny=max(0.0, round(float(req.relabeling_fee_cny or 0.0), 2)),
-        notes=req.notes or ""
+        notes=req.notes or f"运营 [{current_user.username}] 手动录入现货"
     )
     db.add(stock)
     db.commit()
@@ -2344,7 +2467,10 @@ def create_buffer_stock(
     return {
         "success": True,
         "stock_id": stock.id,
-        "message": f"成功录入现货库存 [{stock.sku_id}]，件数: {stock.quantity}"
+        "sku_id": stock.sku_id,
+        "quantity": stock.quantity,
+        "location": stock.location,
+        "message": f"成功录入现货 [{stock.sku_id}]，可用数量: {stock.quantity}"
     }
 
 @router.put("/buffer-stocks/{stock_id}/status", summary="更新滞留现货状态 (核销/报废/1688已退款/换标费/仓库)")

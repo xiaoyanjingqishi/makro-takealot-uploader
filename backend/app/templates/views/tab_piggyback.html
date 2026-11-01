@@ -155,6 +155,23 @@
                   </button>
                 </div>
 
+                <!-- 出单状态筛选 -->
+                <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
+                  <button 
+                    v-for="ord in [
+                      { key: 'ALL', label: '全部出单' },
+                      { key: 'ORDERED', label: '🔥 已出单' },
+                      { key: 'NO_ORDER', label: '⚪ 未出单' }
+                    ]"
+                    :key="ord.key"
+                    @click="changePiggybackHasOrders(ord.key)"
+                    :class="(piggyback.has_orders || 'ALL') === ord.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
+                    class="px-2 py-1 text-xs rounded-md transition-all flex items-center space-x-1 cursor-pointer select-none"
+                  >
+                    <span>{{ ord.label }}</span>
+                  </button>
+                </div>
+
                 <!-- 采品员工筛选下拉 (管理员专属) -->
                 <select 
                   v-if="currentUser && currentUser.role === 'ADMIN'"
@@ -1136,6 +1153,14 @@
                         <span class="truncate">{{ item.seller_sku }}</span>
                         <button @click.stop="copyToClipboard(item.seller_sku, 'SKU')" class="text-slate-400 hover:text-slate-700 ml-1 cursor-pointer shrink-0" title="点击复制 SKU">📋</button>
                       </div>
+                      <span 
+                        v-if="item.order_count > 0" 
+                        class="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9.5px] font-bold font-sans inline-flex items-center space-x-0.5 mt-0.5"
+                        :title="`该商品累计已在 Makro 出单 ${item.order_count} 笔`"
+                      >
+                        <span>🛒</span>
+                        <span>已出 {{ item.order_count }} 单</span>
+                      </span>
                       <div class="text-[10px] text-slate-400 flex items-center space-x-2">
                         <span>库存: {{ item.inventory }}</span>
                         <span>SLA: {{ item.lead_time_days }}天</span>

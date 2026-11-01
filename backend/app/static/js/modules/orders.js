@@ -1012,6 +1012,156 @@ export const ordersMethods = {
   },
 
   // ================= 南非现货与滞留池 Hub =================
+  // 打开手动录入/按SKU加现货库存弹窗
+  openAddBufferStockModal(sku = '', loc = 'SA_WAREHOUSE') {
+    if (!this.addBufferStockModal) {
+      this.addBufferStockModal = {
+        open: false,
+        loading: false,
+        searching: false,
+        form: {
+          sku_id: '',
+          fsn: '',
+          title: '',
+          image_url: '',
+          quantity: 1,
+          location: 'SA_WAREHOUSE',
+          purchase_cost_cny: 0,
+          head_haul_cost_cny: 0,
+          relabeling_fee_cny: 0,
+          notes: ''
+        },
+        preview: null
+      };
+    }
+    this.addBufferStockModal.form = {
+      sku_id: sku || '',
+      fsn: '',
+      title: '',
+      image_url: '',
+      quantity: 1,
+      location: loc || 'SA_WAREHOUSE',
+      purchase_cost_cny: 0,
+      head_haul_cost_cny: 0,
+      relabeling_fee_cny: 0,
+      notes: ''
+    };
+    this.addBufferStockModal.preview = null;
+    this.addBufferStockModal.open = true;
+
+    if (sku && sku.trim()) {
+      this.lookupBufferStockSku();
+    }
+  },
+
+  closeAddBufferStockModal() {
+    if (this.addBufferStockModal) {
+      this.addBufferStockModal.open = false;
+    }
+  },
+
+  // 智能检索 SKU 信息
+  async lookupBufferStockSku() {
+    const sku = (this.addBufferStockModal?.form?.sku_id || '').trim();
+    if (!sku) {
+      this.showToast('请输入要检索的商品 SKU', 'warning');
+      return;
+    }
+    if (!this.selectedStoreId) return;
+
+    this.addBufferStockModal.searching = true;
+    try {
+      const res = await fetch(`/api/store-orders/buffer-stocks/lookup-sku?store_id=${this.selectedStoreId}&sku=${encodeURIComponent(sku)}`, {
+        headers: this.getAuthHeaders()
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.addBufferStockModal.preview = data;
+        if (data.found) {
+          if (data.title && !this.addBufferStockModal.form.title) {
+            this.addBufferStockModal.form.title = data.title;
+          }
+          if (data.image_url && !this.addBufferStockModal.form.image_url) {
+            this.addBufferStockModal.form.image_url = data.image_url;
+          }
+          if (data.fsn && !this.addBufferStockModal.form.fsn) {
+            this.addBufferStockModal.form.fsn = data.fsn;
+          }
+          if (data.reference_cost && !this.addBufferStockModal.form.purchase_cost_cny) {
+            this.addBufferStockModal.form.purchase_cost_cny = data.reference_cost;
+          }
+          this.showToast(`🔍 已成功匹配商品: ${data.title ? data.title.substring(0, 20) + '...' : data.sku}`, 'success');
+        } else {
+          this.showToast('未在当前店铺或历史订单中找到该 SKU，您仍可手动完善信息并入库', 'info');
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        this.showToast(err.detail || '检索 SKU 失败', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      this.showToast(`检索 SKU 异常: ${e.message}`, 'error');
+    } finally {
+      this.addBufferStockModal.searching = false;
+    }
+  },
+
+  // 提交手动录入现货库存
+  async submitAddBufferStock() {
+    const f = this.addBufferStockModal?.form;
+    if (!f || !f.sku_id || !f.sku_id.trim()) {
+      this.showToast('商品 SKU 为必填项', 'warning');
+      return;
+    }
+    if (!f.quantity || Number(f.quantity) < 1) {
+      this.showToast('入库件数必须至少为 1 件', 'warning');
+      return;
+    }
+    if (!this.selectedStoreId) {
+      this.showToast('请先选择目标店铺', 'warning');
+      return;
+    }
+
+    this.addBufferStockModal.loading = true;
+    try {
+      const payload = {
+        store_id: this.selectedStoreId,
+        sku_id: f.sku_id.trim(),
+        fsn: (f.fsn || '').trim(),
+        title: (f.title || '').trim() || `商品 SKU: ${f.sku_id.trim()}`,
+        image_url: f.image_url || '',
+        quantity: parseInt(f.quantity, 10) || 1,
+        location: f.location || 'SA_WAREHOUSE',
+        status: 'AVAILABLE',
+        purchase_cost_cny: Number(f.purchase_cost_cny || 0),
+        head_haul_cost_cny: Number(f.head_haul_cost_cny || 0),
+        relabeling_fee_cny: Number(f.relabeling_fee_cny || 0),
+        notes: (f.notes || '').trim()
+      };
+
+      const res = await fetch('/api/store-orders/buffer-stocks/create', {
+        method: 'POST',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        this.showToast(`🎉 现货入库成功！已为 [${payload.sku_id}] 增加 ${payload.quantity} 件库存`, 'success');
+        this.closeAddBufferStockModal();
+        await this.loadBufferStocks();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        this.showToast(err.detail || '现货录入入库失败', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      this.showToast(`入库操作异常: ${e.message}`, 'error');
+    } finally {
+      this.addBufferStockModal.loading = false;
+    }
+  },
+
   async loadBufferStocks() {
     if (!this.selectedStoreId) return;
     this.bufferStocks.loading = true;

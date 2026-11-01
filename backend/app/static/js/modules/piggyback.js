@@ -71,6 +71,13 @@ export const piggybackMethods = {
   },
 
 
+  // 出单状态过滤切换 (支持 Toggle 反选)
+  changePiggybackHasOrders(hasOrders) {
+    this.clearPiggybackSelection();
+    this.piggyback.has_orders = this.piggyback.has_orders === hasOrders ? 'ALL' : hasOrders;
+    this.loadPiggybackItems(1);
+  },
+
   changePiggybackStage(stage) {
     this.clearPiggybackSelection();
     this.piggyback.stage = stage;
@@ -211,6 +218,9 @@ export const piggybackMethods = {
       }
       if (this.piggyback.stage && this.piggyback.stage !== 'ALL') {
         params.append('stage', this.piggyback.stage);
+      }
+      if (this.piggyback.has_orders && this.piggyback.has_orders !== 'ALL') {
+        params.append('has_orders', this.piggyback.has_orders);
       }
       if (this.piggyback.buybox_status && this.piggyback.buybox_status !== 'ALL') {
         params.append('buybox_status', this.piggyback.buybox_status);

@@ -154,6 +154,25 @@
                   </button>
                 </div>
 
+                <!-- 出单状态筛选 -->
+                <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
+                  <button 
+                    v-for="ord in [
+                      { key: 'ALL', label: '全部出单' },
+                      { key: 'ORDERED', label: '🔥 已出单' },
+                      { key: 'NO_ORDER', label: '⚪ 未出单' }
+                    ]"
+                    :key="ord.key"
+                    @click="changeRepriceHasOrders(ord.key)"
+                    :class="(reprice.has_orders || 'ALL') === ord.key ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900 font-medium'"
+                    class="px-2 py-1 text-xs rounded-md transition-all flex items-center space-x-1 cursor-pointer select-none"
+                  >
+                    <span>{{ ord.label }}</span>
+                    <span v-if="ord.key === 'ORDERED' && reprice.kpi.ordered_count !== undefined" class="px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[9.5px] rounded-full font-mono font-bold">{{ reprice.kpi.ordered_count }}</span>
+                    <span v-if="ord.key === 'NO_ORDER' && reprice.kpi.no_order_count !== undefined" class="px-1.5 py-0.2 bg-slate-200/70 text-slate-700 text-[9.5px] rounded-full font-mono">{{ reprice.kpi.no_order_count }}</span>
+                  </button>
+                </div>
+
                 <!-- 合规风控筛选 -->
                 <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200/60">
                   <button 
@@ -467,6 +486,14 @@
                     <div class="font-medium text-slate-900 line-clamp-2 leading-snug" :title="it.title">{{ it.title }}</div>
                     <div class="flex items-center space-x-2 mt-1 text-[11px] text-slate-400 font-mono">
                       <span class="text-slate-800 font-semibold">SKU: {{ it.seller_sku }}</span>
+                      <span 
+                        v-if="it.order_count > 0" 
+                        class="px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold font-sans inline-flex items-center space-x-1"
+                        :title="`该商品累计已在 Makro 出单 ${it.order_count} 笔`"
+                      >
+                        <span>🛒</span>
+                        <span>已出 {{ it.order_count }} 单</span>
+                      </span>
                       <span v-if="it.target_fsn" class="text-indigo-600 font-bold">FSN: {{ it.target_fsn }}</span>
                       <a 
                         v-if="it.target_makro_url" 

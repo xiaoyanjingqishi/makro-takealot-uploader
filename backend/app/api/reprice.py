@@ -16,6 +16,7 @@ from ..models.makro_listing import MakroListing
 from ..models.makro_piggyback import MakroPiggybackItem
 from ..models.store_product_reprice import StoreProductReprice
 from ..models.makro_reprice_log import MakroRepriceLog
+from ..models.makro_order import MakroOrder
 from ..services.auto_reprice_service import AutoRepriceService
 from ..services.auto_reprice_scheduler import auto_reprice_scheduler
 from ..services.makro_portal_service import MakroPortalService
@@ -120,9 +121,45 @@ def _verify_store_access(user: User, store_id: int, db: Session) -> Store:
 _REPRICE_KPI_CACHE: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
 _REPRICE_KPI_CACHE_TTL: float = 15.0  # 15 秒短时防抖与复用缓存
 
+_ORDERED_SKUS_CACHE: Dict[Tuple, Tuple[float, set, dict]] = {}
+_ORDERED_SKUS_CACHE_TTL: float = 30.0  # 30 秒缓存
+
+def get_store_ordered_skus(store_ids: List[int], db: Session) -> Tuple[set, dict]:
+    global _ORDERED_SKUS_CACHE
+    cache_key = tuple(sorted(store_ids))
+    now_ts = time.time()
+    cached = _ORDERED_SKUS_CACHE.get(cache_key)
+    if cached and (now_ts - cached[0] < _ORDERED_SKUS_CACHE_TTL):
+        return cached[1], cached[2]
+
+    orders = db.query(MakroOrder.store_id, MakroOrder.raw_items_json).filter(
+        MakroOrder.store_id.in_(store_ids),
+        MakroOrder.raw_items_json.isnot(None)
+    ).all()
+
+    ordered_skus = set()
+    sku_order_counts = {}
+
+    for s_id, raw_json in orders:
+        if not raw_json:
+            continue
+        try:
+            items = json.loads(raw_json)
+            for it in items:
+                sku = it.get('sku') or it.get('seller_sku')
+                if sku:
+                    ordered_skus.add(sku)
+                    sku_order_counts[sku] = sku_order_counts.get(sku, 0) + it.get('quantity', 1)
+        except Exception:
+            pass
+
+    _ORDERED_SKUS_CACHE[cache_key] = (now_ts, ordered_skus, sku_order_counts)
+    return ordered_skus, sku_order_counts
+
 def invalidate_reprice_kpi_cache():
-    """清理在售调价 KPI 缓存"""
+    """清理在售调价 KPI 与出单缓存"""
     _REPRICE_KPI_CACHE.clear()
+    _ORDERED_SKUS_CACHE.clear()
 
 @router.get("/list", summary="查询在售跟价监控商品列表与大盘 KPI 态势")
 def list_reprice_monitor_items(
@@ -133,6 +170,7 @@ def list_reprice_monitor_items(
     auto_reprice: Optional[str] = Query(None, description="跟价开关: true, false, ALL"),
     monitor_status: Optional[str] = Query(None, description="监控状态: ACTIVE, PAUSED, OFFLINE_SUSPENDED, PENDING_CONFIG, BLOCKED, ALL"),
     search: Optional[str] = Query(None, description="搜索 SKU、标题、FSN、竞对店名"),
+    has_orders: Optional[str] = Query(None, description="出单状态: ALL, ORDERED, NO_ORDER"),
     min_my_price: Optional[float] = Query(None, description="最低我店售价 (ZAR)"),
     max_my_price: Optional[float] = Query(None, description="最高我店售价 (ZAR)"),
     page: int = Query(1, ge=1),
@@ -191,6 +229,10 @@ def list_reprice_monitor_items(
             func.sum(case((StoreProductReprice.source_type == "STORE_SYNCED", 1), else_=0)),
         ).first()
 
+        ordered_skus_all, _ = get_store_ordered_skus(target_store_ids, db)
+        ordered_monitored = 0
+        if ordered_skus_all:
+            ordered_monitored = kpi_query.filter(StoreProductReprice.seller_sku.in_(ordered_skus_all)).count()
         kpi_dict = {
             "total_monitored": int(row[0] or 0) if row else 0,
             "auto_reprice_enabled": int(row[1] or 0) if row else 0,
@@ -207,7 +249,8 @@ def list_reprice_monitor_items(
             "piggyback_count": int(row[12] or 0) if row else 0,
             "self_published_count": int(row[13] or 0) if row else 0,
             "store_synced_count": int(row[14] or 0) if row else 0,
-        }
+            "ordered_count": ordered_monitored,
+            "no_order_count": max(0, (int(row[0] or 0) if row else 0) - ordered_monitored)}
         _REPRICE_KPI_CACHE[kpi_cache_key] = (now_ts, kpi_dict)
 
     total_monitored = kpi_dict["total_monitored"]
@@ -225,6 +268,8 @@ def list_reprice_monitor_items(
     piggyback_count = kpi_dict["piggyback_count"]
     self_published_count = kpi_dict["self_published_count"]
     store_synced_count = kpi_dict["store_synced_count"]
+    ordered_count = kpi_dict.get("ordered_count", 0)
+    no_order_count = kpi_dict.get("no_order_count", 0)
 
     # 应用多维筛选
     query = base_query
@@ -286,6 +331,17 @@ def list_reprice_monitor_items(
     if max_my_price is not None and isinstance(max_my_price, (int, float)):
         query = query.filter(MakroListing.ssp <= max_my_price)
 
+    ordered_skus, sku_order_counts = get_store_ordered_skus(target_store_ids, db)
+    if has_orders and has_orders != "ALL":
+        if has_orders == "ORDERED":
+            if ordered_skus:
+                query = query.filter(StoreProductReprice.seller_sku.in_(ordered_skus))
+            else:
+                query = query.filter(StoreProductReprice.id == -1)
+        elif has_orders == "NO_ORDER":
+            if ordered_skus:
+                query = query.filter(~StoreProductReprice.seller_sku.in_(ordered_skus))
+
     total = query.count()
     items = (
         query.options(
@@ -338,6 +394,8 @@ def list_reprice_monitor_items(
             "id": rep.id,
             "store_id": rep.store_id,
             "listing_id": rep.listing_id,
+            "order_count": sku_order_counts.get(rep.seller_sku, 0),
+            "has_orders": rep.seller_sku in ordered_skus,
             "seller_sku": rep.seller_sku,
             "makro_product_id": rep.makro_product_id,
             "source_type": rep.source_type,
@@ -400,7 +458,9 @@ def list_reprice_monitor_items(
             "missing_floor_count": missing_floor_count,
             "piggyback_count": piggyback_count,
             "self_published_count": self_published_count,
-            "store_synced_count": store_synced_count
+            "store_synced_count": store_synced_count,
+            "ordered_count": ordered_count,
+            "no_order_count": no_order_count
         },
         "items": results
     }

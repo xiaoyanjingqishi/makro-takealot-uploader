@@ -2093,6 +2093,14 @@
                 <span>🔄</span>
                 <span>刷新滞留池</span>
               </button>
+              <button 
+                @click="openAddBufferStockModal()" 
+                class="px-3 py-1.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-semibold rounded-lg transition shadow-2xs cursor-pointer flex items-center space-x-1.5 active:scale-95"
+                title="根据商品 SKU 手动录入海外滞留现货或国内备货"
+              >
+                <span>➕</span>
+                <span>按SKU加现货</span>
+              </button>
             </div>
           </div>
 
@@ -2237,9 +2245,16 @@
                         ⚡ 匹配新单
                       </button>
                       <button 
+                        @click="openAddBufferStockModal(stk.sku_id, stk.location)"
+                        class="px-2 py-0.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded text-[10.5px] font-semibold cursor-pointer transition block w-full"
+                        title="为该商品快速补录增加库存数量"
+                      >
+                        ➕ 补库存
+                      </button>
+                      <button 
                         v-if="stk.status === 'AVAILABLE'"
                         @click="updateBufferStockStatus(stk, 'DISCARDED')"
-                        class="px-2 py-1 text-slate-400 hover:text-rose-600 rounded text-[10px] cursor-pointer transition block w-full"
+                        class="px-2 py-0.5 text-slate-400 hover:text-rose-600 rounded text-[10px] cursor-pointer transition block w-full"
                       >
                         标记弃置
                       </button>
@@ -3440,4 +3455,212 @@
             </div>
           </div>
         </div>
+        <!-- 9. 手动按 SKU 录入现货/补库存弹窗 (Manual Add Buffer Stock Modal) -->
+        <div v-if="addBufferStockModal && addBufferStockModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <!-- 头部 -->
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-amber-50 to-orange-50 shrink-0">
+              <div class="flex items-center space-x-2.5">
+                <span class="text-xl">🏬</span>
+                <div>
+                  <h3 class="font-bold text-amber-950 text-sm">手动录入现货库存 / 按 SKU 增库</h3>
+                  <div class="text-[11px] text-amber-800">
+                    支持按 SKU 智能检索回显图文 · 补充本地仓或货代仓闲置现货用于转单
+                  </div>
+                </div>
+              </div>
+              <button @click="closeAddBufferStockModal" class="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 cursor-pointer">✕</button>
+            </div>
+
+            <!-- 主体表单 -->
+            <div class="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4 text-xs">
+              <!-- SKU 输入与自动检索行 -->
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <label class="font-bold text-slate-700 flex items-center space-x-1">
+                    <span>商品 SKU</span>
+                    <span class="text-rose-500">*</span>
+                  </label>
+                  <span class="text-[10px] text-slate-400 font-sans">输入后可直接回车触发智能检索</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                  <div class="relative flex-1">
+                    <input 
+                      type="text" 
+                      v-model="addBufferStockModal.form.sku_id" 
+                      @keyup.enter="lookupBufferStockSku"
+                      placeholder="例如: GP261008113831A2D6" 
+                      class="w-full text-xs font-mono font-bold px-3 py-2 border border-slate-300 rounded-lg focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none"
+                    />
+                  </div>
+                  <button 
+                    type="button"
+                    @click="lookupBufferStockSku" 
+                    :disabled="addBufferStockModal.searching"
+                    class="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs cursor-pointer transition shadow-2xs flex items-center space-x-1 disabled:opacity-50"
+                  >
+                    <span v-if="addBufferStockModal.searching" class="animate-spin text-xs">🔄</span>
+                    <span v-else>🔍</span>
+                    <span>{{ addBufferStockModal.searching ? '检索中...' : '智能检索' }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 智能回显预览卡片 (若已检索到) -->
+              <div v-if="addBufferStockModal.preview" class="p-3 bg-amber-50/60 rounded-xl border border-amber-200 space-y-2">
+                <div class="flex items-start space-x-3">
+                  <img 
+                    v-if="addBufferStockModal.form.image_url" 
+                    :src="cleanImageUrl(addBufferStockModal.form.image_url)" 
+                    class="w-14 h-14 object-cover rounded-lg border border-slate-200 bg-white shrink-0" 
+                  />
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center space-x-1.5">
+                      <span class="font-mono font-bold text-slate-900 text-xs">{{ addBufferStockModal.form.sku_id }}</span>
+                      <span v-if="addBufferStockModal.preview.found" class="text-[9.5px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+                        ✓ 匹配成功 ({{ addBufferStockModal.preview.source }})
+                      </span>
+                      <span v-else class="text-[9.5px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700">
+                        新录入商品
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-slate-700 line-clamp-2 mt-0.5 leading-snug">
+                      {{ addBufferStockModal.form.title || '暂无标题' }}
+                    </div>
+                    <div v-if="addBufferStockModal.preview.existing_stock_count > 0" class="text-[10px] text-amber-900 font-medium mt-1">
+                      💡 当前在库已有: 🇿🇦 南非仓 {{ addBufferStockModal.preview.existing_sa_count || 0 }}件 · 🇨🇳 国内仓 {{ addBufferStockModal.preview.existing_domestic_count || 0 }}件
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 基础信息 (商品标题可修正) -->
+              <div class="space-y-1">
+                <label class="font-bold text-slate-700">商品标题 / 描述</label>
+                <input 
+                  type="text" 
+                  v-model="addBufferStockModal.form.title" 
+                  placeholder="商品英文标题或规格描述..." 
+                  class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:border-amber-500 outline-none"
+                />
+              </div>
+
+              <!-- 仓库归属与入库件数 (双列并排) -->
+              <div class="grid grid-cols-2 gap-3">
+                <div class="space-y-1">
+                  <label class="font-bold text-slate-700 flex items-center space-x-1">
+                    <span>所在仓库位置</span>
+                    <span class="text-rose-500">*</span>
+                  </label>
+                  <select 
+                    v-model="addBufferStockModal.form.location" 
+                    class="w-full text-xs px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white font-bold outline-none cursor-pointer focus:border-amber-500"
+                  >
+                    <option value="SA_WAREHOUSE">🇿🇦 南非本地中转仓 (默认)</option>
+                    <option value="DOMESTIC_FORWARDER">🇨🇳 国内货代/中转仓</option>
+                    <option value="IN_TRANSIT_AIR">🛫 国际空运在途截留</option>
+                  </select>
+                </div>
+                <div class="space-y-1">
+                  <label class="font-bold text-slate-700 flex items-center space-x-1">
+                    <span>入库可用件数</span>
+                    <span class="text-rose-500">*</span>
+                  </label>
+                  <div class="flex items-center space-x-1">
+                    <input 
+                      type="number" 
+                      min="1" 
+                      step="1"
+                      v-model.number="addBufferStockModal.form.quantity" 
+                      class="w-full text-xs font-mono font-bold px-2.5 py-1.5 border border-slate-300 rounded-lg text-center outline-none focus:border-amber-500"
+                    />
+                    <span class="text-slate-500 text-xs shrink-0">件</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 资产成本核算 (3 列网格) -->
+              <div class="space-y-1.5 pt-1">
+                <label class="font-bold text-slate-700 flex items-center justify-between">
+                  <span>成本资产归集 (RMB 单价)</span>
+                  <span class="text-[10px] text-slate-400 font-sans">用于调拨时结转至新订单履约成本</span>
+                </label>
+                <div class="grid grid-cols-3 gap-2">
+                  <div class="p-2 bg-slate-50 rounded-lg border border-slate-200">
+                    <div class="text-[10px] text-slate-500 font-medium mb-1">采购成本(¥)</div>
+                    <div class="flex items-center space-x-0.5">
+                      <span class="text-slate-400 text-xs">¥</span>
+                      <input 
+                        type="number" 
+                        step="0.1" 
+                        min="0"
+                        v-model.number="addBufferStockModal.form.purchase_cost_cny" 
+                        class="w-full text-xs font-mono font-bold text-right py-0.5 px-1 border border-slate-200 rounded bg-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+                  <div class="p-2 bg-slate-50 rounded-lg border border-slate-200">
+                    <div class="text-[10px] text-slate-500 font-medium mb-1">头程运费(¥)</div>
+                    <div class="flex items-center space-x-0.5">
+                      <span class="text-slate-400 text-xs">¥</span>
+                      <input 
+                        type="number" 
+                        step="0.1" 
+                        min="0"
+                        v-model.number="addBufferStockModal.form.head_haul_cost_cny" 
+                        class="w-full text-xs font-mono font-bold text-right py-0.5 px-1 border border-slate-200 rounded bg-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+                  <div class="p-2 bg-slate-50 rounded-lg border border-slate-200">
+                    <div class="text-[10px] text-slate-500 font-medium mb-1">换标费(¥)</div>
+                    <div class="flex items-center space-x-0.5">
+                      <span class="text-slate-400 text-xs">¥</span>
+                      <input 
+                        type="number" 
+                        step="0.5" 
+                        min="0"
+                        v-model.number="addBufferStockModal.form.relabeling_fee_cny" 
+                        class="w-full text-xs font-mono font-bold text-right py-0.5 px-1 border border-slate-200 rounded bg-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 入库备注 -->
+              <div class="space-y-1">
+                <label class="font-bold text-slate-700">入库原因 / 来源备注</label>
+                <input 
+                  type="text" 
+                  v-model="addBufferStockModal.form.notes" 
+                  placeholder="例如: 客户拒签退货中转仓、南非线下自备库存、国内货代留存..." 
+                  class="w-full text-xs px-2.5 py-1.5 border border-slate-200 rounded-lg focus:border-amber-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <!-- 底部操作按钮 -->
+            <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-end space-x-2 bg-slate-50/50 shrink-0">
+              <button 
+                type="button" 
+                @click="closeAddBufferStockModal" 
+                class="px-3.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer transition shadow-2xs"
+              >
+                取消
+              </button>
+              <button 
+                type="button" 
+                @click="submitAddBufferStock" 
+                :disabled="addBufferStockModal.loading"
+                class="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold cursor-pointer transition shadow-xs flex items-center space-x-1.5 disabled:opacity-50 active:scale-95"
+              >
+                <span v-if="addBufferStockModal.loading" class="animate-spin text-xs">🔄</span>
+                <span v-else>💾</span>
+                <span>{{ addBufferStockModal.loading ? '正在入库...' : '确认入库并加入现货池' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
       </div>

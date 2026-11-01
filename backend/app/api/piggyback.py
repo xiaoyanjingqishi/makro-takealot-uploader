@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..database import get_db
 from ..models.makro_piggyback import MakroPiggybackItem
+from .reprice import get_store_ordered_skus
 from ..models.makro_listing import MakroListing
 from ..models.store import Store
 from ..models.user import User
@@ -456,7 +457,8 @@ def _build_piggyback_base_query(
     is_white_label: Optional[str] = None,
     has_image_logo: Optional[str] = None,
     image_prohibited: Optional[str] = None,
-    violation_type: Optional[str] = None
+    violation_type: Optional[str] = None,
+    has_orders: Optional[str] = None
 ):
     query = db.query(MakroPiggybackItem)
 
@@ -586,6 +588,18 @@ def _build_piggyback_base_query(
                 query = query.filter(MakroPiggybackItem.created_at <= e_dt)
             except Exception:
                 pass
+
+    if has_orders and has_orders != "ALL":
+        target_sids = [store_id] if store_id else [s.id for s in db.query(Store.id).all()]
+        ordered_skus, _ = get_store_ordered_skus(target_sids, db)
+        if has_orders == "ORDERED":
+            if ordered_skus:
+                query = query.filter(MakroPiggybackItem.seller_sku.in_(ordered_skus))
+            else:
+                query = query.filter(MakroPiggybackItem.id == -1)
+        elif has_orders == "NO_ORDER":
+            if ordered_skus:
+                query = query.filter(~MakroPiggybackItem.seller_sku.in_(ordered_skus))
 
     return query
 
@@ -852,6 +866,7 @@ def list_piggyback_ids(
     has_image_logo: Optional[str] = None,
     image_prohibited: Optional[str] = None,
     violation_type: Optional[str] = None,
+    has_orders: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -874,7 +889,8 @@ def list_piggyback_ids(
         is_white_label=is_white_label,
         has_image_logo=has_image_logo,
         image_prohibited=image_prohibited,
-        violation_type=violation_type
+        violation_type=violation_type,
+        has_orders=has_orders
     )
 
     if stage == "ABANDONED":
@@ -939,6 +955,7 @@ def list_piggyback_items(
     has_image_logo: Optional[str] = None,
     image_prohibited: Optional[str] = None,
     violation_type: Optional[str] = None,
+    has_orders: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -961,7 +978,8 @@ def list_piggyback_items(
         is_white_label=is_white_label,
         has_image_logo=has_image_logo,
         image_prohibited=image_prohibited,
-        violation_type=violation_type
+        violation_type=violation_type,
+        has_orders=has_orders
     )
 
     # 1. 动态计算与当前公共筛选匹配的 6 大 KPI 卡片数据 (命中 15s 内存缓存或单条条件聚合)
@@ -1058,13 +1076,20 @@ def list_piggyback_items(
         .all()
     )
 
+    target_sids = [store_id] if store_id else [s.id for s in db.query(Store.id).all()]
+    ordered_skus, sku_order_counts = get_store_ordered_skus(target_sids, db)
     return {
         "total": filtered_total,
         "page": page,
         "page_size": page_size,
         "kpi": kpi,
         "stats": stats,
-        "items": [_format_piggyback_item(it) for it in items]
+        "items": (lambda: [
+            dict(_format_piggyback_item(it), **{
+                "order_count": sku_order_counts.get(it.seller_sku, 0),
+                "has_orders": it.seller_sku in ordered_skus
+            }) for it in items
+        ])()
     }
 
 @router.post("/batch-adjust-price", summary="批量直接改价并可选推送到 Makro 官方网关")

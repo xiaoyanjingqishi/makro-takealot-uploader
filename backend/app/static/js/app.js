@@ -33,6 +33,7 @@ const app = createApp({
             pageSize: 20,
             status: 'ALL',
             stage: 'ALL',
+            has_orders: 'ALL',
             buybox_status: 'ALL',
             compliance_status: 'ALL',
             store_id: (function() { try { const v = localStorage.getItem('makro_selected_store_id'); return v ? parseInt(v) : null; } catch(_) { return null; } })(),
@@ -92,6 +93,7 @@ const app = createApp({
             pageSize: 20,
             items: [],
             loading: false,
+            has_orders: 'ALL',
             source_type: 'ALL',
             buybox_status: 'ALL',
             compliance_status: 'ALL',
@@ -602,6 +604,24 @@ const app = createApp({
             status: 'all',
             search: '',
             summary: {}
+          },
+          addBufferStockModal: {
+            open: false,
+            loading: false,
+            searching: false,
+            form: {
+              sku_id: '',
+              fsn: '',
+              title: '',
+              image_url: '',
+              quantity: 1,
+              location: 'SA_WAREHOUSE',
+              purchase_cost_cny: 0,
+              head_haul_cost_cny: 0,
+              relabeling_fee_cny: 0,
+              notes: ''
+            },
+            preview: null
           },
           procurementSummary: {
             list: [],
