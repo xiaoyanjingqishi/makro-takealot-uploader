@@ -652,19 +652,41 @@
                         <span v-if="item.clean_mode === 'vision'" class="px-1.5 py-0.2 text-[9px] font-bold rounded bg-purple-50 text-purple-700 border border-purple-200/80 inline-block" title="图文多模态深度校准">🖼️ 图文</span>
                         <span v-else-if="item.status === 'CLEANED' || item.clean_mode === 'text'" class="px-1.5 py-0.2 text-[9px] font-medium rounded bg-indigo-50 text-indigo-700 border border-indigo-200/80 inline-block" title="纯文本快速清洗">📝 文本</span>
                       </div>
-                      <!-- 多店铺独立上架状态徽章 -->
-                      <div v-if="item.store_listings && item.store_listings.length" class="flex flex-wrap gap-1 mt-1">
-                        <span 
-                          v-for="sl in item.store_listings" 
-                          :key="sl.id" 
-                          :class="sl.status === 'SUBMITTED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/80' : 'bg-rose-50 text-rose-700 border-rose-200/80'"
-                          class="px-1.5 py-0.2 rounded text-[9.5px] font-mono border inline-flex items-center space-x-1 whitespace-nowrap shrink-0"
-                          :title="(sl.store_name || '店铺') + ' | Makro SKU: ' + (sl.makro_sku_id || item.makro_sku_id || '未生成') + ' | 品牌: ' + (sl.brand || '默认') + ' | 状态: ' + (sl.status === 'SUBMITTED' ? '已提交审核' : (sl.makro_submit_error || '失败'))"
-                        >
-                          <span>🏪 {{ sl.store_name }}:</span>
-                          <span class="font-semibold select-all">{{ sl.makro_sku_id || item.makro_sku_id || '已提交' }}</span>
-                          <span class="text-[9px] opacity-85">({{ sl.status === 'SUBMITTED' ? '已提交' : '失败' }})</span>
-                        </span>
+                      <!-- 多店铺独立上架状态徽章 (当前激活店铺置顶高亮) -->
+                      <div class="flex flex-wrap gap-1 mt-1">
+                        <!-- 当前选中店铺的置顶专属状态徽章 -->
+                        <template v-if="selectedStoreId">
+                          <span 
+                            v-if="getCurrentStoreListing(item)"
+                            :class="getCurrentStoreListing(item).status === 'SUBMITTED' ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold ring-1 ring-emerald-500/20' : 'bg-rose-50 text-rose-700 border-rose-200/80'"
+                            class="px-1.5 py-0.2 rounded text-[9.5px] font-mono border inline-flex items-center space-x-1 whitespace-nowrap shrink-0 shadow-2xs"
+                            :title="`【当前店: ${getStoreNameById(selectedStoreId)}】已上架提交 | Makro SKU: ${getCurrentStoreListing(item).makro_sku_id || '已提交'}`"
+                          >
+                            <span>⭐ 当前店 ({{ getStoreNameById(selectedStoreId) }}):</span>
+                            <span class="font-semibold select-all">{{ getCurrentStoreListing(item).makro_sku_id || '已提交' }}</span>
+                            <span class="text-[9px] opacity-85">({{ getCurrentStoreListing(item).status === 'SUBMITTED' ? '已提交' : '失败' }})</span>
+                          </span>
+                          <span 
+                            v-else
+                            class="px-1.5 py-0.2 rounded text-[9px] font-mono border border-slate-200 bg-slate-50 text-slate-500 inline-flex items-center space-x-1 whitespace-nowrap shrink-0"
+                            :title="`【当前店: ${getStoreNameById(selectedStoreId)}】尚未上架此商品，可勾选后批量刊登至该店铺`"
+                          >
+                            <span>🏪 当前店 ({{ getStoreNameById(selectedStoreId) }}):</span>
+                            <span class="font-medium text-slate-400">未上架 (待补发)</span>
+                          </span>
+                        </template>
+
+                        <!-- 其他关联店铺的轻量徽章 (去芜存菁) -->
+                        <template v-if="item.store_listings && item.store_listings.length">
+                          <span 
+                            v-for="sl in item.store_listings.filter(x => !selectedStoreId || x.store_id !== selectedStoreId)" 
+                            :key="sl.id" 
+                            class="px-1 py-0.2 rounded text-[9px] font-mono border bg-slate-50/80 text-slate-400 border-slate-200 inline-flex items-center space-x-1 whitespace-nowrap shrink-0 opacity-75"
+                            :title="`${sl.store_name} | Makro SKU: ${sl.makro_sku_id || '已提交'}`"
+                          >
+                            <span>{{ sl.store_name }}: {{ sl.status === 'SUBMITTED' ? '已上架' : '失败' }}</span>
+                          </span>
+                        </template>
                       </div>
                     </td>
                     <td class="py-2.5 px-3.5 text-[11px] text-slate-500 font-mono tabular-nums whitespace-nowrap">

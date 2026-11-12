@@ -109,6 +109,10 @@
                     <span v-if="s.login_email" class="font-mono text-slate-700 font-medium truncate max-w-[140px]" :title="s.login_email">{{ s.login_email }}</span>
                     <span v-else class="text-slate-400">未设置</span>
                   </div>
+                  <div class="flex items-center justify-between text-[11px]" v-if="s.imap_user && s.imap_user !== s.login_email">
+                    <span class="text-slate-500">收码邮箱:</span>
+                    <span class="font-mono text-indigo-700 font-medium truncate max-w-[140px]" :title="s.imap_user">{{ s.imap_user }}</span>
+                  </div>
                   <div class="flex items-center justify-between text-[11px]">
                     <span class="text-slate-500">定时保活状态:</span>
                     <div class="flex items-center space-x-1">

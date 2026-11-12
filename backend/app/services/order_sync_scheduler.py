@@ -47,9 +47,16 @@ class OrderSyncScheduler:
         db = SessionLocal()
         try:
             active_stores = db.query(Store).filter(Store.is_active == True).all()
+            seen_sellers = set()
             for store in active_stores:
-                if not store.cookie or not store.seller_id:
+                if not store.cookie or not store.seller_id or "pending" in str(store.seller_id).lower():
                     continue
+                # 校验活跃店铺 seller_id 是否有重复，杜绝跨店铺串店镜像污染
+                s_id = str(store.seller_id).strip()
+                if s_id in seen_sellers:
+                    logger.warning(f"[SECURITY] 店铺 '{store.name}' (ID: {store.id}) 与其他活跃店铺共用了 Seller ID '{s_id}'，已自动跳过轮询同步以防数据串店污染！")
+                    continue
+                seen_sellers.add(s_id)
                 try:
                     logger.info(f"后台自动同步: 正在轮询店铺 '{store.name}' (ID: {store.id})...")
                     # 同步订单

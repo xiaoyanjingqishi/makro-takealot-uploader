@@ -3,6 +3,11 @@
  * 导出该领域的业务方法集
  */
 export const productsMethods = {
+  getCurrentStoreListing(item) {
+    if (!item || !item.store_listings || !this.selectedStoreId) return null;
+    return item.store_listings.find(x => x.store_id === this.selectedStoreId) || null;
+  },
+
   async loadProducts(page = null) {
     if (page !== null && page >= 1) {
       this.currentPage = page;

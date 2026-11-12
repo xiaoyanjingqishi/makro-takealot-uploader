@@ -97,6 +97,7 @@ class AutoLoginScheduler:
         with SessionLocal() as db:
             active_stores = db.query(Store).filter(Store.is_active == True).all()
             logger.info(f"[定时保活] 检测到 {len(active_stores)} 个活跃店铺，开始逐一评估自动登录就绪状态...")
+            seen_login_emails = set()
 
             for idx, store in enumerate(active_stores):
                 # 检查是否具备自动登录与收码凭据
@@ -105,6 +106,18 @@ class AutoLoginScheduler:
                     store.login_password and 
                     store.imap_password
                 )
+                if has_cred:
+                    email_clean = str(store.login_email).strip().lower()
+                    if email_clean in seen_login_emails:
+                        logger.warning(f"[SECURITY] 店铺【{store.name}】(ID: #{store.id}) 与其他店铺共用了 Makro 登录账号 '{email_clean}'，已跳过以防止凭据跨店铺串用！")
+                        results.append({
+                            "store_id": store.id,
+                            "store_name": store.name,
+                            "status": "SKIPPED",
+                            "message": f"登录账号 '{email_clean}' 与其他活跃店铺重复，已安全跳过"
+                        })
+                        continue
+                    seen_login_emails.add(email_clean)
                 if not has_cred:
                     logger.info(f"[定时保活] 跳过店铺【{store.name}】(ID: #{store.id})：未完整配置 Makro 登录密码或邮箱授权码")
                     results.append({

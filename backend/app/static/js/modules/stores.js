@@ -17,9 +17,18 @@ export const storesMethods = {
       }
       if (this.reprice) {
         this.reprice.selectedIds = [];
+        this.reprice.items = [];
+        this.reprice.total = 0;
+        this.reprice.kpi = {};
       }
       if (this.orders) {
         this.orders.selectedOrderIds = [];
+        this.orders.items = [];
+        this.orders.total = 0;
+      }
+      if (this.storeProducts) {
+        this.storeProducts.items = [];
+        this.storeProducts.total = 0;
       }
 
       // 2. 联动弹窗目标店铺默认选择
@@ -154,12 +163,35 @@ export const storesMethods = {
 
 
   onStoreEmailInput() {
-    const em = (this.storeForm.login_email || '').trim();
+    // 若未单独填写收信邮箱，则默认跟随登录邮箱解析 IMAP 默认设置
+    if (!this.storeForm.imap_user || !this.storeForm.imap_user.trim()) {
+      const em = (this.storeForm.login_email || '').trim();
+      if (em.includes('@')) {
+        const def = this.resolveImapDefaults(em);
+        this.storeForm.imap_server = def.server;
+        this.storeForm.imap_port = def.port;
+        this.storeForm.imap_provider = this.detectEmailProvider(em);
+      }
+    }
+  },
+
+  onStoreImapUserInput() {
+    const em = (this.storeForm.imap_user || '').trim();
     if (em.includes('@')) {
       const def = this.resolveImapDefaults(em);
       this.storeForm.imap_server = def.server;
       this.storeForm.imap_port = def.port;
       this.storeForm.imap_provider = this.detectEmailProvider(em);
+    }
+  },
+
+  onAutoLoginImapUserInput() {
+    const em = (this.autoLoginForm.imap_user || '').trim();
+    if (em.includes('@')) {
+      const def = this.resolveImapDefaults(em);
+      this.autoLoginForm.imap_server = def.server;
+      this.autoLoginForm.imap_port = def.port;
+      this.autoLoginForm.imap_provider = this.detectEmailProvider(em);
     }
   },
 
@@ -273,6 +305,7 @@ export const storesMethods = {
         this.autoLoginForm.email = s.login_email;
         this.onAutoLoginEmailInput();
       }
+      this.autoLoginForm.imap_user = s.imap_user || '';
       if (s.login_password) {
         this.autoLoginForm.password = s.login_password;
       }
@@ -339,7 +372,7 @@ export const storesMethods = {
             password: this.autoLoginForm.password.trim(),
             imap_server: this.autoLoginForm.imap_server ? this.autoLoginForm.imap_server.trim() : null,
             imap_port: this.autoLoginForm.imap_port ? parseInt(this.autoLoginForm.imap_port) : 993,
-            imap_user: this.autoLoginForm.email.trim(),
+            imap_user: (this.autoLoginForm.imap_user && this.autoLoginForm.imap_user.trim()) ? this.autoLoginForm.imap_user.trim() : this.autoLoginForm.email.trim(),
             imap_password: this.autoLoginForm.imap_password.trim(),
             max_wait_seconds: 60
           })
