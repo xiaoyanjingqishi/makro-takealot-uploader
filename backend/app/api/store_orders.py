@@ -1,6 +1,6 @@
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -161,6 +161,16 @@ class UpdateWeightAndFreightRequest(BaseModel):
 class BatchLabelsRequest(BaseModel):
     order_ids: List[int]
 
+class DispatchBookRequest(BaseModel):
+    box_count: int = 1
+    length: Optional[float] = None
+    breadth: Optional[float] = None
+    height: Optional[float] = None
+    weight_kg: Optional[float] = None
+
+class BatchDispatchBookRequest(BaseModel):
+    order_ids: List[int]
+
 class CreatePoRequest(BaseModel):
     store_id: Optional[int] = None
     po_number: Optional[str] = None
@@ -271,6 +281,7 @@ def list_store_orders(
     order_date_start: Optional[str] = Query(None, description="出单日期起始 (YYYY-MM-DD，北京时间)"),
     order_date_end: Optional[str] = Query(None, description="出单日期截止 (YYYY-MM-DD，北京时间)"),
     label_printed: Optional[str] = Query("all", description="标签打印状态: all, printed, unprinted"),
+    dispatch_booked: Optional[str] = Query("all", description="尾程面单预约状态: all, booked, unbooked"),
     commission_rate: float = Query(17.5, description="平台佣金扣点率 (%)，默认 17.5% 对应 0.825"),
     shipping_fee_zar: float = Query(70.0, description="平台单笔基础运费 (ZAR)，默认 R70"),
     exchange_rate: float = Query(0.39, description="结算汇率 ZAR->CNY，默认 0.39"),
@@ -301,6 +312,19 @@ def list_store_orders(
         base_filtered_query = base_filtered_query.filter(MakroOrder.label_printed == True)
     elif label_printed == "unprinted":
         base_filtered_query = base_filtered_query.filter(or_(MakroOrder.label_printed == False, MakroOrder.label_printed == None))
+
+    # 3. 尾程面单预约状态过滤
+    if dispatch_booked == "booked":
+        base_filtered_query = base_filtered_query.filter(
+            or_(MakroOrder.is_dispatch_booked == True, and_(MakroOrder.tracking_id.isnot(None), MakroOrder.tracking_id != ""))
+        )
+    elif dispatch_booked == "unbooked":
+        base_filtered_query = base_filtered_query.filter(
+            and_(
+                or_(MakroOrder.is_dispatch_booked == False, MakroOrder.is_dispatch_booked.is_(None)),
+                or_(MakroOrder.tracking_id.is_(None), MakroOrder.tracking_id == "")
+            )
+        )
 
     # 3. 关键词搜索
     if search and isinstance(search, str) and search.strip():
@@ -606,7 +630,21 @@ def list_store_orders(
             "dispatch_time_status": cd_info["status"] if cd_info else "NONE",
             "po_id": o.po_id,
             "po_info": po_info,
-            "synced_at": o.synced_at.strftime("%Y-%m-%d %H:%M:%S") if o.synced_at else ""
+            "synced_at": o.synced_at.strftime("%Y-%m-%d %H:%M:%S") if o.synced_at else "",
+            # 官方尾程物流面单与预约追踪
+            "is_dispatch_booked": bool(getattr(o, "is_dispatch_booked", False) or (o.tracking_id and o.tracking_id.strip())),
+            "dispatch_booked_at": o.dispatch_booked_at.strftime("%Y-%m-%d %H:%M:%S") if getattr(o, "dispatch_booked_at", None) else "",
+            "waybill_printed": bool(getattr(o, "waybill_printed", False)),
+            "waybill_printed_at": o.waybill_printed_at.strftime("%Y-%m-%d %H:%M:%S") if getattr(o, "waybill_printed_at", None) else "",
+            "waybill_pdf_path": getattr(o, "waybill_pdf_path", None) or "",
+            "can_book_dispatch": (st_ful in ["ARRIVED_SA", "SA_PICKUP", "COMPLETED"]) and not bool(getattr(o, "is_dispatch_booked", False) or (o.tracking_id and o.tracking_id.strip())),
+            "default_dimensions": {
+                "box_count": 1,
+                "length": float((json.loads(o.raw_payload_json).get("order_items", [{}])[0].get("product_details", {}).get("length") or 10.0)) if o.raw_payload_json else 10.0,
+                "breadth": float((json.loads(o.raw_payload_json).get("order_items", [{}])[0].get("product_details", {}).get("breadth") or 10.0)) if o.raw_payload_json else 10.0,
+                "height": float((json.loads(o.raw_payload_json).get("order_items", [{}])[0].get("product_details", {}).get("height") or 10.0)) if o.raw_payload_json else 10.0,
+                "weight_kg": round(float(o.total_weight_g) / 1000.0, 3) if o.total_weight_g and o.total_weight_g > 0 else float((json.loads(o.raw_payload_json).get("order_items", [{}])[0].get("product_details", {}).get("weight") or 0.3) if o.raw_payload_json else 0.3)
+            }
         })
 
     # 7. 统计 7 阶履约状态与核心指标 (严格关联当前出单日期及筛选条件)
@@ -1174,6 +1212,276 @@ def download_batch_labels_pdf(
     filename = f"batch_labels_{len(orders)}_orders.pdf"
     return Response(
         content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+# =========================================================================
+# Makro 官方尾程物流预约与官方面单下载 (DPD-Laser / CourierGuy)
+# =========================================================================
+
+@router.post("/{order_id}/book-dispatch", summary="预约单笔订单 Makro 官方尾程物流并生成面单")
+def book_order_dispatch(
+    order_id: int,
+    req: Optional[DispatchBookRequest] = Body(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    req = req or DispatchBookRequest()
+    order = db.query(MakroOrder).filter(MakroOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="未找到该订单")
+    store = _verify_store_access(current_user, order.store_id, db)
+
+    # 严格校验：只有到达南非的订单才可以预约尾程
+    valid_statuses = ["ARRIVED_SA", "SA_PICKUP", "COMPLETED"]
+    if order.fulfillment_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"订单当前处于【{format_status_zh(order.fulfillment_status)}】阶段，只有【到达南非】后方可预约尾程面单"
+        )
+
+    dims = {
+        "box_count": req.box_count or 1,
+        "length": req.length,
+        "breadth": req.breadth,
+        "height": req.height,
+        "weight_kg": req.weight_kg
+    }
+
+    try:
+        res = MakroPortalService.book_last_mile_dispatch(
+            store=store,
+            order=order,
+            dimensions=dims,
+            db=db,
+            operator=current_user.username if current_user else "SYSTEM"
+        )
+        return {
+            "success": True,
+            "order_id": order.id,
+            "order_sn": order.order_id,
+            "tracking_id": order.tracking_id,
+            "courier_name": order.courier_name or "DPD-Laser",
+            "download_url": f"/api/store-orders/{order.id}/official-waybill/pdf"
+        }
+    except Exception as e:
+        logger.error(f"预约尾程物流异常 [Order #{order.order_id}]: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/{order_id}/official-waybill/pdf", summary="下载/在线预览 Makro 官方物流面单 PDF (DPD-Laser)")
+def download_official_waybill_pdf(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    order = db.query(MakroOrder).filter(MakroOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="未找到该订单")
+    store = _verify_store_access(current_user, order.store_id, db)
+
+    import os
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    cached_bytes = None
+
+    if order.waybill_pdf_path:
+        full_p = os.path.join(base_dir, "static", order.waybill_pdf_path)
+        if os.path.exists(full_p):
+            with open(full_p, "rb") as f:
+                cached_bytes = f.read()
+
+    if not cached_bytes:
+        shipment_id = order.shipment_id
+        if not shipment_id and order.raw_payload_json:
+            try:
+                rp = json.loads(order.raw_payload_json)
+                shipment_id = rp.get("id")
+            except Exception:
+                pass
+        if not shipment_id:
+            raise HTTPException(status_code=400, detail="该订单尚未分配官方 shipment_id，无法下载面单")
+
+        try:
+            cached_bytes = MakroPortalService.download_official_shipping_label(store, [shipment_id])
+            waybills_dir = os.path.join(base_dir, "static", "labels", "waybills")
+            os.makedirs(waybills_dir, exist_ok=True)
+            pdf_filename = f"{store.id}_{order.order_id}_waybill.pdf"
+            file_path = os.path.join(waybills_dir, pdf_filename)
+            with open(file_path, "wb") as f:
+                f.write(cached_bytes)
+            order.waybill_pdf_path = f"labels/waybills/{pdf_filename}"
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"下载官方面单异常: {e}")
+
+    order.waybill_printed = True
+    order.waybill_printed_at = datetime.now()
+    db.commit()
+
+    filename = f"Waybill_{order.order_id}_{order.courier_name or 'DPD'}.pdf"
+    return Response(
+        content=cached_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+@router.post("/batch-book-dispatch", summary="批量预约 Makro 官方尾程物流并合并生成面单")
+def batch_book_dispatch(
+    req: BatchDispatchBookRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not req.order_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一个订单")
+
+    orders = db.query(MakroOrder).filter(MakroOrder.id.in_(req.order_ids)).all()
+    if not orders:
+        raise HTTPException(status_code=404, detail="未找到选中的订单")
+
+    store = _verify_store_access(current_user, orders[0].store_id, db)
+    valid_statuses = ["ARRIVED_SA", "SA_PICKUP", "COMPLETED"]
+
+    succeeded = []
+    skipped_not_arrived = []
+    failed = []
+    pdf_bytes_list = []
+
+    operator_name = current_user.username if current_user else "SYSTEM"
+
+    for o in orders:
+        # 拦截：非到达南非订单自动跳过
+        if o.fulfillment_status not in valid_statuses:
+            skipped_not_arrived.append({
+                "id": o.id,
+                "order_sn": o.order_id,
+                "status": o.fulfillment_status,
+                "reason": f"未到达南非 (当前: {format_status_zh(o.fulfillment_status)})"
+            })
+            continue
+
+        try:
+            res = MakroPortalService.book_last_mile_dispatch(
+                store=store,
+                order=o,
+                db=db,
+                operator=operator_name
+            )
+            succeeded.append({
+                "id": o.id,
+                "order_sn": o.order_id,
+                "tracking_id": o.tracking_id,
+                "courier_name": o.courier_name
+            })
+            import os
+            base_dir = os.path.dirname(os.path.dirname(__file__))
+            if o.waybill_pdf_path:
+                full_p = os.path.join(base_dir, "static", o.waybill_pdf_path)
+                if os.path.exists(full_p):
+                    with open(full_p, "rb") as f:
+                        pdf_bytes_list.append(f.read())
+        except Exception as e:
+            failed.append({
+                "id": o.id,
+                "order_sn": o.order_id,
+                "error": str(e)
+            })
+
+    merged_pdf_url = None
+    if pdf_bytes_list:
+        try:
+            merged_bytes = MakroPortalService.batch_merge_pdf_bytes(pdf_bytes_list)
+            import os
+            base_dir = os.path.dirname(os.path.dirname(__file__))
+            batch_dir = os.path.join(base_dir, "static", "labels", "batches")
+            os.makedirs(batch_dir, exist_ok=True)
+            batch_filename = f"batch_waybills_{store.id}_{int(datetime.now().timestamp())}.pdf"
+            batch_path = os.path.join(batch_dir, batch_filename)
+            with open(batch_path, "wb") as f:
+                f.write(merged_bytes)
+            merged_pdf_url = f"/api/store-orders/batch-official-waybill/download?file={batch_filename}"
+        except Exception as e:
+            logger.warning(f"合并批量面单 PDF 异常: {e}")
+
+    return {
+        "success": len(succeeded) > 0,
+        "total": len(orders),
+        "succeeded_count": len(succeeded),
+        "skipped_count": len(skipped_not_arrived),
+        "failed_count": len(failed),
+        "succeeded": succeeded,
+        "skipped": skipped_not_arrived,
+        "failed": failed,
+        "merged_pdf_url": merged_pdf_url
+    }
+
+@router.get("/batch-official-waybill/download", summary="下载合并的批量官方面单 PDF")
+def download_batch_official_waybill_file(
+    file: str = Query(..., description="合并文件名"),
+    current_user: User = Depends(get_current_user)
+):
+    import os
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    safe_filename = os.path.basename(file)
+    file_path = os.path.join(base_dir, "static", "labels", "batches", safe_filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="批量面单文件不存在或已过期")
+    with open(file_path, "rb") as f:
+        content = f.read()
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'}
+    )
+
+@router.post("/batch-official-waybill/pdf", summary="批量合并勾选订单的官方面单并直接流式下载")
+def merge_and_download_selected_waybills(
+    req: BatchLabelsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if not req.order_ids:
+        raise HTTPException(status_code=400, detail="请至少指定一个订单 ID")
+    orders = db.query(MakroOrder).filter(MakroOrder.id.in_(req.order_ids)).all()
+    if not orders:
+        raise HTTPException(status_code=404, detail="未找到所选订单")
+
+    store = _verify_store_access(current_user, orders[0].store_id, db)
+    import os
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+
+    pdf_bytes_list = []
+    now = datetime.now()
+    for o in orders:
+        b = None
+        if o.waybill_pdf_path:
+            p = os.path.join(base_dir, "static", o.waybill_pdf_path)
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    b = f.read()
+        if not b and o.shipment_id:
+            try:
+                b = MakroPortalService.download_official_shipping_label(store, [o.shipment_id])
+                waybills_dir = os.path.join(base_dir, "static", "labels", "waybills")
+                os.makedirs(waybills_dir, exist_ok=True)
+                pdf_filename = f"{store.id}_{o.order_id}_waybill.pdf"
+                with open(os.path.join(waybills_dir, pdf_filename), "wb") as f:
+                    f.write(b)
+                o.waybill_pdf_path = f"labels/waybills/{pdf_filename}"
+            except Exception as e:
+                logger.warning(f"下载订单 #{o.order_id} 官方面单异常: {e}")
+        if b:
+            pdf_bytes_list.append(b)
+            o.waybill_printed = True
+            o.waybill_printed_at = now
+
+    db.commit()
+
+    if not pdf_bytes_list:
+        raise HTTPException(status_code=400, detail="所选订单均尚未生成官方面单，请先点击【预约尾程】")
+
+    merged = MakroPortalService.batch_merge_pdf_bytes(pdf_bytes_list)
+    filename = f"Batch_Waybills_{len(pdf_bytes_list)}Orders.pdf"
+    return Response(
+        content=merged,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )

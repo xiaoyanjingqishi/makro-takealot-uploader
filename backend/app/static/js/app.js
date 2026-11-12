@@ -532,6 +532,7 @@ const app = createApp({
             order_date_start: '',
             order_date_end: '',
             label_printed: 'all',
+            dispatch_booked: 'all',
             search: '',
             counts: {},
             selectedIds: [],
@@ -552,6 +553,18 @@ const app = createApp({
             loading: false,
             order: null,
             logs: []
+          },
+          bookDispatchModal: {
+            open: false,
+            loading: false,
+            order: null,
+            form: {
+              box_count: 1,
+              length: 10.0,
+              breadth: 10.0,
+              height: 10.0,
+              weight_kg: 0.3
+            }
           },
           syncingOrders: false,
           showOrderFinanceConfigModal: false,

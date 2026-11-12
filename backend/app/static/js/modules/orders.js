@@ -37,6 +37,9 @@ export const ordersMethods = {
       if (this.orders.label_printed && this.orders.label_printed !== 'all') {
         url += `&label_printed=${encodeURIComponent(this.orders.label_printed)}`;
       }
+      if (this.orders.dispatch_booked && this.orders.dispatch_booked !== 'all') {
+        url += `&dispatch_booked=${encodeURIComponent(this.orders.dispatch_booked)}`;
+      }
 
       // 附加可配置结算参数
       const cfg = this.orderFinanceConfig || {};
@@ -806,6 +809,235 @@ export const ordersMethods = {
     }
   },
 
+  // =========================================================================
+  // Makro 官方尾程物流预约与官方面单下载
+  // =========================================================================
+
+  // 智能 API 错误提取器 (防止 Pydantic 校验错误数组或服务端对象在 Toast 中显示 [object Object])
+  formatApiError(err, fallback = '请求失败') {
+    if (!err) return fallback;
+    if (typeof err === 'string') return err;
+    if (typeof err.detail === 'string') return err.detail;
+    if (Array.isArray(err.detail) && err.detail.length > 0) {
+      return err.detail.map(d => (d && d.msg) ? `${d.loc ? d.loc.slice(-1) + ': ' : ''}${d.msg}` : JSON.stringify(d)).join('; ');
+    }
+    if (typeof err.detail === 'object' && err.detail !== null) {
+      return err.detail.message || JSON.stringify(err.detail);
+    }
+    if (err.message) return err.message;
+    return fallback;
+  },
+
+  openBookDispatchModal(order) {
+    if (!order) return;
+    const valid = ['ARRIVED_SA', 'SA_PICKUP', 'COMPLETED'];
+    if (!valid.includes(order.fulfillment_status)) {
+      this.showToast(`该订单当前处于【${this.formatStatusZh ? this.formatStatusZh(order.fulfillment_status) : order.fulfillment_status}】阶段，只有【到达南非】后方可预约尾程物流面单`, 'warning');
+      return;
+    }
+    this.bookDispatchModal.order = order;
+    const d = order.default_dimensions || {};
+    this.bookDispatchModal.form = {
+      box_count: 1,
+      length: d.length || 10.0,
+      breadth: d.breadth || 10.0,
+      height: d.height || 10.0,
+      weight_kg: d.weight_kg || (order.total_weight_g ? (order.total_weight_g / 1000.0) : 0.3)
+    };
+    this.bookDispatchModal.open = true;
+  },
+
+  closeBookDispatchModal() {
+    this.bookDispatchModal.open = false;
+    this.bookDispatchModal.order = null;
+    this.bookDispatchModal.loading = false;
+  },
+
+  async submitBookDispatch() {
+    const o = this.bookDispatchModal.order;
+    if (!o) return;
+    this.bookDispatchModal.loading = true;
+    try {
+      this.showToast(`⏳ 正在向 Makro 网关预约尾程物流 [订单 #${o.order_id}]...`, 'info');
+      const res = await fetch(`/api/store-orders/${o.id}/book-dispatch`, {
+        method: 'POST',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          box_count: this.bookDispatchModal.form.box_count || 1,
+          length: Number(this.bookDispatchModal.form.length || 10.0),
+          breadth: Number(this.bookDispatchModal.form.breadth || 10.0),
+          height: Number(this.bookDispatchModal.form.height || 10.0),
+          weight_kg: Number(this.bookDispatchModal.form.weight_kg || 0.3)
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = this.formatApiError(err, res.statusText);
+        this.showToast(`❌ 预约尾程物流失败: ${errMsg}`, 'error');
+        this.bookDispatchModal.loading = false;
+        return;
+      }
+
+      const data = await res.json();
+      // 同步就地更新本地响应式订单状态
+      o.is_dispatch_booked = true;
+      o.tracking_id = data.tracking_id;
+      o.courier_name = data.courier_name || 'DPD-Laser';
+      o.status = 'to_dispatch';
+      o.fulfillment_status = 'SA_PICKUP';
+      o.can_book_dispatch = false;
+
+      this.showToast(`🚀 尾程物流预约成功 (单号: ${data.tracking_id || '-'})！正在自动下载官方面单 PDF...`, 'success');
+      this.closeBookDispatchModal();
+
+      // 零延时自动拉起官方面单下载
+      await this.downloadOfficialWaybill(o.id, o.order_id);
+    } catch (e) {
+      this.showToast(`预约尾程网络异常: ${e.message}`, 'error');
+      this.bookDispatchModal.loading = false;
+    }
+  },
+
+  async downloadOfficialWaybill(orderId, orderSn) {
+    try {
+      this.showToast(`⏳ 正在获取订单 #${orderSn || orderId} 官方物流面单 PDF...`, 'info');
+      const res = await fetch(`/api/store-orders/${orderId}/official-waybill/pdf`, {
+        headers: this.getAuthHeaders()
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        this.showToast(`❌ 下载官方面单失败: ${err.detail || res.statusText}`, 'error');
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Waybill_${orderSn || orderId}_DPD.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      const targetOrder = (this.orders.items || []).find(o => o.id === orderId);
+      if (targetOrder) {
+        targetOrder.waybill_printed = true;
+        targetOrder.is_dispatch_booked = true;
+      }
+      this.showToast(`📄 官方物流面单下载成功 (DPD-Laser)`, 'success');
+    } catch (e) {
+      this.showToast(`下载官方面单异常: ${e.message}`, 'error');
+    }
+  },
+
+  async batchBookDispatch() {
+    const ids = this.orders.selectedIds || [];
+    if (ids.length === 0) {
+      this.showToast('请至少勾选一笔订单', 'warning');
+      return;
+    }
+
+    const selectedOrders = (this.orders.items || []).filter(o => ids.includes(o.id));
+    const eligibleOrders = selectedOrders.filter(o => ['ARRIVED_SA', 'SA_PICKUP', 'COMPLETED'].includes(o.fulfillment_status));
+    const ineligibleCount = selectedOrders.length - eligibleOrders.length;
+
+    if (eligibleOrders.length === 0) {
+      this.showToast('所选订单均未到达南非，暂不可预约尾程面单', 'warning');
+      return;
+    }
+
+    let confirmMsg = `已勾选 ${selectedOrders.length} 笔订单，其中 ${eligibleOrders.length} 笔已到达南非可预约`;
+    if (ineligibleCount > 0) {
+      confirmMsg += `，${ineligibleCount} 笔尚未到达南非将自动跳过`;
+    }
+    confirmMsg += `。\n\n确认立即向 Makro 官方网关批量预约尾程发货并自动合并下载面单？`;
+
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
+    try {
+      this.showToast(`⏳ 正在批量预约 ${eligibleOrders.length} 笔订单尾程物流...`, 'info');
+      const res = await fetch('/api/store-orders/batch-book-dispatch', {
+        method: 'POST',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ order_ids: eligibleOrders.map(o => o.id) })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = this.formatApiError(err, res.statusText);
+        this.showToast(`❌ 批量预约失败: ${errMsg}`, 'error');
+        return;
+      }
+
+      const data = await res.json();
+      this.showToast(`🎉 批量预约完成 (成功 ${data.succeeded_count} 笔，跳过 ${data.skipped_count} 笔，失败 ${data.failed_count} 笔)`, 'success');
+
+      // 自动触发合并多页面单下载
+      if (data.merged_pdf_url) {
+        this.showToast(`📄 正在自动下载合并的多页面单 PDF...`, 'info');
+        const link = document.createElement('a');
+        link.href = data.merged_pdf_url;
+        link.download = `Batch_Waybills_${data.succeeded_count}Orders.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // 重新加载订单列表刷新状态
+      await this.loadStoreOrders(this.orders.page);
+    } catch (e) {
+      this.showToast(`批量预约尾程异常: ${e.message}`, 'error');
+    }
+  },
+
+  async downloadBatchOfficialWaybills() {
+    const ids = this.orders.selectedIds || [];
+    if (ids.length === 0) {
+      this.showToast('请至少勾选一笔订单', 'warning');
+      return;
+    }
+
+    try {
+      this.showToast(`⏳ 正在合并生成所选 ${ids.length} 笔订单的官方面单 PDF...`, 'info');
+      const res = await fetch('/api/store-orders/batch-official-waybill/pdf', {
+        method: 'POST',
+        headers: this.getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ order_ids: ids })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = this.formatApiError(err, res.statusText);
+        this.showToast(`❌ 批量下载官方面单失败: ${errMsg}`, 'error');
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Batch_Waybills_${ids.length}_Orders.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      this.showToast(`🎉 成功合并导出 ${ids.length} 笔订单官方物流面单 PDF`, 'success');
+      // 标记已打面单
+      (this.orders.items || []).forEach(o => {
+        if (ids.includes(o.id)) {
+          o.waybill_printed = true;
+          o.is_dispatch_booked = true;
+        }
+      });
+    } catch (e) {
+      this.showToast(`批量下载官方面单异常: ${e.message}`, 'error');
+    }
+  },
+
   // 快捷设置出单日期范围过滤
   setDateFilter(range) {
     const today = new Date();
@@ -1347,20 +1579,13 @@ export const ordersMethods = {
     return 'bg-slate-100 text-slate-700 border-slate-200';
   },
 
-  // 状态中文映射辅助
+  // 状态中文映射辅助 (多命名兼容与空值兜底)
   formatStatusZh(st) {
-    const map = {
-      'NEW': '新订单',
-      'PURCHASED': '已采购',
-      'PO_PACKING': 'PO打包',
-      'SENT_TO_FORWARDER': '发送货代',
-      'AIR_FREIGHT': '货代空运',
-      'ARRIVED_SA': '到达南非',
-      'SA_PICKUP': '南非取件',
-      'COMPLETED': '订单完结',
-      'CANCELLED_RTO': '异常退回'
-    };
-    return map[st] || st;
+    return this.formatFulfillmentState ? this.formatFulfillmentState(st) : (st || '-');
+  },
+
+  format_status_zh(st) {
+    return this.formatFulfillmentState ? this.formatFulfillmentState(st) : (st || '-');
   },
 
   // ================= 运营走向大盘 (Order Operations Dashboard) =================

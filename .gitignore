@@ -77,3 +77,6 @@ test_protocols.py
 *.pem
 makro-system-*-handover.zip
 reports/
+
+# Generated shipping labels & waybills
+backend/app/static/labels/**/*.pdf

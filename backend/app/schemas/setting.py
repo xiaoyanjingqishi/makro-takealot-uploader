@@ -96,6 +96,7 @@ class CostPricingCalculateRequest(BaseModel):
 
 
 class SyncCredentialsRequest(BaseModel):
+    store_id: Optional[int] = None
     seller_id: Optional[str] = None
     fk_csrf_token: Optional[str] = None
     cookie: Optional[str] = None

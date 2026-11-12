@@ -1286,3 +1286,390 @@ class MakroPortalService:
             "failed_count": len(failed_skus),
             "errors": errors
         }
+
+    # =========================================================================
+    # Makro 官方尾程物流预约与官方面单下载 (Last-Mile Dispatch & Waybill PDF)
+    # =========================================================================
+
+    @classmethod
+    def get_otc_details(cls, store: Store, shipment_ids: List[str]) -> Dict[str, Any]:
+        """查询发货运单的 OTC (序列号/IMEI/强制字段) 校验详情"""
+        url = f"{MAKRO_HOST}/napi/shipments/getOTCDetails?sellerId={store.seller_id}"
+        headers = cls._build_headers(store)
+        payload = {
+            "shipment_ids": shipment_ids,
+            "sellerId": store.seller_id
+        }
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code in [401, 403]:
+            raise Exception(f"Makro 官方登录凭证已失效 (HTTP {resp.status_code})，请前往多店铺管理重新登录或更新该店铺 Cookie 后重试")
+        if resp.status_code != 200:
+            raise Exception(f"查询 OTC 校验详情异常 (HTTP {resp.status_code}): {resp.text[:200]}")
+        return resp.json()
+
+    @classmethod
+    def validate_lbhw(
+        cls,
+        store: Store,
+        order: MakroOrder,
+        dimensions: Optional[Dict[str, Any]] = None,
+        only_serviceability_check: bool = False
+    ) -> Dict[str, Any]:
+        """校验包裹尺寸重量与可达性并提交更新 (LBH/W Update & Serviceability Check)"""
+        url = f"{MAKRO_HOST}/napi/lbhw/updateV2?isCartmanValidationEnabled=false&sellerId={store.seller_id}"
+        headers = cls._build_headers(store)
+
+        raw_payload = {}
+        if order.raw_payload_json:
+            try:
+                raw_payload = json.loads(order.raw_payload_json)
+            except Exception:
+                pass
+
+        shipment_id = order.shipment_id or raw_payload.get("id")
+        if not shipment_id:
+            raise ValueError(f"订单 #{order.order_id} 缺少官方运单编号 (shipment_id)")
+
+        order_items = raw_payload.get("order_items", [])
+        item0 = order_items[0] if order_items else {}
+        p_details = item0.get("product_details", {})
+        fsn = item0.get("fsn", "")
+        listing_id = item0.get("listing_id", "")
+        vertical = p_details.get("vertical", "general")
+
+        buyer = raw_payload.get("buyer", {})
+        shipping_addr = buyer.get("shipping_address", {})
+        pincode = shipping_addr.get("pincode") or order.shipping_pincode or 2091
+        try:
+            postal_codes = int(pincode)
+        except Exception:
+            postal_codes = 2091
+
+        sub_shipments = raw_payload.get("sub_shipments", [])
+        sub_id = "SS-1"
+        package_id = "PKG" + (fsn or str(order.order_id))
+        if sub_shipments and sub_shipments[0].get("packages"):
+            pkg0 = sub_shipments[0]["packages"][0]
+            package_id = pkg0.get("package_id") or package_id
+            sub_id = sub_shipments[0].get("external_sub_shipment_id") or sub_id
+
+        # 尺寸与重量确定: 优先入参 -> 次优先实测克重 -> 兜底标称
+        dims = dimensions or {}
+        length = float(dims.get("length") or p_details.get("length") or 10.0)
+        breadth = float(dims.get("breadth") or p_details.get("breadth") or 10.0)
+        height = float(dims.get("height") or p_details.get("height") or 10.0)
+
+        if dims.get("weight_kg") is not None:
+            weight_kg = float(dims.get("weight_kg"))
+        elif order.total_weight_g and order.total_weight_g > 0:
+            weight_kg = round(float(order.total_weight_g) / 1000.0, 3)
+        else:
+            weight_kg = float(p_details.get("weight") or 0.3)
+
+        if weight_kg <= 0:
+            weight_kg = 0.3
+
+        weight_g = int(round(weight_kg * 1000))
+        size_label = "SMALL" if weight_kg < 2.0 else ("MEDIUM" if weight_kg < 5.0 else "LARGE")
+
+        payload = {
+            "fsn": fsn,
+            "shipmentId": shipment_id,
+            "listingId": listing_id,
+            "postal_codes": postal_codes,
+            "onlyServiceabilityCheck": only_serviceability_check,
+            "packWeightAnomaly": True,
+            "items": [{"vertical": vertical, "handling_attributes": []}],
+            "enablePickupServiciability": True,
+            "size": size_label,
+            "subShipmentId": sub_id,
+            "serviceabilityPayload": [{
+                "shipment_id": sub_id,
+                "length": length,
+                "breadth": breadth,
+                "height": height,
+                "weight": weight_kg,
+                "size": size_label,
+                "items": [{"vertical": vertical, "handling_attributes": []}]
+            }],
+            "cartmanPayload": [{
+                "external_sub_shipment_id": sub_id,
+                "dimensions": {
+                    "length": length,
+                    "breadth": breadth,
+                    "height": height,
+                    "weight": weight_g
+                }
+            }],
+            "listingPayload": [{
+                "id": {"value": package_id},
+                "length": {"value": length, "qualifier": "CM"},
+                "breadth": {"value": breadth, "qualifier": "CM"},
+                "height": {"value": height, "qualifier": "CM"},
+                "weight": {"value": weight_kg, "qualifier": "KG"}
+            }],
+            "isMps": False,
+            "locationId": store.default_location_id or "",
+            "sellerId": store.seller_id
+        }
+
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code in [401, 403]:
+            raise Exception(f"Makro 官方登录凭证已失效 (HTTP {resp.status_code})，请前往多店铺管理重新登录或更新该店铺 Cookie 后重试")
+        if resp.status_code != 200:
+            raise Exception(f"包裹规格校验接口响应异常 (HTTP {resp.status_code}): {resp.text[:200]}")
+
+        res_data = resp.json()
+        is_serv = (res_data.get("isServiceable") or {}).get("serviceable", True)
+        if not is_serv:
+            raise Exception("Makro 网关返回：该目的地当前不支持物流派送 (Serviceable: false)")
+
+        w_valid = res_data.get("weigthValidation") or {}
+        shipments_arr = w_valid.get("shipments") or []
+        if shipments_arr:
+            s0 = shipments_arr[0]
+            if s0.get("disable_pack"):
+                msg = s0.get("message") or "重量或箱规存在异常，无法预约打包"
+                raise Exception(f"Makro 包装校验未通过: {msg}")
+
+        return res_data
+
+    @classmethod
+    def poll_confirm_pack_status(
+        cls,
+        store: Store,
+        shipment_id: str,
+        max_retries: int = 25,
+        delay_sec: float = 2.5
+    ) -> bool:
+        """轮询 Makro 官方打包发货确认状态，直至分配物流承运商成功并生成面单"""
+        import time
+        url = f"{MAKRO_HOST}/napi/shipments/confirmPackStatus?shipment_ids%5B%5D={shipment_id}&sellerId={store.seller_id}"
+        headers = cls._build_headers(store)
+
+        for attempt in range(max_retries):
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.status_code in [401, 403]:
+                raise Exception(f"Makro 官方登录凭证已失效 (HTTP {resp.status_code})，请前往多店铺管理重新登录或更新该店铺 Cookie 后重试")
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        item = data[0]
+                        if item.get("confirmed") is True:
+                            logger.info(f"运单 {shipment_id} 预约发货确认成功 (第 {attempt + 1} 次轮询)")
+                            return True
+                except Exception as e:
+                    logger.warning(f"解析 confirmPackStatus 返回异常: {e}")
+
+            # 轮询探测：若已经轮询了 3 次以上且每 2 次检查一次官方面单流是否已就绪
+            if attempt >= 3 and attempt % 2 == 0:
+                try:
+                    test_url = f"{MAKRO_HOST}/napi/shipments/print_labels?shipmentIds={shipment_id}&useNewTemplate=false&locationId={store.default_location_id or ''}&sellerId={store.seller_id}"
+                    t_resp = requests.get(test_url, headers=cls._build_headers(store, extra={"accept": "*/*"}), timeout=10)
+                    if t_resp.status_code == 200 and len(t_resp.content) > 500 and t_resp.content.startswith(b"%PDF"):
+                        logger.info(f"运单 {shipment_id} 官方面单已就绪，承运商分配完成 (第 {attempt + 1} 次检查)")
+                        return True
+                except Exception:
+                    pass
+
+            time.sleep(delay_sec)
+
+        # 最终兜底检查：再次尝试 print_labels，如已生成则直接放行，避免超时误报
+        try:
+            test_url = f"{MAKRO_HOST}/napi/shipments/print_labels?shipmentIds={shipment_id}&useNewTemplate=false&locationId={store.default_location_id or ''}&sellerId={store.seller_id}"
+            t_resp = requests.get(test_url, headers=cls._build_headers(store, extra={"accept": "*/*"}), timeout=15)
+            if t_resp.status_code == 200 and len(t_resp.content) > 500 and t_resp.content.startswith(b"%PDF"):
+                logger.info(f"运单 {shipment_id} 最终兜底检查面单已就绪")
+                return True
+        except Exception:
+            pass
+
+        raise Exception(f"Makro 物流承运商分配排队中（已等待约 {int(max_retries * delay_sec)} 秒）。网关已接收发货请求，承运商后台正在生成单号，请稍等 1-2 分钟后刷新页面直接下载面单")
+
+    @classmethod
+    def download_official_shipping_label(cls, store: Store, shipment_ids: List[str]) -> bytes:
+        """从 Makro 网关直接请求并下载官方物流面单 PDF 二进制字节流"""
+        shipment_ids_str = ",".join(shipment_ids)
+        url = f"{MAKRO_HOST}/napi/shipments/print_labels?shipmentIds={shipment_ids_str}&useNewTemplate=false&locationId={store.default_location_id or ''}&sellerId={store.seller_id}"
+        headers = cls._build_headers(store, extra={"accept": "*/*"})
+        resp = requests.get(url, headers=headers, timeout=35)
+        if resp.status_code in [401, 403]:
+            raise Exception(f"Makro 官方登录凭证已失效 (HTTP {resp.status_code})，请前往多店铺管理重新登录或更新该店铺 Cookie 后重试")
+        if resp.status_code != 200:
+            raise Exception(f"下载官方物流面单异常 (HTTP {resp.status_code}): {resp.text[:200]}")
+        content = resp.content
+        if not content or len(content) < 50:
+            raise Exception("Makro 网关返回的面单文件内容为空")
+        return content
+
+    @classmethod
+    def search_order_detail_by_id(cls, store: Store, order_id: str) -> Optional[Dict[str, Any]]:
+        """按订单号精确查回官方最新的履约单号及快递信息快照"""
+        url = f"{MAKRO_HOST}/napi/my-orders/search?sellerId={store.seller_id}"
+        headers = cls._build_headers(store)
+        payload = {
+            "status": "order_id_search",
+            "payload": {
+                "params": {
+                    "seller_id": store.seller_id,
+                    "service_profile": "NON_FBF",
+                    "type": "NORMAL",
+                    "id": str(order_id)
+                }
+            },
+            "sellerId": store.seller_id
+        }
+        resp = requests.post(url, headers=headers, json=payload, timeout=25)
+        if resp.status_code == 200:
+            try:
+                data = resp.json()
+                items = data.get("items") or []
+                if items and isinstance(items[0], list) and len(items[0]) > 0:
+                    return items[0][0]
+                elif items and isinstance(items[0], dict):
+                    return items[0]
+            except Exception as e:
+                logger.warning(f"解析订单 search 响应异常: {e}")
+        return None
+
+    @classmethod
+    def batch_merge_pdf_bytes(cls, pdf_bytes_list: List[bytes]) -> bytes:
+        """使用 PyMuPDF 将多份官方物流面单 PDF 合并为单份多页连打 PDF 文件"""
+        import fitz
+        merged_doc = fitz.open()
+        for b in pdf_bytes_list:
+            if not b:
+                continue
+            doc = fitz.open(stream=b, filetype="pdf")
+            merged_doc.insert_pdf(doc)
+            doc.close()
+        out = merged_doc.tobytes()
+        merged_doc.close()
+        return out
+
+    @classmethod
+    def book_last_mile_dispatch(
+        cls,
+        store: Store,
+        order: MakroOrder,
+        dimensions: Optional[Dict[str, Any]] = None,
+        db: Optional[Session] = None,
+        operator: str = "SYSTEM"
+    ) -> Dict[str, Any]:
+        """
+        全闭环执行 Makro 官方尾程物流预约与面单生成:
+        1. 阶段校验: 仅 ARRIVED_SA (或已在南非现货) 允许预约
+        2. OTC 字段校验
+        3. 包裹规格校验与服务可达性检验 (updateV2)
+        4. 轮询确认打包并分配承运商 (confirmPackStatus)
+        5. 下载官方物流面单 PDF 并本地缓存
+        6. 回查单号更新数据库并记录流转日志
+        """
+        # 1. 严格阶段拦截: 只有到达南非的订单才可以预约尾程
+        valid_statuses = ["ARRIVED_SA", "SA_PICKUP", "COMPLETED"]
+        if order.fulfillment_status not in valid_statuses:
+            raise ValueError(f"订单 #{order.order_id} 当前履约状态为【{order.fulfillment_status}】，只有【到达南非】后方可预约尾程物流面单")
+
+        shipment_id = order.shipment_id
+        if not shipment_id and order.raw_payload_json:
+            try:
+                rp = json.loads(order.raw_payload_json)
+                shipment_id = rp.get("id")
+            except Exception:
+                pass
+
+        if not shipment_id:
+            raise ValueError(f"订单 #{order.order_id} 缺少官方 Shipment ID，无法预约尾程")
+
+        # 2. OTC 校验
+        cls.get_otc_details(store, [shipment_id])
+
+        # 3. 包裹尺寸与重量校验并正式提交更新 (onlyServiceabilityCheck=False 触发网关打包排队)
+        cls.validate_lbhw(store, order, dimensions=dimensions, only_serviceability_check=False)
+
+        # 4. 轮询等待物流承运商分配完成并确认面单生成
+        cls.poll_confirm_pack_status(store, shipment_id, max_retries=25, delay_sec=2.5)
+
+        # 5. 下载官方面单 PDF
+        pdf_bytes = cls.download_official_shipping_label(store, [shipment_id])
+
+        # 缓存 PDF 到本地 static/labels/waybills/
+        import os
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        waybills_dir = os.path.join(base_dir, "static", "labels", "waybills")
+        os.makedirs(waybills_dir, exist_ok=True)
+        pdf_filename = f"{store.id}_{order.order_id}_waybill.pdf"
+        file_path = os.path.join(waybills_dir, pdf_filename)
+        with open(file_path, "wb") as f:
+            f.write(pdf_bytes)
+
+        rel_path = f"labels/waybills/{pdf_filename}"
+
+        # 6. 回查官方订单详情获取真实跟踪单号
+        updated_shipment = cls.search_order_detail_by_id(store, order.order_id)
+        tracking_id = None
+        courier_name = None
+        if updated_shipment:
+            tracking_info = updated_shipment.get("tracking") or {}
+            sub_shipments = updated_shipment.get("sub_shipments") or []
+            sub0_tracking = sub_shipments[0].get("tracking") if (sub_shipments and isinstance(sub_shipments[0], dict)) else {}
+
+            tracking_id = (
+                tracking_info.get("tracking_id")
+                or tracking_info.get("pickup_tracking_id")
+                or (sub0_tracking.get("tracking_id") if sub0_tracking else None)
+                or (sub0_tracking.get("pickup_tracking_id") if sub0_tracking else None)
+                or updated_shipment.get("tracking_id")
+            )
+            courier_name = (
+                tracking_info.get("delivery_vendor_display_name")
+                or tracking_info.get("pickup_vendor_display_name")
+                or tracking_info.get("courier_name")
+                or (sub0_tracking.get("delivery_vendor_display_name") if sub0_tracking else None)
+                or (sub0_tracking.get("pickup_vendor_display_name") if sub0_tracking else None)
+                or "DPD-Laser"
+            )
+
+        # 7. 更新本地数据库
+        old_status = order.status
+        order.is_dispatch_booked = True
+        order.dispatch_booked_at = datetime.now()
+        order.waybill_printed = True
+        order.waybill_printed_at = datetime.now()
+        order.waybill_pdf_path = rel_path
+        order.status = "to_dispatch"
+
+        if tracking_id:
+            order.tracking_id = tracking_id
+        if courier_name:
+            order.courier_name = courier_name
+            order.delivery_vendor = courier_name
+
+        if order.fulfillment_status == "ARRIVED_SA":
+            order.fulfillment_status = "SA_PICKUP"
+            order.fulfillment_updated_at = datetime.now()
+
+        if db:
+            log_entry = MakroOrderStatusLog(
+                order_id=order.id,
+                order_sn=order.order_id,
+                change_type="DISPATCH_BOOKED",
+                from_status=old_status,
+                to_status="to_dispatch",
+                operator=operator,
+                note=f"尾程物流预约成功，承运商: {order.courier_name or 'DPD-Laser'}，单号: {order.tracking_id or '-'}"
+            )
+            db.add(log_entry)
+            db.commit()
+            db.refresh(order)
+
+        return {
+            "success": True,
+            "order_id": order.order_id,
+            "shipment_id": shipment_id,
+            "tracking_id": order.tracking_id,
+            "courier_name": order.courier_name or "DPD-Laser",
+            "pdf_path": rel_path,
+            "pdf_bytes_len": len(pdf_bytes)
+        }

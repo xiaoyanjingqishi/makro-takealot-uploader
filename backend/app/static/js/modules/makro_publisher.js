@@ -139,7 +139,7 @@ export const makro_publisherMethods = {
     }
     this.batchPublishTarget = 'all';
     if (this.activeStores.length > 0 && !this.batchPublishTargetStoreId) {
-      this.batchPublishTargetStoreId = this.activeStores[0].id;
+      this.batchPublishTargetStoreId = this.selectedStoreId || this.activeStores[0].id;
     }
     this.batchPublishForce = false;
     this.showBatchPublishModal = true;

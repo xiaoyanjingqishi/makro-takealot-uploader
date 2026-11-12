@@ -272,9 +272,14 @@ def list_store_products(
     items = query.offset((page - 1) * page_size).limit(page_size).all()
 
     # 统计各状态计数
-    state_counts = {}
+    state_rows = db.query(
+        MakroListing.internal_state, func.count(MakroListing.id)
+    ).filter(
+        MakroListing.store_id == store.id
+    ).group_by(MakroListing.internal_state).all()
+    state_counts = {r[0]: r[1] for r in state_rows if r[0]}
     for st in ["ACTIVE", "READY_FOR_ACTIVATION", "INACTIVE", "INACTIVATED_BY_FLIPKART", "ARCHIVED"]:
-        state_counts[st] = db.query(MakroListing).filter(MakroListing.store_id == store.id, MakroListing.internal_state == st).count()
+        state_counts.setdefault(st, 0)
 
     results = []
     for it in items:

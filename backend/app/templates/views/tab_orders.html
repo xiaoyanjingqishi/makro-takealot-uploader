@@ -835,6 +835,24 @@
                 <span>🏷️</span>
                 <span>批量打印 40×30 标签</span>
               </button>
+              <!-- 批量预约尾程物流 -->
+              <button 
+                @click="batchBookDispatch()" 
+                class="px-3 py-1 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1"
+                title="一键批量预约到达南非的订单尾程物流，并自动下载合并的官方物流面单 PDF"
+              >
+                <span>🚀</span>
+                <span>批量预约尾程</span>
+              </button>
+              <!-- 批量下载已有官方面单 -->
+              <button 
+                @click="downloadBatchOfficialWaybills()" 
+                class="px-3 py-1 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1"
+                title="批量合并下载所选订单的 Makro 官方物流面单 PDF"
+              >
+                <span>📄</span>
+                <span>批量官方面单</span>
+              </button>
               <button 
                 @click="openCreatePoModal" 
                 class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition shadow-xs cursor-pointer flex items-center space-x-1"
@@ -998,6 +1016,37 @@
                     class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
                   >
                     ⏳ 未打单
+                  </button>
+                </div>
+              </div>
+
+              <!-- 尾程面单预约状态筛选 -->
+              <div class="flex items-center space-x-2">
+                <span class="text-slate-500 font-medium flex items-center space-x-1">
+                  <span>🚚</span>
+                  <span>尾程预约:</span>
+                </span>
+                <div class="flex items-center space-x-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                  <button 
+                    @click="orders.dispatch_booked = 'all'; loadStoreOrders(1)"
+                    :class="orders.dispatch_booked === 'all' ? 'bg-white text-slate-900 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'"
+                    class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
+                  >
+                    全部
+                  </button>
+                  <button 
+                    @click="orders.dispatch_booked = 'unbooked'; loadStoreOrders(1)"
+                    :class="orders.dispatch_booked === 'unbooked' ? 'bg-amber-600 text-white font-bold shadow-2xs' : 'text-slate-600 hover:text-amber-700'"
+                    class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
+                  >
+                    ⏳ 未预约
+                  </button>
+                  <button 
+                    @click="orders.dispatch_booked = 'booked'; loadStoreOrders(1)"
+                    :class="orders.dispatch_booked === 'booked' ? 'bg-emerald-600 text-white font-bold shadow-2xs' : 'text-slate-600 hover:text-emerald-700'"
+                    class="px-2 py-0.5 rounded text-[11px] transition cursor-pointer"
+                  >
+                    🟢 已预约
                   </button>
                 </div>
                 <span class="text-[10px] text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100" title="所有出单与履约时间均已精准转换为北京时间 (UTC+8)">
@@ -1417,14 +1466,68 @@
                     <div v-if="o.tracking_id" class="text-[10px] font-mono text-indigo-600 font-bold mt-1 truncate" :title="o.tracking_id">
                       运单: {{ o.tracking_id }}
                     </div>
+
+                    <!-- 尾程物流预约便签徽章 (明显便签) -->
+                    <div class="mt-1.5">
+                      <!-- 已预约 -->
+                      <div v-if="o.is_dispatch_booked || o.tracking_id" class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-300 text-emerald-800 text-[10px] font-bold" :title="`尾程物流已预约\n承运商: ${o.courier_name || 'DPD-Laser'}\n运单号: ${o.tracking_id || '-'}`">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                        <span>🟢 尾程已预约</span>
+                        <span class="font-mono text-emerald-700 ml-0.5">({{ o.courier_name || 'DPD' }}: {{ o.tracking_id }})</span>
+                      </div>
+                      <!-- 到达南非 · 待预约 -->
+                      <div v-else-if="o.fulfillment_status === 'ARRIVED_SA'" class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-amber-900 text-[10px] font-bold animate-pulse" title="货物已到达南非本地仓库，可立即点击预约尾程面单">
+                        <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+                        <span>⚠️ 到达南非 · 可预约尾程</span>
+                      </div>
+                      <!-- 其它前置状态 · 未到南非 -->
+                      <div v-else class="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-400 text-[10px]" :title="`当前处于【${formatFulfillmentState(o.fulfillment_status) || o.fulfillment_status || '待处理'}】，到达南非后方可预约尾程`">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                        <span>⚪ 尾程待预约 (未到南非)</span>
+                      </div>
+                    </div>
                   </td>
 
-                  <!-- 操作列 (40×30 标签生成下载与称重录入) -->
+                  <!-- 操作列 (尾程预约、40×30标签与称重录入) -->
                   <td class="py-3 px-2 text-center space-y-1.5">
+                    <!-- 1. 尾程物流预约 / 官方面单下载 (按条件拦截或下载) -->
+                    <!-- 若已预约：显示可直接下载的【官方面单】 -->
+                    <button 
+                      v-if="o.is_dispatch_booked || o.tracking_id"
+                      @click="downloadOfficialWaybill(o.id, o.order_id)" 
+                      class="w-full px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer flex items-center justify-center space-x-1"
+                      title="下载/打印 Makro 官方物流面单 PDF (DPD-Laser 派送标)"
+                    >
+                      <span>📄</span>
+                      <span>官方面单</span>
+                    </button>
+                    <!-- 若未预约：且已到达南非 -> 允许点击预约 -->
+                    <button 
+                      v-else-if="o.fulfillment_status === 'ARRIVED_SA' || o.fulfillment_status === 'SA_PICKUP'"
+                      @click="openBookDispatchModal(o)" 
+                      class="w-full px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-xs cursor-pointer flex items-center justify-center space-x-1"
+                      title="货物已到达南非！点击预约 Makro 尾程快递打包并自动下载面单"
+                    >
+                      <span>🚀</span>
+                      <span>预约尾程</span>
+                    </button>
+                    <!-- 若未预约：但尚未到达南非 -> 置灰禁用不可点击 + 明确 Tooltip -->
+                    <button 
+                      v-else
+                      type="button"
+                      disabled
+                      class="w-full px-2 py-1 bg-slate-100 text-slate-400 border border-slate-200 rounded-lg text-xs font-medium opacity-50 cursor-not-allowed flex items-center justify-center space-x-1"
+                      :title="`该订单当前处于【${formatFulfillmentState(o.fulfillment_status) || o.fulfillment_status || '待处理'}】阶段，只有【到达南非】后方可预约尾程面单`"
+                    >
+                      <span>🔒</span>
+                      <span>预约尾程</span>
+                    </button>
+
+                    <!-- 2. 内部 40×30mm 防混标签 -->
                     <button 
                       @click="downloadOrderLabel(o.id, o.order_id)" 
                       class="w-full px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer flex items-center justify-center space-x-1"
-                      title="生成并下载 40×30mm 热敏打包防混标签 PDF (含 Code128 条形码 + 订单号 + 出单时间)"
+                      title="生成并下载 40×30mm 热敏打包防混标签 PDF (内部仓配)"
                     >
                       <span>🏷️</span>
                       <span>40×30标签</span>
@@ -3658,6 +3761,131 @@
                 <span v-if="addBufferStockModal.loading" class="animate-spin text-xs">🔄</span>
                 <span v-else>💾</span>
                 <span>{{ addBufferStockModal.loading ? '正在入库...' : '确认入库并加入现货池' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. 尾程物流预约与官方面单生成弹窗 -->
+        <div v-if="bookDispatchModal && bookDispatchModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col">
+            <div class="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-indigo-50/70 via-purple-50/40 to-white shrink-0">
+              <div class="flex items-center space-x-2">
+                <span class="text-xl">🚀</span>
+                <div>
+                  <h3 class="font-bold text-slate-900 text-sm">预约 Makro 官方尾程物流 (DPD-Laser)</h3>
+                  <div class="text-[11px] text-slate-400 font-mono">
+                    订单: #{{ bookDispatchModal.order?.order_id }} · 状态: 到达南非
+                  </div>
+                </div>
+              </div>
+              <button @click="closeBookDispatchModal" class="text-slate-400 hover:text-slate-600 text-lg cursor-pointer">✕</button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs overflow-y-auto max-h-[70vh]">
+              <!-- 收件信息卡片 -->
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-1">
+                <div class="flex items-center justify-between">
+                  <span class="font-bold text-slate-700">📍 收件人: {{ bookDispatchModal.order?.buyer_name || '买家' }}</span>
+                  <span class="font-mono text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                    {{ bookDispatchModal.order?.shipping_city }} · {{ bookDispatchModal.order?.shipping_pincode }}
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-500 truncate" :title="bookDispatchModal.order?.shipping_address_line1">
+                  {{ bookDispatchModal.order?.shipping_address_line1 }}
+                </div>
+              </div>
+
+              <!-- 箱数与尺寸规格 -->
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <label class="font-bold text-slate-800 flex items-center space-x-1">
+                    <span>📦 包裹箱规与承重配置</span>
+                  </label>
+                  <span class="text-[11px] text-slate-400">固定箱数: 1 箱 (单件发运)</span>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3">
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">长 (Length CM)</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      min="1"
+                      v-model.number="bookDispatchModal.form.length" 
+                      class="w-full text-xs font-mono font-bold py-1.5 px-2 border border-slate-200 rounded-lg bg-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">宽 (Breadth CM)</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      min="1"
+                      v-model.number="bookDispatchModal.form.breadth" 
+                      class="w-full text-xs font-mono font-bold py-1.5 px-2 border border-slate-200 rounded-lg bg-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-[11px] text-slate-500 mb-1">高 (Height CM)</label>
+                    <input 
+                      type="number" 
+                      step="0.1" 
+                      min="1"
+                      v-model.number="bookDispatchModal.form.height" 
+                      class="w-full text-xs font-mono font-bold py-1.5 px-2 border border-slate-200 rounded-lg bg-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="text-[11px] text-slate-500">实测包裹承重 (Weight KG)</label>
+                    <span class="text-[10.5px] text-indigo-600 font-mono">
+                      {{ (Number(bookDispatchModal.form.weight_kg || 0) * 1000).toFixed(0) }} 克 (g)
+                    </span>
+                  </div>
+                  <input 
+                    type="number" 
+                    step="0.01" 
+                    min="0.05"
+                    v-model.number="bookDispatchModal.form.weight_kg" 
+                    class="w-full text-xs font-mono font-bold py-1.5 px-2 border border-slate-200 rounded-lg bg-white outline-none focus:border-indigo-500"
+                  />
+                  <p class="text-[10px] text-slate-400 mt-1">
+                    💡 已默认自动读取系统中的实际称重记录 ({{ bookDispatchModal.order?.total_weight_g || 0 }}g)，可根据出库外包装增重微调。
+                  </p>
+                </div>
+              </div>
+
+              <!-- 自动化提示 -->
+              <div class="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100 flex items-start space-x-2">
+                <span class="text-base text-indigo-600">⚡</span>
+                <div class="text-[11px] text-slate-600 space-y-0.5">
+                  <div class="font-bold text-indigo-900">自动完成预约与下发面单</div>
+                  <div>提交后将自动校验规格并向 Makro 网关申请分配快递单号，预约成功后将<strong class="text-indigo-700">自动拉起下载官方面单 PDF</strong>。</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 底部操作按钮 -->
+            <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-end space-x-2 bg-slate-50/50 shrink-0">
+              <button 
+                type="button" 
+                @click="closeBookDispatchModal" 
+                class="px-3.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer transition shadow-2xs"
+              >
+                取消
+              </button>
+              <button 
+                type="button" 
+                @click="submitBookDispatch" 
+                :disabled="bookDispatchModal.loading"
+                class="px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-xs font-bold cursor-pointer transition shadow-xs flex items-center space-x-1.5 disabled:opacity-50 active:scale-95"
+              >
+                <span v-if="bookDispatchModal.loading" class="animate-spin text-xs">🔄</span>
+                <span v-else>🚀</span>
+                <span>{{ bookDispatchModal.loading ? '正在预约与生成面单...' : '确认预约并自动下载面单' }}</span>
               </button>
             </div>
           </div>

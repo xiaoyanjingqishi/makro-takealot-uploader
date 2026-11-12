@@ -6,27 +6,50 @@ export const storesMethods = {
   onStoreChange() {
     if (this.selectedStoreId) {
       localStorage.setItem('makro_selected_store_id', this.selectedStoreId);
-      const curStore = this.authorizedStores.find(s => s.id === this.selectedStoreId);
+      const curStore = (this.authorizedStores || []).find(s => s.id === this.selectedStoreId) || (this.stores || []).find(s => s.id === this.selectedStoreId);
       this.showToast(`已切换至店铺: ${curStore?.name || this.selectedStoreId}`, 'info');
       
-      // 联动同步更新跟品模块的 store_id
+      // 1. 清空所有跨店批量勾选项，杜绝串店误操作
+      this.selectedStoreProductSkus = [];
       if (this.piggyback) {
         this.piggyback.store_id = this.selectedStoreId;
-        this.clearPiggybackSelection();
+        if (typeof this.clearPiggybackSelection === 'function') this.clearPiggybackSelection();
+      }
+      if (this.reprice) {
+        this.reprice.selectedIds = [];
+      }
+      if (this.orders) {
+        this.orders.selectedOrderIds = [];
+      }
+
+      // 2. 联动弹窗目标店铺默认选择
+      if (this.collectPiggybackForm) this.collectPiggybackForm.store_id = this.selectedStoreId;
+      if (this.batchCollectPiggybackForm) this.batchCollectPiggybackForm.store_id = this.selectedStoreId;
+      if (this.batchPublishPiggybackTargetStoreId !== undefined) this.batchPublishPiggybackTargetStoreId = this.selectedStoreId;
+      if (this.batchPublishTargetStoreId !== undefined) this.batchPublishTargetStoreId = this.selectedStoreId;
+
+      // 3. 依据当前 Tab 触发全量联动刷新
+      if (this.currentTab === 'piggyback') {
         this.loadPiggybackItems(1);
         this.loadPiggybackVerticals();
-      }
-      
-      if (this.currentTab === 'store_products') {
+        if (typeof this.loadPiggybackKpi === 'function') this.loadPiggybackKpi();
+      } else if (this.currentTab === 'store_products') {
         this.loadStoreProducts(1);
+        if (typeof this.loadStoreProductVerticals === 'function') this.loadStoreProductVerticals();
+      } else if (this.currentTab === 'reprice') {
+        if (typeof this.loadRepriceItems === 'function') this.loadRepriceItems(1);
+        if (typeof this.loadRepriceSchedulerStatus === 'function') this.loadRepriceSchedulerStatus();
       } else if (this.currentTab === 'store_audits') {
-        this.loadStoreAudits(1);
+        if (typeof this.loadStoreAudits === 'function') this.loadStoreAudits(1);
       } else if (this.currentTab === 'orders') {
         if (this.orders?.activePerspective === 'dashboard') {
           this.loadOrderDashboard();
         } else {
           this.loadStoreOrders(1);
         }
+      } else if (this.currentTab === 'products') {
+        this.storePublishFilterStoreId = this.selectedStoreId;
+        this.loadProducts(1);
       }
     }
   },

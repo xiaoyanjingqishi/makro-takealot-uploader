@@ -219,9 +219,9 @@ def list_reprice_monitor_items(
             func.sum(case((StoreProductReprice.buybox_status == "FLOOR_HIT", 1), else_=0)),
             func.sum(case((StoreProductReprice.buybox_status == "NO_COMPETITOR", 1), else_=0)),
             func.sum(case((or_(StoreProductReprice.monitor_status == "BLOCKED", StoreProductReprice.compliance_status == "PROHIBITED"), 1), else_=0)),
-            func.sum(case((and_(StoreProductReprice.compliance_status == "SAFE", StoreProductReprice.compliance_details.isnot(None), StoreProductReprice.compliance_details != "", StoreProductReprice.compliance_details != "null", StoreProductReprice.compliance_details != "{}"), 1), else_=0)),
+            func.sum(case((StoreProductReprice.compliance_status == "SAFE", 1), else_=0)),
             func.sum(case((StoreProductReprice.compliance_status == "RISK", 1), else_=0)),
-            func.sum(case((or_(StoreProductReprice.compliance_status == "PENDING_CHECK", StoreProductReprice.compliance_status.is_(None), StoreProductReprice.compliance_details.is_(None), StoreProductReprice.compliance_details == "", StoreProductReprice.compliance_details == "null", StoreProductReprice.compliance_details == "{}"), 1), else_=0)),
+            func.sum(case((or_(StoreProductReprice.compliance_status == "PENDING_CHECK", StoreProductReprice.compliance_status.is_(None)), 1), else_=0)),
             func.sum(case((or_(StoreProductReprice.auto_reprice == False, StoreProductReprice.monitor_status == "PAUSED"), 1), else_=0)),
             func.sum(case((or_(StoreProductReprice.min_price_floor <= 0, StoreProductReprice.min_price_floor.is_(None)), 1), else_=0)),
             func.sum(case((StoreProductReprice.source_type == "PIGGYBACK", 1), else_=0)),
@@ -232,7 +232,10 @@ def list_reprice_monitor_items(
         ordered_skus_all, _ = get_store_ordered_skus(target_store_ids, db)
         ordered_monitored = 0
         if ordered_skus_all:
-            ordered_monitored = kpi_query.filter(StoreProductReprice.seller_sku.in_(ordered_skus_all)).count()
+            ordered_monitored = db.query(func.count(StoreProductReprice.id)).filter(
+                StoreProductReprice.store_id.in_(target_store_ids),
+                StoreProductReprice.seller_sku.in_(ordered_skus_all)
+            ).scalar() or 0
         kpi_dict = {
             "total_monitored": int(row[0] or 0) if row else 0,
             "auto_reprice_enabled": int(row[1] or 0) if row else 0,

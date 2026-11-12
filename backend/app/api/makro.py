@@ -545,7 +545,11 @@ def sync_credentials(req: SyncCredentialsRequest, db: Session = Depends(get_db))
 
     # 联动同步更新 stores 表中的店铺实体 (优先按 seller_id 匹配，兜底按默认/首个活跃店)
     matched_stores = []
-    if req.seller_id:
+    if getattr(req, "store_id", None):
+        target = db.query(Store).filter(Store.id == req.store_id).first()
+        if target:
+            matched_stores = [target]
+    if not matched_stores and req.seller_id:
         matched_stores = db.query(Store).filter(Store.seller_id == req.seller_id).all()
     if not matched_stores:
         matched_stores = db.query(Store).filter(Store.is_default == True, Store.is_active == True).all()

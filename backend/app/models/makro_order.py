@@ -77,6 +77,13 @@ class MakroOrder(Base):
     label_printed = Column(Boolean, default=False, index=True) # 是否已打印标签
     label_printed_at = Column(DateTime, nullable=True)         # 首次打单时间 (北京时间)
 
+    # 官方尾程物流预约与官方面单追踪 (Makro 官方 DPD-Laser / CourierGuy)
+    is_dispatch_booked = Column(Boolean, default=False, index=True)   # 尾程物流是否已预约
+    dispatch_booked_at = Column(DateTime, nullable=True)              # 尾程预约成功时间
+    waybill_printed = Column(Boolean, default=False, index=True)      # 官方面单是否已打印/下载
+    waybill_printed_at = Column(DateTime, nullable=True)              # 官方面单最新下载时间
+    waybill_pdf_path = Column(String(255), nullable=True)             # 本地面单 PDF 缓存相对路径
+
     synced_at = Column(DateTime, default=datetime.now)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

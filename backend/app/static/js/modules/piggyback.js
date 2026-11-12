@@ -5,12 +5,7 @@
 export const piggybackMethods = {
   onPiggybackStoreChange() {
     this.selectedStoreId = this.piggyback.store_id;
-    if (this.piggyback.store_id) {
-      localStorage.setItem('makro_selected_store_id', this.piggyback.store_id);
-    }
-    this.clearPiggybackSelection();
-    this.loadPiggybackItems(1);
-    this.loadPiggybackVerticals();
+    this.onStoreChange();
   },
 
   async loadPiggybackKpi() {
@@ -421,6 +416,7 @@ export const piggybackMethods = {
     try {
       const payload = {
         ...this.collectPiggybackForm,
+        store_id: this.collectPiggybackForm.store_id || this.piggyback.store_id || this.selectedStoreId,
         auto_compliance: this.piggyback.autoCompliance
       };
       const res = await fetch('/api/piggyback/collect', {
@@ -452,7 +448,7 @@ export const piggybackMethods = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: lines,
-          store_id: this.batchCollectPiggybackForm.store_id,
+          store_id: this.batchCollectPiggybackForm.store_id || this.piggyback.store_id || this.selectedStoreId,
           price_strategy: this.batchCollectPiggybackForm.price_strategy,
           auto_compliance: this.piggyback.autoCompliance
         })
